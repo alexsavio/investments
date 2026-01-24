@@ -2,12 +2,17 @@
 //!
 //! German tax law requires FIFO (First-In-First-Out) method for determining
 //! cost basis when selling securities.
+//!
+//! Note: These structures are designed for full FIFO tracking. The current
+//! processor implementation uses a simplified cost basis calculation that
+//! relies on the broker statement's existing trade matching.
 
 use std::collections::VecDeque;
 
 use crate::types::{Date, Decimal};
 
 /// Represents a single purchase lot for FIFO tracking.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FifoLot {
     /// Original purchase date
@@ -22,6 +27,7 @@ pub struct FifoLot {
     pub pre_2009: bool,
 }
 
+#[allow(dead_code)]
 impl FifoLot {
     pub fn new(
         purchase_date: Date,
@@ -46,11 +52,13 @@ impl FifoLot {
 }
 
 /// FIFO queue for tracking cost basis of a single security.
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct FifoQueue {
     lots: VecDeque<FifoLot>,
 }
 
+#[allow(dead_code)]
 impl FifoQueue {
     pub fn new() -> Self {
         FifoQueue {
@@ -108,6 +116,7 @@ impl FifoQueue {
 }
 
 /// Result of a capital gain calculation.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CapitalGainResult {
     /// Total cost basis of matched lots
@@ -131,6 +140,7 @@ pub struct CapitalGainResult {
 ///
 /// # Returns
 /// Capital gain result with cost basis, proceeds, and gain/loss
+#[allow(dead_code)]
 pub fn calculate_capital_gain(
     queue: &mut FifoQueue,
     quantity: Decimal,

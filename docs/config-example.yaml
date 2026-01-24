@@ -9,7 +9,7 @@ portfolios:
     # Path to a directory with broker statements
     statements: ~/Brokerage/Interactive Brokers/Statements
 
-    # Base currency of your account
+    # Base currency of your account (supported: USD, RUB, EUR)
     currency: USD
 
     # Tax remapping rules (https://github.com/KonishchevDmitry/investments/blob/master/docs/brokers.md#ib-tax-remapping)
@@ -172,18 +172,32 @@ portfolios:
     # symbol_remapping:
     #   - {from: TMOS@, to: TMOS, exchange: MOEX, when: post}
 
-# Starting from 2021 progressive tax rate has replaced the fixed one in Russia. Here you can specify your non-investment
-# income by year to make investments calculate tax rate taking into account this tax base.
+# Tax configuration
 #
+# For Russia: Starting from 2021 progressive tax rate has replaced the fixed one. Here you can specify your non-investment
+# income by year to make investments calculate tax rate taking into account this tax base.
 # Starting from 2025 we've got progressive tax rate with two separate tax bases for income from employment and
 # investments, so for years starting from 2025 this configuration setting is ignored, since it's different tax base.
+#
+# For Germany: Set jurisdiction to 'germany' to generate German tax statements with Abgeltungssteuer calculations.
+# See docs/germany-taxes.md for full documentation.
+#
 #taxes:
+#  # For Russia (default):
 #  income:
 #    2021: 4_321_012
 #    2022: 5_432_101
+#
+#  # For Germany:
+#  jurisdiction: germany            # Enable German tax calculations
+#  church_tax_rate: 9               # Optional: Kirchensteuer rate (8% or 9%), default 0
+#  loss_carryforward:               # Optional: Loss carryforward from previous years
+#    2023: 1500
+#    2024: 2000
 
 # Your individual broker + bank account configuration. For now specifies your bank commissions for transferring funds
 # from your bank account to your broker account. Will be taken into account during portfolio performance analysis.
+# Note: These are NOT tax-deductible expenses - they're used only for performance tracking.
 brokers:
   firstrade:
     deposit_commissions:
@@ -193,6 +207,7 @@ brokers:
     deposit_commissions:
       RUB: {fixed_amount: 0}
       USD: {fixed_amount: 0}
+      EUR: {fixed_amount: 0}  # For German users depositing in EUR
 
   tbank:
     # Sandbox token from https://developer.tbank.ru/invest/intro/intro/token

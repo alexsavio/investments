@@ -3,7 +3,6 @@
 //! Contains the main GermanTaxStatement struct and entry types for capital gains,
 //! dividends, and interest.
 
-use crate::currency::Cash;
 use crate::taxes::germany::{GermanTaxRates, TeilfreistellungRate};
 use crate::types::{Date, Decimal};
 

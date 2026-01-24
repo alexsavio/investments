@@ -7,9 +7,10 @@
 use crate::types::Decimal;
 
 /// Teilfreistellung (partial exemption) rates for different fund types.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TeilfreistellungRate {
     /// Regular stocks - no exemption
+    #[default]
     None,
     /// Equity ETFs - 30% exemption
     Equity,
@@ -36,12 +37,6 @@ impl TeilfreistellungRate {
     }
 }
 
-impl Default for TeilfreistellungRate {
-    fn default() -> Self {
-        TeilfreistellungRate::None
-    }
-}
-
 /// Calculate dividend tax with Teilfreistellung and foreign tax credit.
 ///
 /// # Arguments
@@ -52,6 +47,7 @@ impl Default for TeilfreistellungRate {
 ///
 /// # Returns
 /// Tuple of (taxable_amount, german_tax, foreign_tax_credit, net_tax)
+#[allow(dead_code)]
 pub fn calculate_dividend_tax(
     gross_amount_eur: Decimal,
     foreign_withholding_tax: Decimal,

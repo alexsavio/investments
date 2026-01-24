@@ -4,15 +4,93 @@
 //! with capital gains, dividends, and interest entries.
 
 use chrono::Datelike;
+use log::warn;
 
 use crate::broker_statement::{BrokerStatement, StockSource};
 use crate::core::GenericResult;
+use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
 use crate::taxes::germany::TeilfreistellungRate;
 use crate::time::Date;
 use crate::types::Decimal;
 
 use super::statement::{CapitalGainEntry, DividendEntry, GermanTaxStatement, InterestEntry};
+
+/// Helper function to convert to EUR with context-specific error message.
+fn convert_to_eur(
+    converter: &CurrencyConverter,
+    date: Date,
+    cash: Cash,
+    context: &str,
+) -> GenericResult<Decimal> {
+    converter
+        .convert_to_cash_rounding(date, cash, "EUR")
+        .map(|c| c.amount)
+        .map_err(|e| {
+            format!(
+                "{context}: Failed to convert {cash} to EUR on {date}. \
+            This may indicate missing ECB exchange rates. \
+            Ensure your database has currency rates for this date. Error: {e}"
+            )
+            .into()
+        })
+}
+
+/// Check if a symbol appears to be a derivative instrument.
+/// Derivatives have different tax treatment and are not supported.
+fn is_derivative(symbol: &str) -> bool {
+    let symbol_upper = symbol.to_uppercase();
+
+    // Common derivative patterns:
+    // - Options often have strike prices and expiry dates encoded
+    // - Options on US exchanges often end with digits (strike) and letters (month code)
+    // - Futures have month codes like F, G, H, J, K, M, N, Q, U, V, X, Z followed by year
+    // - Warrants often end with 'W' or contain 'WS', 'WT'
+
+    // Check for warrant patterns
+    if symbol_upper.ends_with('W')
+        || symbol_upper.contains("WS")
+        || symbol_upper.contains("WT")
+        || symbol_upper.contains("WARRANT")
+    {
+        return true;
+    }
+
+    // Check for option-like patterns (symbol followed by date codes)
+    // e.g., AAPL230120C00150000 (AAPL Jan 20 2023 Call $150)
+    if symbol.len() > 6 {
+        let chars: Vec<char> = symbol.chars().collect();
+        // If we have many digits after the ticker, might be an option
+        let digit_count = chars.iter().filter(|c| c.is_ascii_digit()).count();
+        if digit_count > 6 {
+            return true;
+        }
+    }
+
+    // Check for structured product / certificate indicators
+    if symbol_upper.contains("CERT")
+        || symbol_upper.contains("NOTE")
+        || symbol_upper.contains("STRUC")
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Emit warning for derivative instrument and return true if it's a derivative.
+fn warn_if_derivative(symbol: &str) -> bool {
+    if is_derivative(symbol) {
+        warn!(
+            "Derivative instrument '{}' detected - skipping. German tax treatment for \
+             derivatives differs from stocks and requires specialized handling.",
+            symbol
+        );
+        true
+    } else {
+        false
+    }
+}
 
 /// Process broker statement and populate German tax statement entries.
 pub fn process_broker_statement(
@@ -36,7 +114,6 @@ fn process_trades(
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
     let mut has_income = false;
-    let target_currency = "EUR";
 
     for trade in &broker_statement.stock_sells {
         let trade_year = trade.execution_date.year();
@@ -44,10 +121,15 @@ fn process_trades(
             continue;
         }
 
+        // Skip derivatives with warning (FR-016)
+        if warn_if_derivative(&trade.symbol) {
+            continue;
+        }
+
         has_income = true;
 
         // Get trade details
-        let (price, volume, commission) = match &trade.type_ {
+        let (_price, volume, commission) = match &trade.type_ {
             crate::broker_statement::StockSellType::Trade {
                 price,
                 volume,
@@ -57,14 +139,13 @@ fn process_trades(
             crate::broker_statement::StockSellType::CorporateAction => continue, // Skip corporate actions
         };
 
-        // Convert amounts to EUR
-        let proceeds_eur = converter
-            .convert_to_cash_rounding(trade.execution_date, volume, target_currency)?
-            .amount;
-
-        let commission_eur = converter
-            .convert_to_cash_rounding(trade.execution_date, commission, target_currency)?
-            .amount;
+        // Convert amounts to EUR with helpful error messages
+        let context = format!(
+            "Processing sale of {} on {}",
+            trade.symbol, trade.execution_date
+        );
+        let proceeds_eur = convert_to_eur(converter, trade.execution_date, volume, &context)?;
+        let commission_eur = convert_to_eur(converter, trade.execution_date, commission, &context)?;
 
         // Get instrument info for ISIN and name
         let instrument_info = broker_statement.instrument_info.get(&trade.symbol);
@@ -73,12 +154,18 @@ fn process_trades(
             .map(|isin| isin.to_string())
             .unwrap_or_default();
         let description = instrument_info
-            .map(|info| broker_statement.instrument_info.get_name(&trade.symbol).to_string())
+            .map(|_info| {
+                broker_statement
+                    .instrument_info
+                    .get_name(&trade.symbol)
+                    .to_string()
+            })
             .unwrap_or_else(|| trade.symbol.clone());
 
         // Determine Teilfreistellung rate based on instrument type
-        // TODO: Look up from config etf_classifications or instrument metadata
-        let teilfreistellung_rate = TeilfreistellungRate::None; // Default for regular stocks
+        // Note: Full ETF classification lookup will be added in Phase 5 (User Story 3)
+        // For now, default to no exemption (conservative - regular stocks)
+        let teilfreistellung_rate = TeilfreistellungRate::None;
 
         // Calculate cost basis from FIFO lots
         // Note: The broker statement should have already processed FIFO matching
@@ -94,15 +181,16 @@ fn process_trades(
         let pre_2009_holding = check_pre_2009_holding(trade, broker_statement);
 
         // Calculate German taxes
-        let (abgeltungssteuer, soli, church_tax, total_tax) = if pre_2009_holding || taxable_amount <= dec!(0) {
-            (dec!(0), dec!(0), dec!(0), dec!(0))
-        } else {
-            let rates = &statement.tax_rates;
-            let abgelt = taxable_amount * rates.abgeltungssteuer;
-            let soli = abgelt * rates.solidaritaetszuschlag;
-            let church = abgelt * rates.kirchensteuer;
-            (abgelt, soli, church, abgelt + soli + church)
-        };
+        let (abgeltungssteuer, soli, church_tax, total_tax) =
+            if pre_2009_holding || taxable_amount <= dec!(0) {
+                (dec!(0), dec!(0), dec!(0), dec!(0))
+            } else {
+                let rates = &statement.tax_rates;
+                let abgelt = taxable_amount * rates.abgeltungssteuer;
+                let soli = abgelt * rates.solidaritaetszuschlag;
+                let church = abgelt * rates.kirchensteuer;
+                (abgelt, soli, church, abgelt + soli + church)
+            };
 
         let entry = CapitalGainEntry {
             transaction_date: trade.conclusion_time.date,
@@ -148,13 +236,14 @@ fn calculate_cost_basis(
     // Look through stock_buys to find matching purchases
     let mut total_cost = dec!(0);
     let mut remaining_qty = trade.quantity;
-    let target_currency = "EUR";
 
     // Sort buys by date for FIFO
     let mut buys: Vec<_> = broker_statement
         .stock_buys
         .iter()
-        .filter(|buy| buy.symbol == trade.symbol && buy.conclusion_time.date <= trade.conclusion_time.date)
+        .filter(|buy| {
+            buy.symbol == trade.symbol && buy.conclusion_time.date <= trade.conclusion_time.date
+        })
         .collect();
     buys.sort_by_key(|buy| buy.conclusion_time.date);
 
@@ -172,9 +261,11 @@ fn calculate_cost_basis(
 
         let cost = buy_qty * price_per_share;
         let cost_cash = crate::currency::Cash::new(currency, cost);
-        let cost_eur = converter
-            .convert_to_cash_rounding(buy.conclusion_time.date, cost_cash, target_currency)?
-            .amount;
+        let context = format!(
+            "Calculating cost basis for {} purchase on {}",
+            buy.symbol, buy.conclusion_time.date
+        );
+        let cost_eur = convert_to_eur(converter, buy.conclusion_time.date, cost_cash, &context)?;
 
         total_cost += cost_eur;
         remaining_qty -= buy_qty;
@@ -208,23 +299,27 @@ fn process_dividends(
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
     let mut has_income = false;
-    let target_currency = "EUR";
 
     for dividend in &broker_statement.dividends {
         if dividend.date.year() != year {
             continue;
         }
 
+        // Skip derivatives with warning (FR-016)
+        if warn_if_derivative(&dividend.issuer) {
+            continue;
+        }
+
         has_income = true;
 
-        // Convert amounts to EUR
-        let gross_amount_eur = converter
-            .convert_to_cash_rounding(dividend.date, dividend.amount, target_currency)?
-            .amount;
-
-        let foreign_withholding_tax = converter
-            .convert_to_cash_rounding(dividend.date, dividend.paid_tax, target_currency)?
-            .amount;
+        // Convert amounts to EUR with helpful error messages
+        let context = format!(
+            "Processing dividend from {} on {}",
+            dividend.issuer, dividend.date
+        );
+        let gross_amount_eur = convert_to_eur(converter, dividend.date, dividend.amount, &context)?;
+        let foreign_withholding_tax =
+            convert_to_eur(converter, dividend.date, dividend.paid_tax, &context)?;
 
         // Get instrument info
         let instrument_info = broker_statement.instrument_info.get(&dividend.issuer);
@@ -233,12 +328,18 @@ fn process_dividends(
             .map(|isin| isin.to_string())
             .unwrap_or_default();
         let description = instrument_info
-            .map(|_| broker_statement.instrument_info.get_name(&dividend.issuer).to_string())
+            .map(|_| {
+                broker_statement
+                    .instrument_info
+                    .get_name(&dividend.issuer)
+                    .to_string()
+            })
             .unwrap_or_else(|| dividend.issuer.clone());
 
         // Determine Teilfreistellung rate
-        // TODO: Look up from config etf_classifications
-        let teilfreistellung_rate = TeilfreistellungRate::None; // Default for regular stocks
+        // Note: Full ETF classification lookup will be added in Phase 5 (User Story 3)
+        // For now, default to no exemption (conservative - regular stocks)
+        let teilfreistellung_rate = TeilfreistellungRate::None;
 
         // Apply Teilfreistellung
         let taxable_amount = apply_teilfreistellung(gross_amount_eur, &teilfreistellung_rate);
@@ -297,7 +398,6 @@ fn process_interest(
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
     let mut has_income = false;
-    let target_currency = "EUR";
 
     for interest in &broker_statement.idle_cash_interest {
         if interest.date.year() != year {
@@ -306,10 +406,9 @@ fn process_interest(
 
         has_income = true;
 
-        // Convert amount to EUR
-        let gross_amount_eur = converter
-            .convert_to_cash_rounding(interest.date, interest.amount, target_currency)?
-            .amount;
+        // Convert amount to EUR with helpful error message
+        let context = format!("Processing interest payment on {}", interest.date);
+        let gross_amount_eur = convert_to_eur(converter, interest.date, interest.amount, &context)?;
 
         // Interest doesn't have Teilfreistellung
         let taxable_amount = gross_amount_eur;
@@ -358,16 +457,28 @@ mod tests {
         let gross = dec!(1000);
 
         // None (regular stocks): 0% exemption, 100% taxable
-        assert_eq!(apply_teilfreistellung(gross, &TeilfreistellungRate::None), dec!(1000));
+        assert_eq!(
+            apply_teilfreistellung(gross, &TeilfreistellungRate::None),
+            dec!(1000)
+        );
 
         // Equity ETF: 30% exemption, 70% taxable
-        assert_eq!(apply_teilfreistellung(gross, &TeilfreistellungRate::Equity), dec!(700));
+        assert_eq!(
+            apply_teilfreistellung(gross, &TeilfreistellungRate::Equity),
+            dec!(700)
+        );
 
         // Mixed ETF: 15% exemption, 85% taxable
-        assert_eq!(apply_teilfreistellung(gross, &TeilfreistellungRate::Mixed), dec!(850));
+        assert_eq!(
+            apply_teilfreistellung(gross, &TeilfreistellungRate::Mixed),
+            dec!(850)
+        );
 
         // Bond ETF: 0% exemption, 100% taxable
-        assert_eq!(apply_teilfreistellung(gross, &TeilfreistellungRate::Bond), dec!(1000));
+        assert_eq!(
+            apply_teilfreistellung(gross, &TeilfreistellungRate::Bond),
+            dec!(1000)
+        );
     }
 
     /// End-to-end test: Create statement entries manually and verify CSV output.
@@ -390,9 +501,9 @@ mod tests {
             teilfreistellung_rate: TeilfreistellungRate::None,
             taxable_amount: dec!(500.00),
             foreign_tax: dec!(0),
-            abgeltungssteuer: dec!(125.00),      // 25% of 500
-            solidaritaetszuschlag: dec!(6.875),  // 5.5% of 125
-            kirchensteuer: dec!(10.00),          // 8% of 125
+            abgeltungssteuer: dec!(125.00),     // 25% of 500
+            solidaritaetszuschlag: dec!(6.875), // 5.5% of 125
+            kirchensteuer: dec!(10.00),         // 8% of 125
             total_tax: dec!(141.875),
             pre_2009_holding: false,
             notes: None,
@@ -430,15 +541,15 @@ mod tests {
             description: "Apple Inc.".to_string(),
             quantity: dec!(100),
             gross_amount_eur: dec!(50.00),
-            foreign_withholding_tax: dec!(7.50),  // 15% US withholding
+            foreign_withholding_tax: dec!(7.50), // 15% US withholding
             teilfreistellung_rate: TeilfreistellungRate::None,
             taxable_amount: dec!(50.00),
-            abgeltungssteuer: dec!(12.50),        // 25% of 50
-            solidaritaetszuschlag: dec!(0.6875),  // 5.5% of 12.50
-            kirchensteuer: dec!(1.00),            // 8% of 12.50
-            foreign_tax_credit: dec!(7.50),       // Full credit (within 15% limit)
+            abgeltungssteuer: dec!(12.50),       // 25% of 50
+            solidaritaetszuschlag: dec!(0.6875), // 5.5% of 12.50
+            kirchensteuer: dec!(1.00),           // 8% of 12.50
+            foreign_tax_credit: dec!(7.50),      // Full credit (within 15% limit)
             total_tax: dec!(14.1875),
-            net_tax: dec!(6.6875),                // 14.1875 - 7.50
+            net_tax: dec!(6.6875), // 14.1875 - 7.50
             notes: None,
         };
         statement.add_dividend(dividend);
@@ -483,7 +594,11 @@ mod tests {
         let lines: Vec<&str> = csv_string.lines().collect();
 
         // Header + 2 capital gains + 1 dividend + 1 interest + 10 summary lines = 15 lines
-        assert!(lines.len() >= 14, "Expected at least 14 lines, got {}", lines.len());
+        assert!(
+            lines.len() >= 14,
+            "Expected at least 14 lines, got {}",
+            lines.len()
+        );
 
         // Check header
         assert!(lines[0].starts_with("transaction_type,transaction_date"));
@@ -523,7 +638,7 @@ mod tests {
             teilfreistellung_rate: TeilfreistellungRate::None,
             taxable_amount: dec!(4000.00),
             foreign_tax: dec!(0),
-            abgeltungssteuer: dec!(0),  // Tax exempt!
+            abgeltungssteuer: dec!(0), // Tax exempt!
             solidaritaetszuschlag: dec!(0),
             kirchensteuer: dec!(0),
             total_tax: dec!(0),
@@ -554,8 +669,8 @@ mod tests {
             gross_amount_eur: dec!(100.00),
             foreign_withholding_tax: dec!(0),
             teilfreistellung_rate: TeilfreistellungRate::Equity, // 30% exempt
-            taxable_amount: dec!(70.00),  // Only 70% taxable
-            abgeltungssteuer: dec!(17.50), // 25% of 70
+            taxable_amount: dec!(70.00),                         // Only 70% taxable
+            abgeltungssteuer: dec!(17.50),                       // 25% of 70
             solidaritaetszuschlag: dec!(0.9625),
             kirchensteuer: dec!(0),
             foreign_tax_credit: dec!(0),
@@ -570,5 +685,30 @@ mod tests {
         // Only 70 EUR taxable out of 100 EUR gross
         assert_eq!(statement.total_dividend_income, dec!(70.00));
         assert_eq!(statement.total_abgeltungssteuer, dec!(17.50));
+    }
+
+    /// Test derivative detection (FR-016).
+    #[test]
+    fn test_derivative_detection() {
+        // Regular stocks should NOT be detected as derivatives
+        assert!(!is_derivative("AAPL"));
+        assert!(!is_derivative("VTI"));
+        assert!(!is_derivative("MSFT"));
+        assert!(!is_derivative("BRK.B"));
+        assert!(!is_derivative("VWCE"));
+        assert!(!is_derivative("IE00BK5BQT80")); // ISIN
+
+        // Warrants should be detected
+        assert!(is_derivative("AAPLW")); // Warrant suffix
+        assert!(is_derivative("MSFTWS")); // WS pattern
+        assert!(is_derivative("TESTWARRANT")); // Contains WARRANT
+
+        // Options should be detected (long symbols with many digits)
+        assert!(is_derivative("AAPL230120C00150000")); // Call option
+        assert!(is_derivative("AAPL230120P00150000")); // Put option
+
+        // Structured products should be detected
+        assert!(is_derivative("TESTCERT")); // Certificate
+        assert!(is_derivative("TESTNOTE")); // Structured note
     }
 }
