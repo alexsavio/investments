@@ -1,4 +1,5 @@
 mod calculator;
+pub mod germany;
 pub mod long_term_ownership;
 mod net_calculator;
 mod payment_day;
@@ -28,7 +29,17 @@ pub use self::remapping::TaxRemapping;
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaxConfig {
-    pub income: BTreeMap<i32, Decimal>
+    #[serde(default)]
+    pub income: BTreeMap<i32, Decimal>,
+    /// Jurisdiction for tax calculations (default: Russia, optional: Germany)
+    #[serde(default)]
+    pub jurisdiction: Option<String>,
+    /// Kirchensteuer (church tax) rate for Germany (8% or 9%), default 0
+    #[serde(default)]
+    pub church_tax_rate: Option<Decimal>,
+    /// Loss carryforward from previous years (year -> amount in EUR)
+    #[serde(default)]
+    pub loss_carryforward: BTreeMap<i32, Decimal>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

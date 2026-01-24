@@ -4,7 +4,7 @@
 //! with capital gains, dividends, and interest entries.
 
 use chrono::Datelike;
-use log::warn;
+use log::{debug, warn};
 
 use crate::broker_statement::{BrokerStatement, StockSource};
 use crate::core::GenericResult;
@@ -99,9 +99,18 @@ pub fn process_broker_statement(
     year: i32,
     converter: &CurrencyConverter,
 ) -> GenericResult<(bool, bool, bool)> {
+    debug!("Processing German tax statement for year {}", year);
+
     let has_trades = process_trades(statement, broker_statement, year, converter)?;
     let has_dividends = process_dividends(statement, broker_statement, year, converter)?;
     let has_interest = process_interest(statement, broker_statement, year, converter)?;
+
+    debug!(
+        "German tax statement processing complete: {} trades, {} dividends, {} interest entries",
+        statement.capital_gains.len(),
+        statement.dividends.len(),
+        statement.interest.len()
+    );
 
     Ok((has_trades, has_dividends, has_interest))
 }
@@ -216,6 +225,16 @@ fn process_trades(
                 None
             },
         };
+
+        debug!(
+            "FIFO capital gain: {} {} shares - cost: €{:.2}, proceeds: €{:.2}, gain: €{:.2}, tax: €{:.2}",
+            trade.symbol,
+            trade.quantity,
+            cost_basis_eur,
+            proceeds_eur - commission_eur,
+            gross_gain_loss,
+            total_tax
+        );
 
         statement.add_capital_gain(entry);
     }
@@ -379,6 +398,11 @@ fn process_dividends(
             notes: None,
         };
 
+        debug!(
+            "Dividend: {} - gross: €{:.2}, foreign tax: €{:.2}, credit: €{:.2}, net tax: €{:.2}",
+            dividend.issuer, gross_amount_eur, foreign_withholding_tax, foreign_tax_credit, net_tax
+        );
+
         statement.add_dividend(entry);
     }
 
@@ -439,6 +463,11 @@ fn process_interest(
             net_tax,
             notes: None,
         };
+
+        debug!(
+            "Interest: {} - gross: €{:.2}, tax: €{:.2}",
+            interest.amount.currency, gross_amount_eur, net_tax
+        );
 
         statement.add_interest(entry);
     }
