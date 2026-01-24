@@ -62,6 +62,7 @@ impl Country {
 pub enum Jurisdiction {
     Russia,
     Usa,
+    Germany,
 }
 
 pub struct JurisdictionTraits {
@@ -84,6 +85,12 @@ impl Jurisdiction {
                 name: "USA",
                 code: "US",
                 currency: "USD",
+                tax_precision: 2,
+            },
+            Jurisdiction::Germany => JurisdictionTraits{
+                name: "Germany",
+                code: "DE",
+                currency: "EUR",
                 tax_precision: 2,
             },
         }
@@ -122,6 +129,32 @@ pub fn russia(config: &TaxConfig) -> Country {
     }
 
     Country::new(Jurisdiction::Russia, tax_calculators, tax_agent_calculators, Some(dec!(0.13)))
+}
+
+pub fn germany(_config: &TaxConfig) -> Country {
+    let jurisdiction = Jurisdiction::Germany;
+    let tax_precision = jurisdiction.traits().tax_precision;
+
+    // Germany has Abgeltungssteuer (flat capital gains tax) since 2009
+    // 25% Abgeltungssteuer + 5.5% Solidaritätszuschlag on top
+    // Effective rate: 25% + (25% * 5.5%) = 26.375%
+    // Church tax (8% or 9%) is configured per user, not included in base rate
+
+    let abgeltungssteuer_rate = dec!(0.25);
+    let solidarity_surcharge = dec!(0.055); // 5.5% of Abgeltungssteuer
+
+    // Base tax rate without church tax
+    let effective_base_rate = abgeltungssteuer_rate * (dec!(1) + solidarity_surcharge);
+
+    let tax_calculators = btreemap! {
+        2009 => Box::new(FixedTaxRate::new(effective_base_rate, tax_precision)) as Box<dyn TaxRate>,
+    };
+
+    // Germany doesn't have tax agents for foreign accounts, so use same rates
+    let tax_agent_calculators = tax_calculators.clone();
+
+    // No tax credit limit for Germany (foreign tax credits handled differently)
+    Country::new(Jurisdiction::Germany, tax_calculators, tax_agent_calculators, None)
 }
 
 pub fn get_russian_central_bank_min_last_working_day(today: Date) -> Date {
