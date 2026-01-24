@@ -109,6 +109,12 @@ pub fn process_income(
                 }
             },
 
+            Jurisdiction::Germany => {
+                has_income_to_declare = true;
+                // Germany tax statement will be implemented separately in Phase 3
+                // For now, just track that income should be declared
+            },
+
             Jurisdiction::Russia => {
                 if tax_statement.is_some() {
                     warn!(concat!(
