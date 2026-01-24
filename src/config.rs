@@ -1,4 +1,4 @@
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use crate::broker_statement::{CorporateAction, Operation, SymbolRemappingRules};
 use crate::brokers::Broker;
 use crate::brokers::config::BrokersConfig;
 use crate::cash_flow::config::deserialize_cash_flows;
-use crate::core::{GenericResult, EmptyResult};
+use crate::core::{EmptyResult, GenericResult};
 use crate::deposits::config::DepositConfig;
 use crate::instruments::InstrumentInternalIds;
 use crate::localities::{self, Country, Jurisdiction};
@@ -26,8 +26,8 @@ use crate::quotes::alphavantage::AlphaVantageConfig;
 use crate::quotes::fcsapi::FcsApiConfig;
 use crate::quotes::finnhub::FinnhubConfig;
 use crate::quotes::twelvedata::TwelveDataConfig;
-use crate::taxes::{self, TaxConfig, TaxExemption, TaxPaymentDay, TaxPaymentDaySpec, TaxRemapping};
 use crate::taxes::remapping::TaxRemappingConfig;
+use crate::taxes::{self, TaxConfig, TaxExemption, TaxPaymentDay, TaxPaymentDaySpec, TaxRemapping};
 use crate::telemetry::TelemetryConfig;
 use crate::time;
 use crate::types::{Date, Decimal};
@@ -75,25 +75,30 @@ pub struct Config {
     pub finnhub: Option<FinnhubConfig>,
     pub twelvedata: Option<TwelveDataConfig>,
 
-    #[serde(default, rename="anchors")]
+    #[serde(default, rename = "anchors")]
     _anchors: IgnoredAny,
 }
 
 impl Config {
     const DEFAULT_CONFIG_DIR_PATH: &str = "~/.investments";
 
-    pub fn new<P: AsRef<Path>>(config_dir: P, cache_expire_time: Option<Duration>) -> GenericResult<Config> {
+    pub fn new<P: AsRef<Path>>(
+        config_dir: P,
+        cache_expire_time: Option<Duration>,
+    ) -> GenericResult<Config> {
         let config_dir = config_dir.as_ref();
 
         let config_path = config_dir.join("config.yaml");
-        let mut config = Config::load(&config_path).map_err(|e| format!(
-            "Error while reading {config_path:?} configuration file: {e}"))?;
+        let mut config = Config::load(&config_path)
+            .map_err(|e| format!("Error while reading {config_path:?} configuration file: {e}"))?;
 
         if let Some(cache_expire_time) = cache_expire_time {
             config.cache_expire_time = cache_expire_time;
         }
 
-        config_dir.join("db.sqlite").to_str()
+        config_dir
+            .join("db.sqlite")
+            .to_str()
             .ok_or_else(|| format!("Invalid configuration directory path: {config_dir:?}"))?
             .clone_into(&mut config.db_path);
 
@@ -127,21 +132,30 @@ impl Config {
         }
     }
 
-    pub fn args() -> [Arg;3] {[
-        Arg::new("config").short('c').long("config")
-            .help(format!("Configuration directory path [default: {}]", Self::DEFAULT_CONFIG_DIR_PATH))
-            .value_name("PATH")
-            .value_parser(value_parser!(PathBuf)),
-
-        Arg::new("verbose").short('v').long("verbose")
-            .help("Set verbosity level")
-            .action(ArgAction::Count),
-
-        Arg::new("cache_expire_time").short('e').long("cache-expire-time")
-            .help("Quote cache expire time (in $number{m|h|d} format)")
-            .value_name("DURATION")
-            .value_parser(time::parse_duration),
-    ]}
+    pub fn args() -> [Arg; 3] {
+        [
+            Arg::new("config")
+                .short('c')
+                .long("config")
+                .help(format!(
+                    "Configuration directory path [default: {}]",
+                    Self::DEFAULT_CONFIG_DIR_PATH
+                ))
+                .value_name("PATH")
+                .value_parser(value_parser!(PathBuf)),
+            Arg::new("verbose")
+                .short('v')
+                .long("verbose")
+                .help("Set verbosity level")
+                .action(ArgAction::Count),
+            Arg::new("cache_expire_time")
+                .short('e')
+                .long("cache-expire-time")
+                .help("Quote cache expire time (in $number{m|h|d} format)")
+                .value_name("DURATION")
+                .value_parser(time::parse_duration),
+        ]
+    }
 
     pub fn parse_args(matches: &ArgMatches) -> GenericResult<CliConfig> {
         let log_level = match matches.get_count("verbose") {
@@ -151,8 +165,9 @@ impl Config {
             _ => return Err!("Invalid verbosity level"),
         };
 
-        let config_dir = matches.get_one("config").cloned().unwrap_or_else(||
-            PathBuf::from(shellexpand::tilde(Self::DEFAULT_CONFIG_DIR_PATH).to_string()));
+        let config_dir = matches.get_one("config").cloned().unwrap_or_else(|| {
+            PathBuf::from(shellexpand::tilde(Self::DEFAULT_CONFIG_DIR_PATH).to_string())
+        });
 
         let cache_expire_time = matches.get_one("cache_expire_time").cloned();
 
@@ -164,17 +179,23 @@ impl Config {
     }
 
     pub fn get_tax_country(&self) -> Country {
-        localities::russia(&self.taxes)
+        match self.taxes.jurisdiction.as_deref() {
+            Some("germany") | Some("Germany") => localities::germany(&self.taxes),
+            _ => localities::russia(&self.taxes), // Default to Russia for backwards compatibility
+        }
     }
 
     pub fn get_portfolio(&self, name: &str) -> GenericResult<&PortfolioConfig> {
         for portfolio in &self.portfolios {
             if portfolio.name == name {
-                return Ok(portfolio)
+                return Ok(portfolio);
             }
         }
 
-        Err!("{:?} portfolio is not defined in the configuration file", name)
+        Err!(
+            "{:?} portfolio is not defined in the configuration file",
+            name
+        )
     }
 
     fn load(path: &Path) -> GenericResult<Config> {
@@ -187,7 +208,10 @@ impl Config {
 
         for portfolio in &mut config.portfolios {
             if portfolio.name == metrics::PORTFOLIO_LABEL_ALL {
-                return Err!("Invalid portfolio name: {:?}. The name is reserved", portfolio.name);
+                return Err!(
+                    "Invalid portfolio name: {:?}. The name is reserved",
+                    portfolio.name
+                );
             } else if !portfolio_names.insert(portfolio.name.clone()) {
                 return Err!("Duplicate portfolio name: {:?}", portfolio.name);
             }
@@ -294,7 +318,11 @@ pub struct PortfolioConfig {
     #[serde(default)]
     pub assets: Vec<AssetAllocationConfig>,
 
-    #[serde(default, rename = "tax_payment_day", deserialize_with = "TaxPaymentDaySpec::deserialize")]
+    #[serde(
+        default,
+        rename = "tax_payment_day",
+        deserialize_with = "TaxPaymentDaySpec::deserialize"
+    )]
     tax_payment_day_spec: TaxPaymentDaySpec,
 
     #[serde(default)]
@@ -306,7 +334,9 @@ pub struct PortfolioConfig {
 
 impl PortfolioConfig {
     pub fn currency(&self) -> &str {
-        self.currency.as_deref().unwrap_or_else(|| self.broker.jurisdiction().traits().currency)
+        self.currency
+            .as_deref()
+            .unwrap_or_else(|| self.broker.jurisdiction().traits().currency)
     }
 
     pub fn has_statement(&self) -> bool {
@@ -348,7 +378,7 @@ impl PortfolioConfig {
         let currency = self.currency();
 
         match currency {
-            "RUB" | "USD" => (),
+            "RUB" | "USD" | "EUR" => (),
             _ => return Err!("Unsupported portfolio currency: {currency}"),
         }
 
@@ -362,7 +392,9 @@ impl PortfolioConfig {
             matches!(self.tax_payment_day_spec, TaxPaymentDaySpec::OnClose(_)) &&
             self.broker.jurisdiction() != Jurisdiction::Russia
         {
-            return Err!("On close tax payment date is only available for brokers with Russia jurisdiction")
+            return Err!(
+                "On close tax payment date is only available for brokers with Russia jurisdiction"
+            );
         }
 
         taxes::validate_tax_exemptions(self.broker, &self.tax_exemptions)?;

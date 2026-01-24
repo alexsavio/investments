@@ -12,6 +12,6 @@ mod capital_gains;
 mod dividends;
 mod rates;
 
-pub use self::capital_gains::{CapitalGainResult, FifoLot, FifoQueue, calculate_capital_gain};
-pub use self::dividends::{TeilfreistellungRate, calculate_dividend_tax};
-pub use self::rates::{GermanTaxRates, calculate_german_taxes};
+// Re-export types that are used by other modules
+pub use self::dividends::TeilfreistellungRate;
+pub use self::rates::GermanTaxRates;

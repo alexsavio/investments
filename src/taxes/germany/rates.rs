@@ -62,6 +62,7 @@ impl Default for GermanTaxRates {
 ///
 /// # Returns
 /// Tuple of (abgeltungssteuer, solidaritaetszuschlag, kirchensteuer, total)
+#[allow(dead_code)]
 pub fn calculate_german_taxes(
     taxable_amount: Decimal,
     rates: &GermanTaxRates,
