@@ -689,7 +689,8 @@ fn parse_fx_transaction(statement: &mut PartialBrokerStatement, tx: &FxTransacti
     // Build currency pair from functional currency and FX currency
     let currency_pair = format!("{}.{}", tx.functional_currency, tx.fx_currency);
 
-    // The P&L is already in functional currency (EUR)
+    // The P&L is in functional currency (account's base currency, e.g., EUR or USD)
+    // Conversion to EUR for German tax purposes happens in the tax processor
     let gain_amount = Cash::new(&tx.functional_currency, tx.realized_pl);
 
     // Determine if this is a margin loan FX or taxable FX based on the activity description.
