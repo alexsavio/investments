@@ -37,7 +37,7 @@ impl IdleCashInterest {
 /// (Tilgung eines Fremdwährungskredits - repaying borrowed currency is not a taxable event)
 pub struct FxGain {
     pub date: Date,
-    pub amount: Cash,           // Positive = gain, negative = loss (already in EUR)
+    pub amount: Cash,           // Positive = gain, negative = loss (in functional currency)
     pub currency_pair: String,  // e.g., "EUR.USD"
     pub description: String,    // Transaction description
     pub is_margin_loan: bool,   // True if this is from margin loan repayment (not taxable)
