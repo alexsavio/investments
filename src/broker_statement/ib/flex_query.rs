@@ -5,6 +5,7 @@
 
 use serde::Deserialize;
 
+use crate::broker_statement::grants::StockGrant;
 use crate::broker_statement::interest::{IdleCashInterest, FxGain};
 use crate::broker_statement::partial::PartialBrokerStatement;
 use crate::broker_statement::trades::{StockBuy, StockSell};
@@ -65,6 +66,9 @@ pub struct FlexStatement {
 
     #[serde(rename = "FxTransactions")]
     pub fx_transactions: Option<FxTransactions>,
+
+    #[serde(rename = "StockGrantActivities")]
+    pub stock_grant_activities: Option<StockGrantActivities>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -367,6 +371,42 @@ pub struct FxTransactionEntry {
     pub code: String,
 }
 
+/// Stock Grant Activities section - RSUs, stock options, ESPPs
+#[derive(Debug, Deserialize)]
+pub struct StockGrantActivities {
+    #[serde(rename = "StockGrantActivity", default)]
+    pub activities: Vec<StockGrantActivity>,
+}
+
+/// Individual stock grant activity (RSU vest, option exercise, etc.)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StockGrantActivity {
+    /// Stock symbol
+    #[serde(rename = "@symbol")]
+    pub symbol: String,
+
+    /// Report date (vest date) in YYYYMMDD format
+    #[serde(rename = "@reportDate")]
+    pub report_date: String,
+
+    /// Number of shares granted/vested
+    #[serde(rename = "@quantity")]
+    pub quantity: Decimal,
+
+    /// Grant type (e.g., "RSU", "Stock Option", "ESPP")
+    #[serde(rename = "@grantType", default)]
+    pub grant_type: String,
+
+    /// Fair market value at vest
+    #[serde(rename = "@fmv", default)]
+    pub fmv: Decimal,
+
+    /// Description
+    #[serde(rename = "@description", default)]
+    pub description: String,
+}
+
 impl FlexQueryResponse {
     pub fn parse(data: &[u8]) -> GenericResult<PartialBrokerStatement> {
         let response: FlexQueryResponse = xml::deserialize(data)?;
@@ -445,9 +485,7 @@ impl FlexStatement {
         if let Some(ref positions) = self.open_positions {
             for pos in &positions.positions {
                 if !pos.symbol.is_empty() && pos.position != Decimal::ZERO {
-                    let quantity = pos.position;
-                    statement.add_open_position(&pos.symbol, quantity.try_into().map_err(|_| format!(
-                        "Invalid position quantity for {}: {}", pos.symbol, quantity))?)?;
+                    statement.add_open_position(&pos.symbol, pos.position)?;
                 }
             }
         }
@@ -457,6 +495,13 @@ impl FlexStatement {
         if let Some(ref fx_transactions) = self.fx_transactions {
             for tx in &fx_transactions.transactions {
                 parse_fx_transaction(&mut statement, tx)?;
+            }
+        }
+
+        // Parse stock grant activities (RSUs, stock options, ESPPs)
+        if let Some(ref grants) = self.stock_grant_activities {
+            for grant in &grants.activities {
+                parse_stock_grant(&mut statement, grant)?;
             }
         }
 
@@ -510,16 +555,12 @@ fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: 
     match line.buy_sell.as_str() {
         "BUY" => {
             statement.stock_buys.push(StockBuy::new_trade(
-                symbol, quantity.try_into().map_err(|_| format!(
-                    "Invalid buy quantity for {}: {}", symbol, quantity))?,
-                price, volume, commission, conclusion_time, settle_date,
+                symbol, quantity, price, volume, commission, conclusion_time, settle_date,
             ));
         }
         "SELL" => {
             statement.stock_sells.push(StockSell::new_trade(
-                symbol, quantity.try_into().map_err(|_| format!(
-                    "Invalid sell quantity for {}: {}", symbol, quantity))?,
-                price, volume, commission, conclusion_time, settle_date, false,
+                symbol, quantity, price, volume, commission, conclusion_time, settle_date, false,
             ));
         }
         _ => {}
@@ -745,16 +786,12 @@ fn parse_trade(statement: &mut PartialBrokerStatement, trade: &Trade) -> EmptyRe
     match trade.buy_sell.as_str() {
         "BUY" => {
             statement.stock_buys.push(StockBuy::new_trade(
-                symbol, quantity.try_into().map_err(|_| format!(
-                    "Invalid buy quantity for {}: {}", symbol, quantity))?,
-                price, volume, commission, conclusion_time, settle_date,
+                symbol, quantity, price, volume, commission, conclusion_time, settle_date,
             ));
         }
         "SELL" => {
             statement.stock_sells.push(StockSell::new_trade(
-                symbol, quantity.try_into().map_err(|_| format!(
-                    "Invalid sell quantity for {}: {}", symbol, quantity))?,
-                price, volume, commission, conclusion_time, settle_date, false,
+                symbol, quantity, price, volume, commission, conclusion_time, settle_date, false,
             ));
         }
         other => {
@@ -814,6 +851,31 @@ fn parse_cash_transaction(statement: &mut PartialBrokerStatement, tx: &CashTrans
             log::debug!("Unknown cash transaction type: {} - {}", tx.transaction_type, tx.description);
         }
     }
+
+    Ok(())
+}
+
+/// Parse a stock grant activity (RSU vest, stock option exercise, ESPP purchase).
+///
+/// For German tax purposes:
+/// - RSU vesting is taxed as employment income (Arbeitslohn) at vest date
+/// - The FMV at vest becomes the cost basis for future capital gains calculations
+/// - This tool tracks the grant for cost basis; employment income is typically on payslip
+fn parse_stock_grant(statement: &mut PartialBrokerStatement, grant: &StockGrantActivity) -> EmptyResult {
+    if grant.symbol.is_empty() || grant.quantity == Decimal::ZERO {
+        return Ok(());
+    }
+
+    let date = parse_flex_date(&grant.report_date)?;
+
+    statement.stock_grants.push(StockGrant::new(date, &grant.symbol, grant.quantity));
+
+    log::debug!(
+        "Stock grant: {} {} shares on {} (type: {}, FMV: {})",
+        grant.symbol, grant.quantity, date,
+        if grant.grant_type.is_empty() { "unknown" } else { &grant.grant_type },
+        grant.fmv
+    );
 
     Ok(())
 }

@@ -15,7 +15,9 @@ use crate::taxes::germany::TeilfreistellungRate;
 use crate::time::Date;
 use crate::types::Decimal;
 
-use super::statement::{CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry};
+use super::statement::{
+    CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry,
+};
 
 /// Helper function to convert to EUR with context-specific error message.
 fn convert_to_eur(
@@ -1093,11 +1095,11 @@ mod tests {
             transaction_date: Date::from_ymd_opt(2024, 6, 15).unwrap(),
             currency_pair: "EUR.USD".to_string(),
             description: "Net Amount in Base from Forex Trade: -100 EUR.USD".to_string(),
-            gross_amount_eur: dec!(10.50),  // Realized FX gain
-            taxable_amount: dec!(10.50),    // Full amount taxable (no Teilfreistellung)
-            abgeltungssteuer: dec!(2.625),  // 25% of 10.50
+            gross_amount_eur: dec!(10.50),         // Realized FX gain
+            taxable_amount: dec!(10.50),           // Full amount taxable (no Teilfreistellung)
+            abgeltungssteuer: dec!(2.625),         // 25% of 10.50
             solidaritaetszuschlag: dec!(0.144375), // 5.5% of 2.625
-            kirchensteuer: dec!(0.21),      // 8% of 2.625
+            kirchensteuer: dec!(0.21),             // 8% of 2.625
             total_tax: dec!(2.979375),
             notes: None,
         };
@@ -1108,9 +1110,9 @@ mod tests {
             transaction_date: Date::from_ymd_opt(2024, 7, 20).unwrap(),
             currency_pair: "EUR.USD".to_string(),
             description: "Net Amount in Base from Forex Trade: -50 EUR.USD".to_string(),
-            gross_amount_eur: dec!(-3.25),  // Realized FX loss
-            taxable_amount: dec!(-3.25),    // Loss reduces taxable income
-            abgeltungssteuer: dec!(0),      // No tax on losses
+            gross_amount_eur: dec!(-3.25), // Realized FX loss
+            taxable_amount: dec!(-3.25),   // Loss reduces taxable income
+            abgeltungssteuer: dec!(0),     // No tax on losses
             solidaritaetszuschlag: dec!(0),
             kirchensteuer: dec!(0),
             total_tax: dec!(0),
@@ -1162,7 +1164,7 @@ mod tests {
             teilfreistellung_rate: TeilfreistellungRate::None,
             taxable_amount: dec!(200.00),
             foreign_tax: dec!(0),
-            abgeltungssteuer: dec!(50.00),   // 25% of 200
+            abgeltungssteuer: dec!(50.00),     // 25% of 200
             solidaritaetszuschlag: dec!(2.75), // 5.5% of 50
             kirchensteuer: dec!(0),
             total_tax: dec!(52.75),

@@ -8,7 +8,9 @@ use crate::core::GenericResult;
 use crate::formatting;
 use crate::types::Decimal;
 
-use super::statement::{CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry};
+use super::statement::{
+    CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry,
+};
 
 /// CSV formatter for German tax statements.
 pub struct GermanCsvFormatter;
@@ -216,7 +218,10 @@ impl GermanCsvFormatter {
         // Anlage KAP form line values
         writeln!(writer)?;
         writeln!(writer, "# ANLAGE KAP - German Tax Form Values")?;
-        writeln!(writer, "# These values can be transferred directly to the Anlage KAP form")?;
+        writeln!(
+            writer,
+            "# These values can be transferred directly to the Anlage KAP form"
+        )?;
         writeln!(
             writer,
             "KAP_ZEILE_19,Ausländische Kapitalerträge (Foreign Capital Income),{}",

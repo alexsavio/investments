@@ -66,7 +66,7 @@ impl BrokerStatementReader for StatementReader {
         // Support both CSV Activity Statements and XML Flex Query reports
         if util::has_extension(path, "xml") {
             // Check if it's an IB Flex Query XML file
-            return Ok(is_flex_query_xml(path)?);
+            return is_flex_query_xml(path);
         }
 
         if !util::has_extension(path, "csv") {
