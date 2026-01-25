@@ -6,7 +6,7 @@
 use chrono::Datelike;
 use log::{debug, warn};
 
-use crate::broker_statement::{BrokerStatement, StockSource};
+use crate::broker_statement::{BrokerCorporateActionType, BrokerStatement, StockSource};
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
@@ -16,7 +16,8 @@ use crate::time::Date;
 use crate::types::Decimal;
 
 use super::statement::{
-    CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry,
+    CapitalGainEntry, CashGrantEntry, CorporateActionEntry, CorporateActionType, DividendEntry,
+    FeeEntry, FxGainEntry, GermanTaxStatement, InterestEntry, StockGrantEntry,
 };
 
 /// Helper function to convert to EUR with context-specific error message.
@@ -111,12 +112,32 @@ pub fn process_broker_statement(
     let has_interest = process_interest(statement, broker_statement, year, converter)?;
     let has_fx_gains = process_fx_gains(statement, broker_statement, year, converter)?;
 
+    // Process additional income types
+    let has_fees = process_fees(statement, broker_statement, year, converter)?;
+    let has_stock_grants = process_stock_grants(statement, broker_statement, year, converter)?;
+    let has_cash_grants = process_cash_grants(statement, broker_statement, year, converter)?;
+    let has_corporate_actions =
+        process_corporate_actions(statement, broker_statement, year, converter)?;
+
     debug!(
-        "German tax statement processing complete: {} trades, {} dividends, {} interest, {} FX entries",
+        "German tax statement processing complete: {} trades, {} dividends, {} interest, {} FX, {} fees, {} stock grants, {} cash grants, {} corp actions",
         statement.capital_gains.len(),
         statement.dividends.len(),
         statement.interest.len(),
-        statement.fx_gains.len()
+        statement.fx_gains.len(),
+        statement.fees.len(),
+        statement.stock_grants.len(),
+        statement.cash_grants.len(),
+        statement.corporate_actions.len()
+    );
+
+    // Note: has_fees, has_stock_grants, has_cash_grants, has_corporate_actions are informational
+    // They don't affect the primary income flags
+    let _ = (
+        has_fees,
+        has_stock_grants,
+        has_cash_grants,
+        has_corporate_actions,
     );
 
     Ok((has_trades, has_dividends, has_interest, has_fx_gains))
@@ -590,6 +611,333 @@ fn process_fx_gains(
     statement.non_taxable_margin_fx = non_taxable_margin_fx;
 
     Ok(has_income)
+}
+
+/// Process broker fees.
+///
+/// Broker fees (Werbungskosten) are deductible from capital gains.
+/// Note: Trade commissions are already included in capital gain calculations.
+/// This covers standalone fees like account maintenance, data fees, etc.
+fn process_fees(
+    statement: &mut GermanTaxStatement,
+    broker_statement: &BrokerStatement,
+    year: i32,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_fees = false;
+
+    for fee in &broker_statement.fees {
+        if fee.date.year() != year {
+            continue;
+        }
+
+        has_fees = true;
+
+        // Get the fee amount (Withholding can be positive fee or negative refund)
+        let fee_cash = fee.amount.withholding();
+
+        // Convert to EUR
+        let context = format!("Processing broker fee on {}", fee.date);
+        let amount_eur = convert_to_eur(converter, fee.date, fee_cash, &context)?;
+
+        let description = fee
+            .description
+            .clone()
+            .unwrap_or_else(|| "Broker fee".to_string());
+
+        let entry = FeeEntry {
+            date: fee.date,
+            description: description.clone(),
+            amount_eur,
+            notes: if amount_eur < dec!(0) {
+                Some("Fee refund - reduces deductible expenses".to_string())
+            } else {
+                None
+            },
+        };
+
+        debug!("Broker fee: {} - amount: €{:.2}", description, amount_eur);
+
+        statement.add_fee(entry);
+    }
+
+    Ok(has_fees)
+}
+
+/// Process stock grants (RSUs, stock awards).
+///
+/// In Germany, stock grants have TWO taxable events:
+/// 1. At vesting: Taxed as employment income (geldwerter Vorteil) at marginal income tax rate
+/// 2. At sale: Capital gains tax only on gain above vest-date FMV
+///
+/// This function reports the employment income portion (vest-date FMV).
+/// The capital gains portion is handled by process_trades() using FMV as cost basis.
+fn process_stock_grants(
+    statement: &mut GermanTaxStatement,
+    broker_statement: &BrokerStatement,
+    year: i32,
+    _converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_grants = false;
+
+    // Stock grants are stored in broker_statement after being processed by process_grants()
+    // They're converted to StockBuy entries with zero cost, but we need the original grant info
+    // Check if we have any stock grant data from the broker statement parsing
+    for grant in broker_statement.stock_grants.iter() {
+        if grant.date.year() != year {
+            continue;
+        }
+
+        has_grants = true;
+
+        // Get the instrument info for ISIN lookup
+        let isin = broker_statement
+            .instrument_info
+            .get(&grant.symbol)
+            .map(|info| {
+                info.isin
+                    .iter()
+                    .next()
+                    .map(|i| i.to_string())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+
+        // For RSUs, IBKR provides the FMV at vest in the statement
+        // However, the current StockGrant struct only has date, symbol, quantity
+        // The FMV would need to be obtained from quotes or the broker statement
+        //
+        // IMPORTANT: If FMV is not available, we warn and use zero (which is incorrect
+        // but prevents crashes). User should verify and correct manually.
+        //
+        // TODO: Enhance StockGrant struct to include FMV at vest from broker statement
+        let fmv_per_share = dec!(0); // Placeholder - needs FMV from broker
+        let total_fmv_eur = fmv_per_share * grant.quantity;
+
+        if fmv_per_share.is_zero() {
+            warn!(
+                "Stock grant {} on {}: FMV at vest date is not available. \
+                Employment income will be reported as €0. \
+                Please verify and correct manually for tax purposes.",
+                grant.symbol, grant.date
+            );
+        }
+
+        let entry = StockGrantEntry {
+            vest_date: grant.date,
+            symbol: grant.symbol.clone(),
+            isin,
+            quantity: grant.quantity,
+            fmv_per_share_eur: fmv_per_share,
+            total_fmv_eur,
+            notes: Some(
+                "Employment income (geldwerter Vorteil) - taxed at marginal rate, not Abgeltungssteuer"
+                    .to_string(),
+            ),
+        };
+
+        debug!(
+            "Stock grant: {} x {} @ €{:.2}/share = €{:.2} employment income",
+            grant.quantity, grant.symbol, fmv_per_share, total_fmv_eur
+        );
+
+        statement.add_stock_grant(entry);
+    }
+
+    Ok(has_grants)
+}
+
+/// Process cash grants (broker bonuses, promotional cash).
+///
+/// Cash grants are "sonstige Einkünfte" (other income) under German tax law.
+/// Only taxable if total other income exceeds €256/year.
+fn process_cash_grants(
+    statement: &mut GermanTaxStatement,
+    broker_statement: &BrokerStatement,
+    year: i32,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_grants = false;
+
+    for grant in &broker_statement.cash_grants {
+        if grant.date.year() != year {
+            continue;
+        }
+
+        has_grants = true;
+
+        // Convert to EUR
+        let context = format!(
+            "Processing cash grant '{}' on {}",
+            grant.description, grant.date
+        );
+        let amount_eur = convert_to_eur(converter, grant.date, grant.amount, &context)?;
+
+        let entry = CashGrantEntry {
+            date: grant.date,
+            description: grant.description.clone(),
+            amount_eur,
+            notes: Some(
+                "Other income (sonstige Einkünfte §22 EStG) - taxable at marginal rate if >€256/year total"
+                    .to_string(),
+            ),
+        };
+
+        debug!(
+            "Cash grant: {} - amount: €{:.2}",
+            grant.description, amount_eur
+        );
+
+        statement.add_cash_grant(entry);
+    }
+
+    // Add informational warning if cash grants exceed threshold
+    let total_cash_grants: Decimal = statement.cash_grants.iter().map(|g| g.amount_eur).sum();
+
+    if total_cash_grants > dec!(256) {
+        warn!(
+            "Total cash grants (€{:.2}) exceed €256 threshold - must be declared as sonstige Einkünfte",
+            total_cash_grants
+        );
+    }
+
+    Ok(has_grants)
+}
+
+/// Process corporate actions that have tax implications.
+///
+/// - Spinoffs: May require cost basis allocation (informational)
+/// - Liquidations: Treated as capital gain/loss
+/// - Stock splits: No tax event (handled by StockSplitController)
+/// - Stock dividends: May have tax implications
+fn process_corporate_actions(
+    statement: &mut GermanTaxStatement,
+    broker_statement: &BrokerStatement,
+    year: i32,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_actions = false;
+
+    for action in broker_statement.corporate_actions.iter() {
+        if action.time.date.year() != year {
+            continue;
+        }
+
+        let (action_type, description, tax_impact_eur) = match &action.action {
+            BrokerCorporateActionType::Delisting { quantity } => {
+                has_actions = true;
+                // Delisting - typically a total loss
+                // Note: In Germany, delisting losses may have restricted deductibility
+                (
+                    CorporateActionType::Delisting,
+                    format!("Delisting of {} shares", quantity),
+                    None, // Loss amount depends on cost basis
+                )
+            }
+            BrokerCorporateActionType::Liquidation {
+                quantity,
+                price,
+                volume,
+                currency,
+            } => {
+                has_actions = true;
+                // Liquidation - treated as a sale
+                let proceeds = Cash::new(currency, *volume);
+                let context = format!(
+                    "Processing liquidation of {} on {}",
+                    action.symbol, action.time.date
+                );
+                let proceeds_eur = convert_to_eur(converter, action.time.date, proceeds, &context)?;
+
+                (
+                    CorporateActionType::Liquidation,
+                    format!(
+                        "Liquidation: {} shares @ {:.2} {} = {:.2} {}",
+                        quantity, price, currency, volume, currency
+                    ),
+                    Some(proceeds_eur), // Capital gain/loss vs cost basis
+                )
+            }
+            BrokerCorporateActionType::Rename { .. } => {
+                // Rename is not a taxable event
+                continue;
+            }
+            BrokerCorporateActionType::Spinoff {
+                symbol: new_symbol,
+                quantity: new_quantity,
+                ..
+            } => {
+                has_actions = true;
+                // Spinoff - requires cost basis allocation
+                // This is informational; actual allocation is complex
+                (
+                    CorporateActionType::Spinoff,
+                    format!(
+                        "Spinoff: Received {} shares of {}",
+                        new_quantity, new_symbol
+                    ),
+                    None, // No immediate tax impact, but affects future cost basis
+                )
+            }
+            BrokerCorporateActionType::StockSplit { .. } => {
+                // Stock split - no tax event
+                continue;
+            }
+            BrokerCorporateActionType::StockDividend { stock, quantity } => {
+                has_actions = true;
+                // Stock dividend - may have tax implications as income
+                let stock_name: &str = stock.as_ref().map(String::as_str).unwrap_or(&action.symbol);
+                (
+                    CorporateActionType::Other("StockDividend".to_string()),
+                    format!("Stock dividend: {} shares of {}", quantity, stock_name),
+                    None, // Value depends on share price at distribution
+                )
+            }
+            BrokerCorporateActionType::SubscribableRightsIssue => {
+                // Rights issue - informational only
+                continue;
+            }
+        };
+
+        let notes = match &action_type {
+            CorporateActionType::Spinoff => Some(
+                "Cost basis must be allocated between parent and spinoff based on market values. \
+                Consult tax advisor for proper allocation."
+                    .to_string(),
+            ),
+            CorporateActionType::Liquidation => {
+                Some("Treated as sale - capital gain/loss based on cost basis".to_string())
+            }
+            CorporateActionType::Delisting => Some(
+                "Total loss - may have restricted deductibility under German tax law".to_string(),
+            ),
+            CorporateActionType::Other(s) if s == "StockDividend" => {
+                Some("Stock dividend may be taxable as dividend income at FMV".to_string())
+            }
+            CorporateActionType::Merger => {
+                Some("Check if cash received - may trigger capital gain".to_string())
+            }
+            CorporateActionType::Other(_) => None,
+        };
+
+        let entry = CorporateActionEntry {
+            date: action.time.date,
+            action_type,
+            symbol: action.symbol.clone(),
+            description,
+            tax_impact_eur,
+            notes,
+        };
+
+        debug!(
+            "Corporate action: {} - {} on {}",
+            entry.action_type, entry.symbol, entry.date
+        );
+
+        statement.add_corporate_action(entry);
+    }
+
+    Ok(has_actions)
 }
 
 #[cfg(test)]

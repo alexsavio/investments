@@ -49,7 +49,7 @@ use self::taxes::{TaxId, TaxAccruals, TaxAgentWithholdings};
 use self::validators::{DateValidator, sort_and_validate_trades};
 
 pub use self::cash_flows::{CashFlow, CashFlowType};
-pub use self::corporate_actions::{CorporateAction, StockSplitController, process_corporate_actions};
+pub use self::corporate_actions::{CorporateAction, CorporateActionType as BrokerCorporateActionType, StockSplitController, process_corporate_actions};
 pub use self::dividends::Dividend;
 pub use self::fees::Fee;
 pub use self::grants::{CashGrant, StockGrant, process_grants};
@@ -82,8 +82,8 @@ pub struct BrokerStatement {
     pub dividends: Vec<Dividend>,
 
     pub cash_grants: Vec<CashGrant>,
-    stock_grants: Vec<StockGrant>,
-    corporate_actions: Vec<CorporateAction>,
+    pub stock_grants: Vec<StockGrant>,
+    pub corporate_actions: Vec<CorporateAction>,
     pub stock_splits: StockSplitController,
 
     pub open_positions: HashMap<String, Decimal>,
