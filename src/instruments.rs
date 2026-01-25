@@ -14,7 +14,41 @@ use serde::de::Deserializer;
 use crate::core::{GenericResult, EmptyResult};
 use crate::exchanges::{Exchange, Exchanges};
 use crate::localities::Jurisdiction;
+use crate::taxes::germany::TeilfreistellungRate;
 use crate::time::Date;
+
+/// ETF classification for German Teilfreistellung (partial exemption).
+///
+/// German tax law grants partial exemptions on dividends and capital gains
+/// from investment funds based on their asset composition:
+/// - Equity funds (>50% stocks): 30% exemption
+/// - Mixed funds (25-50% stocks): 15% exemption
+/// - Bond/other funds (<25% stocks): 0% exemption
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EtfClassification {
+    /// Equity ETF - >50% stocks, 30% Teilfreistellung
+    Equity,
+    /// Mixed ETF - 25-50% stocks, 15% Teilfreistellung
+    Mixed,
+    /// Bond ETF - <25% stocks, no Teilfreistellung
+    Bond,
+    /// Regular stock or unknown - no Teilfreistellung
+    #[default]
+    None,
+}
+
+impl EtfClassification {
+    /// Convert to the corresponding Teilfreistellung rate for tax calculations.
+    pub fn to_teilfreistellung_rate(self) -> TeilfreistellungRate {
+        match self {
+            EtfClassification::Equity => TeilfreistellungRate::Equity,
+            EtfClassification::Mixed => TeilfreistellungRate::Mixed,
+            EtfClassification::Bond => TeilfreistellungRate::Bond,
+            EtfClassification::None => TeilfreistellungRate::None,
+        }
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum InstrumentId {

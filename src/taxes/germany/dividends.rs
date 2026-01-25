@@ -150,4 +150,103 @@ mod tests {
         // Net tax = 0 (fully offset by foreign credit)
         assert_eq!(net, dec!(0));
     }
+
+    // T086: Test equity ETF exemption (30%)
+    // €1,000 dividend × 30% exempt = €300 exempt, €700 taxable
+    #[test]
+    fn test_equity_etf_exemption_30_percent() {
+        // Verify the exemption rate
+        assert_eq!(TeilfreistellungRate::Equity.rate(), dec!(0.30));
+        assert_eq!(TeilfreistellungRate::Equity.taxable_portion(), dec!(0.70));
+
+        // €1000 dividend from equity ETF (30% exempt)
+        let (taxable, german_tax, _, net) = calculate_dividend_tax(
+            dec!(1000),
+            dec!(0), // No foreign withholding
+            TeilfreistellungRate::Equity,
+            dec!(0.25),  // 25% Abgeltungssteuer
+            dec!(0.055), // 5.5% Soli
+            dec!(0),     // No church tax
+        );
+
+        // 30% exempt = €300 exempt, €700 taxable
+        assert_eq!(taxable, dec!(700));
+        // German tax on €700: 700 * 0.25 = 175, Soli = 175 * 0.055 = 9.625
+        // Total = 184.625
+        assert_eq!(german_tax, dec!(184.625));
+        assert_eq!(net, dec!(184.625));
+    }
+
+    // T086: Test mixed ETF exemption (15%)
+    // €1,000 dividend × 15% exempt = €150 exempt, €850 taxable
+    #[test]
+    fn test_mixed_etf_exemption_15_percent() {
+        // Verify the exemption rate
+        assert_eq!(TeilfreistellungRate::Mixed.rate(), dec!(0.15));
+        assert_eq!(TeilfreistellungRate::Mixed.taxable_portion(), dec!(0.85));
+
+        // €1000 dividend from mixed ETF (15% exempt)
+        let (taxable, german_tax, _, net) = calculate_dividend_tax(
+            dec!(1000),
+            dec!(0), // No foreign withholding
+            TeilfreistellungRate::Mixed,
+            dec!(0.25),  // 25% Abgeltungssteuer
+            dec!(0.055), // 5.5% Soli
+            dec!(0),     // No church tax
+        );
+
+        // 15% exempt = €150 exempt, €850 taxable
+        assert_eq!(taxable, dec!(850));
+        // German tax on €850: 850 * 0.25 = 212.50, Soli = 212.50 * 0.055 = 11.6875
+        // Total = 224.1875
+        assert_eq!(german_tax, dec!(224.1875));
+        assert_eq!(net, dec!(224.1875));
+    }
+
+    // T086: Test bond ETF exemption (0%)
+    // €1,000 dividend × 0% exempt = €1,000 taxable
+    #[test]
+    fn test_bond_etf_exemption_0_percent() {
+        // Verify bond ETF has same treatment as no exemption
+        assert_eq!(TeilfreistellungRate::Bond.rate(), dec!(0));
+        assert_eq!(TeilfreistellungRate::None.rate(), dec!(0));
+
+        // €1000 dividend from bond ETF (0% exempt)
+        let (taxable, german_tax, _, _) = calculate_dividend_tax(
+            dec!(1000),
+            dec!(0),
+            TeilfreistellungRate::Bond,
+            dec!(0.25),
+            dec!(0.055),
+            dec!(0),
+        );
+
+        // No exemption = full €1000 taxable
+        assert_eq!(taxable, dec!(1000));
+        // German tax on €1000: 1000 * 0.25 = 250, Soli = 250 * 0.055 = 13.75
+        assert_eq!(german_tax, dec!(263.75));
+    }
+
+    // T086: Test Teilfreistellung with church tax
+    #[test]
+    fn test_equity_etf_exemption_with_church_tax() {
+        // €1000 dividend from equity ETF with 9% church tax
+        let (taxable, german_tax, _, net) = calculate_dividend_tax(
+            dec!(1000),
+            dec!(0),
+            TeilfreistellungRate::Equity,
+            dec!(0.25),  // 25% Abgeltungssteuer
+            dec!(0.055), // 5.5% Soli
+            dec!(0.09),  // 9% church tax (Bavaria/Baden-Württemberg)
+        );
+
+        // 30% exempt = €700 taxable
+        assert_eq!(taxable, dec!(700));
+        // Abgeltungssteuer: 700 * 0.25 = 175
+        // Soli: 175 * 0.055 = 9.625
+        // Church: 175 * 0.09 = 15.75
+        // Total = 175 + 9.625 + 15.75 = 200.375
+        assert_eq!(german_tax, dec!(200.375));
+        assert_eq!(net, dec!(200.375));
+    }
 }

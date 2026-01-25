@@ -257,4 +257,90 @@ mod tests {
         assert_eq!(result.proceeds, dec!(750)); // 50 * €15
         assert_eq!(result.gross_gain_loss, dec!(-250)); // €750 - €1000
     }
+
+    // T087: Test mixed ETF Teilfreistellung on capital gains
+    // €1,000 gain × 15% exempt = €150 exempt, €850 taxable
+    #[test]
+    fn test_capital_gain_with_mixed_etf_teilfreistellung() {
+        use crate::taxes::germany::dividends::TeilfreistellungRate;
+
+        let mut queue = FifoQueue::new();
+
+        // Buy 100 shares at €10 (Mixed ETF)
+        queue.add_purchase(FifoLot::new(
+            date!(2020, 1, 1),
+            date!(2020, 1, 3),
+            dec!(100),
+            dec!(10),
+        ));
+
+        // Sell 100 shares at €20 each = €1000 gain
+        let result = calculate_capital_gain(&mut queue, dec!(100), dec!(20));
+
+        assert_eq!(result.proceeds, dec!(2000)); // 100 * €20
+        assert_eq!(result.cost_basis, dec!(1000)); // 100 * €10
+        assert_eq!(result.gross_gain_loss, dec!(1000)); // €2000 - €1000
+
+        // Apply 15% Teilfreistellung to capital gain
+        let teilfreistellung = TeilfreistellungRate::Mixed;
+        let taxable_gain = result.gross_gain_loss * teilfreistellung.taxable_portion();
+
+        // 15% exempt = €150 exempt, €850 taxable
+        assert_eq!(taxable_gain, dec!(850));
+    }
+
+    // T087: Test equity ETF Teilfreistellung on capital gains
+    // €1,000 gain × 30% exempt = €300 exempt, €700 taxable
+    #[test]
+    fn test_capital_gain_with_equity_etf_teilfreistellung() {
+        use crate::taxes::germany::dividends::TeilfreistellungRate;
+
+        let mut queue = FifoQueue::new();
+
+        // Buy 100 shares at €10 (Equity ETF)
+        queue.add_purchase(FifoLot::new(
+            date!(2020, 1, 1),
+            date!(2020, 1, 3),
+            dec!(100),
+            dec!(10),
+        ));
+
+        // Sell 100 shares at €20 each = €1000 gain
+        let result = calculate_capital_gain(&mut queue, dec!(100), dec!(20));
+
+        assert_eq!(result.gross_gain_loss, dec!(1000));
+
+        // Apply 30% Teilfreistellung to capital gain
+        let teilfreistellung = TeilfreistellungRate::Equity;
+        let taxable_gain = result.gross_gain_loss * teilfreistellung.taxable_portion();
+
+        // 30% exempt = €300 exempt, €700 taxable
+        assert_eq!(taxable_gain, dec!(700));
+    }
+
+    // T087: Test no Teilfreistellung for regular stocks
+    #[test]
+    fn test_capital_gain_no_teilfreistellung_for_stocks() {
+        use crate::taxes::germany::dividends::TeilfreistellungRate;
+
+        let mut queue = FifoQueue::new();
+
+        // Buy 100 shares at €10 (Regular stock)
+        queue.add_purchase(FifoLot::new(
+            date!(2020, 1, 1),
+            date!(2020, 1, 3),
+            dec!(100),
+            dec!(10),
+        ));
+
+        // Sell 100 shares at €20 each = €1000 gain
+        let result = calculate_capital_gain(&mut queue, dec!(100), dec!(20));
+
+        // Apply 0% Teilfreistellung (regular stock)
+        let teilfreistellung = TeilfreistellungRate::None;
+        let taxable_gain = result.gross_gain_loss * teilfreistellung.taxable_portion();
+
+        // 0% exempt = full €1000 taxable
+        assert_eq!(taxable_gain, dec!(1000));
+    }
 }
