@@ -8,7 +8,7 @@ use crate::core::GenericResult;
 use crate::formatting;
 use crate::types::Decimal;
 
-use super::statement::{CapitalGainEntry, DividendEntry, GermanTaxStatement, InterestEntry};
+use super::statement::{CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry};
 
 /// CSV formatter for German tax statements.
 pub struct GermanCsvFormatter;
@@ -30,6 +30,10 @@ impl GermanCsvFormatter {
 
         for entry in &statement.interest {
             Self::write_interest_row(writer, entry)?;
+        }
+
+        for entry in &statement.fx_gains {
+            Self::write_fx_gain_row(writer, entry)?;
         }
 
         // Write summary rows
@@ -122,6 +126,28 @@ impl GermanCsvFormatter {
         Ok(())
     }
 
+    fn write_fx_gain_row<W: Write>(writer: &mut W, entry: &FxGainEntry) -> GenericResult<()> {
+        writeln!(
+            writer,
+            "FX Gain/Loss,{},{},{},N/A,{},,,,,{},0.00,{},{},{},{},{},{},{},{},{}",
+            formatting::format_date(entry.transaction_date),
+            formatting::format_date(entry.transaction_date),
+            Self::escape_csv(&entry.currency_pair),
+            Self::escape_csv(&entry.description),
+            Self::format_decimal(entry.gross_amount_eur),
+            Self::format_decimal(entry.taxable_amount),
+            Self::format_decimal(dec!(0)), // No foreign withholding tax for FX
+            Self::format_decimal(entry.abgeltungssteuer),
+            Self::format_decimal(entry.solidaritaetszuschlag),
+            Self::format_decimal(entry.kirchensteuer),
+            Self::format_decimal(dec!(0)), // No foreign tax credit for FX
+            Self::format_decimal(entry.total_tax),
+            Self::format_decimal(entry.total_tax), // Net = total for FX
+            entry.notes.as_deref().unwrap_or("")
+        )?;
+        Ok(())
+    }
+
     fn write_summary_rows<W: Write>(
         writer: &mut W,
         statement: &GermanTaxStatement,
@@ -153,6 +179,16 @@ impl GermanCsvFormatter {
         )?;
         writeln!(
             writer,
+            "SUMMARY_FX_GAINS,Total FX Gains,{}",
+            Self::format_decimal(statement.total_fx_gains)
+        )?;
+        writeln!(
+            writer,
+            "SUMMARY_FX_LOSSES,Total FX Losses,{}",
+            Self::format_decimal(statement.total_fx_losses)
+        )?;
+        writeln!(
+            writer,
             "SUMMARY_TOTAL_GERMAN_TAX,Total German Tax,{}",
             Self::format_decimal(statement.total_german_tax)
         )?;
@@ -176,6 +212,43 @@ impl GermanCsvFormatter {
             "SUMMARY_LOSS_CF_NEW,New Loss Carryforward,{}",
             Self::format_decimal(statement.loss_carryforward_remaining)
         )?;
+
+        // Anlage KAP form line values
+        writeln!(writer)?;
+        writeln!(writer, "# ANLAGE KAP - German Tax Form Values")?;
+        writeln!(writer, "# These values can be transferred directly to the Anlage KAP form")?;
+        writeln!(
+            writer,
+            "KAP_ZEILE_19,Ausländische Kapitalerträge (Foreign Capital Income),{}",
+            Self::format_decimal(statement.kap_zeile_19)
+        )?;
+        writeln!(
+            writer,
+            "KAP_ZEILE_22,Sonstige Verluste ohne Aktien (Non-Stock Losses),{}",
+            Self::format_decimal(statement.kap_zeile_22)
+        )?;
+        writeln!(
+            writer,
+            "KAP_ZEILE_23,Verluste aus Aktienveräußerungen (Stock Sale Losses),{}",
+            Self::format_decimal(statement.kap_zeile_23)
+        )?;
+        writeln!(
+            writer,
+            "KAP_ZEILE_41,Anrechenbare ausländische Steuer (Creditable Foreign Tax),{}",
+            Self::format_decimal(statement.kap_zeile_41)
+        )?;
+
+        // Non-taxable amounts (for reference)
+        if statement.non_taxable_margin_fx != dec!(0) {
+            writeln!(writer)?;
+            writeln!(writer, "# NON-TAXABLE AMOUNTS (Nicht steuerbar)")?;
+            writeln!(
+                writer,
+                "NON_TAXABLE_MARGIN_FX,Tilgung Fremdwährungskredit / Margin Loan FX (nicht steuerbar),{}",
+                Self::format_decimal(statement.non_taxable_margin_fx)
+            )?;
+        }
+
         Ok(())
     }
 

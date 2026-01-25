@@ -53,7 +53,7 @@ pub use self::corporate_actions::{CorporateAction, StockSplitController, process
 pub use self::dividends::Dividend;
 pub use self::fees::Fee;
 pub use self::grants::{CashGrant, StockGrant, process_grants};
-pub use self::interest::IdleCashInterest;
+pub use self::interest::{IdleCashInterest, FxGain};
 pub use self::merging::StatementsMergingStrategy;
 pub use self::payments::Withholding;
 pub use self::reader::ReadingStrictness;
@@ -72,6 +72,7 @@ pub struct BrokerStatement {
     pub cash_flows: Vec<CashFlow>,
     pub deposits_and_withdrawals: Vec<CashAssets>,
     pub idle_cash_interest: Vec<IdleCashInterest>,
+    pub fx_gains: Vec<FxGain>,
     pub tax_agent_withholdings: TaxAgentWithholdings,
 
     pub exchanges: Exchanges,
@@ -250,6 +251,7 @@ impl BrokerStatement {
             cash_flows: Vec::new(),
             deposits_and_withdrawals: Vec::new(),
             idle_cash_interest: Vec::new(),
+            fx_gains: Vec::new(),
             tax_agent_withholdings: TaxAgentWithholdings::new(),
 
             exchanges: Exchanges::new_empty(),
@@ -509,6 +511,7 @@ impl BrokerStatement {
         self.cash_flows.extend(statement.cash_flows);
         self.deposits_and_withdrawals.extend(statement.deposits_and_withdrawals);
         self.idle_cash_interest.extend(statement.idle_cash_interest);
+        self.fx_gains.extend(statement.fx_gains);
         self.tax_agent_withholdings.merge(statement.tax_agent_withholdings);
 
         self.exchanges.merge(statement.exchanges);

@@ -5,6 +5,7 @@ mod confirmation;
 mod corporate_actions;
 mod dividends;
 mod fees;
+mod flex_query;
 mod grants;
 mod interest;
 mod instruments;
@@ -62,6 +63,12 @@ impl StatementReader {
 
 impl BrokerStatementReader for StatementReader {
     fn check(&mut self, path: &Path) -> GenericResult<bool> {
+        // Support both CSV Activity Statements and XML Flex Query reports
+        if util::has_extension(path, "xml") {
+            // Check if it's an IB Flex Query XML file
+            return Ok(is_flex_query_xml(path)?);
+        }
+
         if !util::has_extension(path, "csv") {
             return Ok(false)
         }
@@ -73,6 +80,13 @@ impl BrokerStatementReader for StatementReader {
     }
 
     fn read(&mut self, path: &Path, _is_last: bool) -> GenericResult<PartialBrokerStatement> {
+        // Handle XML Flex Query files
+        if util::has_extension(path, "xml") {
+            let data = std::fs::read(path)?;
+            return flex_query::FlexQueryResponse::parse(&data);
+        }
+
+        // Handle CSV Activity Statements
         StatementParser {
             statement: PartialBrokerStatement::new(&[Exchange::Us, Exchange::Lse, Exchange::Other], false),
 
@@ -92,6 +106,13 @@ impl BrokerStatementReader for StatementReader {
     fn close(self: Box<StatementReader>) -> EmptyResult {
         self.tax_remapping.ensure_all_mapped()
     }
+}
+
+/// Check if an XML file is an IB Flex Query report
+fn is_flex_query_xml(path: &Path) -> GenericResult<bool> {
+    let content = std::fs::read_to_string(path)?;
+    // IB Flex Query XML files contain FlexQueryResponse or FlexStatements
+    Ok(content.contains("<FlexQueryResponse") || content.contains("<FlexStatements"))
 }
 
 enum State {

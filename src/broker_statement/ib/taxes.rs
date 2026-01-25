@@ -34,6 +34,13 @@ impl RecordParser for WithholdingTaxParser {
         let description = record.get_value("Description")?;
         let statement_date = record.parse_date("Date")?;
 
+        // Interest withholding taxes (e.g., "Withholding @ 20% on Credit Interest for Nov-2025")
+        // are handled separately from dividend withholding taxes. For German tax purposes,
+        // we calculate tax on the gross interest amount, so we skip these broker-withheld taxes.
+        if is_interest_withholding_tax(description) {
+            return Ok(());
+        }
+
         let issuer = parse_tax_description(description)?;
         let actual_date = parser.tax_remapping.map(statement_date, description);
 
@@ -57,6 +64,15 @@ impl RecordParser for WithholdingTaxParser {
 
         Ok(())
     }
+}
+
+fn is_interest_withholding_tax(description: &str) -> bool {
+    lazy_static! {
+        // Interest withholding tax: "Withholding @ 20% on Credit Interest for Nov-2025"
+        static ref INTEREST_TAX_REGEX: Regex = Regex::new(
+            r"^Withholding @ \d+% on Credit Interest for [A-Z][a-z]+-\d{4}$").unwrap();
+    }
+    INTEREST_TAX_REGEX.is_match(description)
 }
 
 fn parse_tax_description(description: &str) -> GenericResult<String> {

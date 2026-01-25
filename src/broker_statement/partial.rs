@@ -16,7 +16,7 @@ use super::corporate_actions::CorporateAction;
 use super::dividends::{DividendId, DividendAccruals};
 use super::fees::Fee;
 use super::grants::{CashGrant, StockGrant};
-use super::interest::IdleCashInterest;
+use super::interest::{IdleCashInterest, FxGain};
 use super::trades::{ForexTrade, StockBuy, StockSell};
 use super::taxes::{TaxId, TaxAccruals, TaxAgentWithholdings};
 
@@ -30,6 +30,7 @@ pub struct PartialBrokerStatement {
     pub cash_flows: Vec<CashFlow>,
     pub fees: Vec<Fee>,
     pub idle_cash_interest: Vec<IdleCashInterest>,
+    pub fx_gains: Vec<FxGain>,
     pub tax_agent_withholdings: TaxAgentWithholdings,
 
     pub exchanges: Exchanges,
@@ -66,6 +67,7 @@ impl PartialBrokerStatement {
             cash_flows: Vec::new(),
             fees: Vec::new(),
             idle_cash_interest: Vec::new(),
+            fx_gains: Vec::new(),
             tax_agent_withholdings: TaxAgentWithholdings::new(),
 
             exchanges: Exchanges::new(exchanges),
