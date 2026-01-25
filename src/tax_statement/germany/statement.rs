@@ -3,7 +3,9 @@
 //! Contains the main GermanTaxStatement struct and entry types for capital gains,
 //! dividends, and interest.
 
-use crate::taxes::germany::{GermanTaxRates, TeilfreistellungRate};
+use crate::taxes::germany::{
+    GermanTaxRates, TeilfreistellungRate, calculate_with_loss_carryforward,
+};
 use crate::types::{Date, Decimal};
 
 /// Entry for a capital gain/loss transaction.
@@ -186,11 +188,21 @@ impl GermanTaxStatement {
             self.total_foreign_tax_credit += entry.foreign_tax_credit;
         }
 
+        // Calculate net capital gain/loss for carryforward calculation
+        let net_capital_gain_loss = self.total_capital_gains - self.total_capital_losses;
+
+        // Apply loss carryforward to capital gains
+        // Note: Loss carryforward only applies to capital gains, not dividends or interest
+        let previous_carryforward = self.loss_carryforward_remaining;
+        let (taxable_capital_gains, cf_used, cf_remaining) =
+            calculate_with_loss_carryforward(net_capital_gain_loss, previous_carryforward);
+
+        self.loss_carryforward_used = cf_used;
+        self.loss_carryforward_remaining = cf_remaining;
+
         // Calculate final totals
         self.total_taxable_income =
-            self.total_capital_gains + self.total_dividend_income + self.total_interest_income
-                - self.total_capital_losses
-                - self.loss_carryforward_used;
+            taxable_capital_gains + self.total_dividend_income + self.total_interest_income;
 
         self.total_german_tax = self.total_abgeltungssteuer
             + self.total_solidaritaetszuschlag
