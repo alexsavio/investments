@@ -1,7 +1,7 @@
 //! German tax statement data structures.
 //!
 //! Contains the main GermanTaxStatement struct and entry types for capital gains,
-//! dividends, and interest.
+//! dividends, interest, and FX gains/losses.
 
 use crate::taxes::germany::{
     GermanTaxRates, TeilfreistellungRate, calculate_with_loss_carryforward,
@@ -69,6 +69,27 @@ pub struct InterestEntry {
     pub notes: Option<String>,
 }
 
+/// Entry for FX (foreign currency) gain/loss.
+///
+/// For German tax purposes:
+/// - FX gains on interest-bearing currency accounts (like IBKR) fall under §20 EStG
+/// - They are taxed as capital income (Abgeltungsteuer)
+/// - Every forex transaction realizes a gain/loss based on exchange rate differences
+/// - Losses can offset other capital income in the general loss bucket
+#[derive(Debug, Clone)]
+pub struct FxGainEntry {
+    pub transaction_date: Date,
+    pub currency_pair: String,      // e.g., "EUR.USD"
+    pub description: String,
+    pub gross_amount_eur: Decimal,  // Positive = gain, negative = loss
+    pub taxable_amount: Decimal,
+    pub abgeltungssteuer: Decimal,
+    pub solidaritaetszuschlag: Decimal,
+    pub kirchensteuer: Decimal,
+    pub total_tax: Decimal,
+    pub notes: Option<String>,
+}
+
 /// Complete German tax statement for a single tax year.
 #[derive(Debug)]
 pub struct GermanTaxStatement {
@@ -78,6 +99,7 @@ pub struct GermanTaxStatement {
     pub capital_gains: Vec<CapitalGainEntry>,
     pub dividends: Vec<DividendEntry>,
     pub interest: Vec<InterestEntry>,
+    pub fx_gains: Vec<FxGainEntry>,
 
     // Loss carryforward tracking
     pub loss_carryforward_used: Decimal,
@@ -88,6 +110,8 @@ pub struct GermanTaxStatement {
     pub total_capital_losses: Decimal,
     pub total_dividend_income: Decimal,
     pub total_interest_income: Decimal,
+    pub total_fx_gains: Decimal,
+    pub total_fx_losses: Decimal,
     pub total_taxable_income: Decimal,
     pub total_foreign_tax: Decimal,
     pub total_abgeltungssteuer: Decimal,
@@ -96,6 +120,21 @@ pub struct GermanTaxStatement {
     pub total_german_tax: Decimal,
     pub total_foreign_tax_credit: Decimal,
     pub net_tax_due: Decimal,
+
+    // Non-taxable amounts (for information/reporting)
+    /// FX gains/losses from margin loan repayments (not taxable - Tilgung Fremdwährungskredit)
+    pub non_taxable_margin_fx: Decimal,
+
+    // Anlage KAP form line values
+    // These map to specific lines on the German tax form "Anlage KAP"
+    /// KAP Zeile 19: Foreign capital income (dividends, interest, FX gains from abroad)
+    pub kap_zeile_19: Decimal,
+    /// KAP Zeile 22: Losses from non-stock capital income (FX losses, interest losses)
+    pub kap_zeile_22: Decimal,
+    /// KAP Zeile 23: Losses from stock sales
+    pub kap_zeile_23: Decimal,
+    /// KAP Zeile 41: Creditable foreign withholding tax (anrechenbare ausländische Quellensteuer)
+    pub kap_zeile_41: Decimal,
 }
 
 impl GermanTaxStatement {
@@ -108,6 +147,7 @@ impl GermanTaxStatement {
             capital_gains: Vec::new(),
             dividends: Vec::new(),
             interest: Vec::new(),
+            fx_gains: Vec::new(),
 
             loss_carryforward_used: dec!(0),
             loss_carryforward_remaining: loss_carryforward,
@@ -116,6 +156,8 @@ impl GermanTaxStatement {
             total_capital_losses: dec!(0),
             total_dividend_income: dec!(0),
             total_interest_income: dec!(0),
+            total_fx_gains: dec!(0),
+            total_fx_losses: dec!(0),
             total_taxable_income: dec!(0),
             total_foreign_tax: dec!(0),
             total_abgeltungssteuer: dec!(0),
@@ -124,6 +166,14 @@ impl GermanTaxStatement {
             total_german_tax: dec!(0),
             total_foreign_tax_credit: dec!(0),
             net_tax_due: dec!(0),
+
+            non_taxable_margin_fx: dec!(0),
+
+            // KAP line values (calculated)
+            kap_zeile_19: dec!(0),
+            kap_zeile_22: dec!(0),
+            kap_zeile_23: dec!(0),
+            kap_zeile_41: dec!(0),
         }
     }
 
@@ -142,6 +192,11 @@ impl GermanTaxStatement {
         self.interest.push(entry);
     }
 
+    /// Add an FX gain/loss entry.
+    pub fn add_fx_gain(&mut self, entry: FxGainEntry) {
+        self.fx_gains.push(entry);
+    }
+
     /// Calculate all summary totals.
     pub fn calculate_totals(&mut self) {
         // Reset totals
@@ -149,6 +204,8 @@ impl GermanTaxStatement {
         self.total_capital_losses = dec!(0);
         self.total_dividend_income = dec!(0);
         self.total_interest_income = dec!(0);
+        self.total_fx_gains = dec!(0);
+        self.total_fx_losses = dec!(0);
         self.total_foreign_tax = dec!(0);
         self.total_abgeltungssteuer = dec!(0);
         self.total_solidaritaetszuschlag = dec!(0);
@@ -188,8 +245,24 @@ impl GermanTaxStatement {
             self.total_foreign_tax_credit += entry.foreign_tax_credit;
         }
 
+        // Sum FX gains/losses
+        // FX gains on interest-bearing accounts (§20 EStG) are capital income
+        // and can be offset against other capital income
+        for entry in &self.fx_gains {
+            if entry.gross_amount_eur >= dec!(0) {
+                self.total_fx_gains += entry.taxable_amount;
+            } else {
+                self.total_fx_losses += entry.taxable_amount.abs();
+            }
+            self.total_abgeltungssteuer += entry.abgeltungssteuer;
+            self.total_solidaritaetszuschlag += entry.solidaritaetszuschlag;
+            self.total_kirchensteuer += entry.kirchensteuer;
+        }
+
         // Calculate net capital gain/loss for carryforward calculation
-        let net_capital_gain_loss = self.total_capital_gains - self.total_capital_losses;
+        // Note: FX losses from interest-bearing accounts can be included in the general loss bucket
+        let net_capital_gain_loss = self.total_capital_gains - self.total_capital_losses
+            + self.total_fx_gains - self.total_fx_losses;
 
         // Apply loss carryforward to capital gains
         // Note: Loss carryforward only applies to capital gains, not dividends or interest
@@ -214,5 +287,63 @@ impl GermanTaxStatement {
         if self.net_tax_due < dec!(0) {
             self.net_tax_due = dec!(0);
         }
+
+        // Calculate Anlage KAP form line values
+        //
+        // KAP Zeile 19: Foreign capital income from abroad (ausländische Kapitalerträge)
+        // This is the GROSS income before loss offsetting
+        // Includes: dividends, interest, FX gains, and capital gains (all from foreign sources)
+        // Note: For IBKR accounts, all income is considered "foreign" (ausländisch)
+        // Note: This uses taxable amounts (after Teilfreistellung) not gross amounts
+
+        // Sum gross dividend income
+        let gross_dividend_income: Decimal = self.dividends.iter()
+            .map(|e| e.gross_amount_eur)
+            .sum();
+
+        // Sum gross interest income
+        let gross_interest_income: Decimal = self.interest.iter()
+            .map(|e| e.gross_amount_eur)
+            .sum();
+
+        // Sum gross capital gains (only gains, not losses)
+        let gross_capital_gains: Decimal = self.capital_gains.iter()
+            .filter(|e| e.gross_gain_loss > dec!(0))
+            .map(|e| e.gross_gain_loss)
+            .sum();
+
+        // Sum gross FX gains (only gains, not losses)
+        let gross_fx_gains: Decimal = self.fx_gains.iter()
+            .filter(|e| e.gross_amount_eur > dec!(0))
+            .map(|e| e.gross_amount_eur)
+            .sum();
+
+        self.kap_zeile_19 = gross_dividend_income
+            + gross_interest_income
+            + gross_fx_gains
+            + gross_capital_gains;
+
+        // KAP Zeile 22: Losses from non-stock capital transactions (sonstige Verluste)
+        // This includes: FX losses (§20 Abs. 2 Nr. 7 EStG) - but NOT stock losses
+        // Stock sale losses go to Zeile 23 and have restricted offsetting rules
+        let gross_fx_losses: Decimal = self.fx_gains.iter()
+            .filter(|e| e.gross_amount_eur < dec!(0))
+            .map(|e| e.gross_amount_eur.abs())
+            .sum();
+        self.kap_zeile_22 = gross_fx_losses;
+
+        // KAP Zeile 23: Losses from stock sales (Aktien-Verluste)
+        // These can only be offset against future stock gains (Verlusttopf Aktien)
+        // Note: Uses gross loss amounts, not taxable amounts
+        let gross_capital_losses: Decimal = self.capital_gains.iter()
+            .filter(|e| e.gross_gain_loss < dec!(0))
+            .map(|e| e.gross_gain_loss.abs())
+            .sum();
+        self.kap_zeile_23 = gross_capital_losses;
+
+        // KAP Zeile 41: Creditable foreign withholding tax (anrechenbare ausländische Steuer)
+        // This is the amount of foreign tax that can be credited against German tax liability
+        // Limited to the German tax on the same income (proportional crediting)
+        self.kap_zeile_41 = self.total_foreign_tax_credit;
     }
 }

@@ -186,10 +186,10 @@ fn generate_german_tax_statement(
     let converter = CurrencyConverter::new(database, None, true);
 
     // Process broker statement and populate entries
-    let (has_trades, has_dividends, has_interest) =
+    let (has_trades, has_dividends, has_interest, has_fx_gains) =
         germany::process_broker_statement(&mut statement, &broker_statement, year, &converter, &config.taxes)?;
 
-    let has_income = has_trades || has_dividends || has_interest;
+    let has_income = has_trades || has_dividends || has_interest || has_fx_gains;
 
     // Calculate totals
     statement.calculate_totals();
@@ -213,10 +213,17 @@ fn generate_german_tax_statement(
         println!("Capital gains entries: {}", statement.capital_gains.len());
         println!("Dividend entries: {}", statement.dividends.len());
         println!("Interest entries: {}", statement.interest.len());
+        println!("FX gain/loss entries: {}", statement.fx_gains.len());
         println!(
             "Total taxable income: €{:.2}",
             statement.total_taxable_income
         );
+        if statement.total_fx_gains > Decimal::ZERO || statement.total_fx_losses > Decimal::ZERO {
+            println!(
+                "FX gains: €{:.2}, FX losses: €{:.2}",
+                statement.total_fx_gains, statement.total_fx_losses
+            );
+        }
         println!("Total German tax: €{:.2}", statement.total_german_tax);
         if statement.total_foreign_tax > Decimal::ZERO {
             println!(
@@ -225,6 +232,40 @@ fn generate_german_tax_statement(
             );
         }
         println!("Net tax due: €{:.2}", statement.net_tax_due);
+
+        // Print Anlage KAP form values
+        println!("\n{}", Color::Cyan.paint("=== Anlage KAP Form Values ==="));
+        println!(
+            "KAP Zeile 19 (Ausländische Kapitalerträge): €{:.2}",
+            statement.kap_zeile_19
+        );
+        if statement.kap_zeile_22 > Decimal::ZERO {
+            println!(
+                "KAP Zeile 22 (Sonstige Verluste): €{:.2}",
+                statement.kap_zeile_22
+            );
+        }
+        if statement.kap_zeile_23 > Decimal::ZERO {
+            println!(
+                "KAP Zeile 23 (Aktien-Verluste): €{:.2}",
+                statement.kap_zeile_23
+            );
+        }
+        if statement.kap_zeile_41 > Decimal::ZERO {
+            println!(
+                "KAP Zeile 41 (Anrechenbare ausländische Steuer): €{:.2}",
+                statement.kap_zeile_41
+            );
+        }
+
+        // Show non-taxable amounts if present
+        if statement.non_taxable_margin_fx != Decimal::ZERO {
+            println!("\n{}", Color::Yellow.paint("=== Non-Taxable (Nicht steuerbar) ==="));
+            println!(
+                "Tilgung Fremdwährungskredit (Margin Loan FX): €{:.2}",
+                statement.non_taxable_margin_fx
+            );
+        }
     } else if has_income {
         // No output file specified, just print summary
         println!(

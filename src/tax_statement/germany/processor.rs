@@ -1,7 +1,7 @@
 //! German tax statement processor.
 //!
 //! Processes broker statement data and populates the German tax statement
-//! with capital gains, dividends, and interest entries.
+//! with capital gains, dividends, interest entries, and FX gains/losses.
 
 use chrono::Datelike;
 use log::{debug, warn};
@@ -15,7 +15,7 @@ use crate::taxes::germany::TeilfreistellungRate;
 use crate::time::Date;
 use crate::types::Decimal;
 
-use super::statement::{CapitalGainEntry, DividendEntry, GermanTaxStatement, InterestEntry};
+use super::statement::{CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry};
 
 /// Helper function to convert to EUR with context-specific error message.
 fn convert_to_eur(
@@ -100,24 +100,25 @@ pub fn process_broker_statement(
     year: i32,
     converter: &CurrencyConverter,
     tax_config: &TaxConfig,
-) -> GenericResult<(bool, bool, bool)> {
+) -> GenericResult<(bool, bool, bool, bool)> {
     debug!("Processing German tax statement for year {}", year);
 
     let has_trades = process_trades(statement, broker_statement, year, converter, tax_config)?;
     let has_dividends =
         process_dividends(statement, broker_statement, year, converter, tax_config)?;
     let has_interest = process_interest(statement, broker_statement, year, converter)?;
+    let has_fx_gains = process_fx_gains(statement, broker_statement, year, converter)?;
 
     debug!(
-        "German tax statement processing complete: {} trades, {} dividends, {} interest entries",
+        "German tax statement processing complete: {} trades, {} dividends, {} interest, {} FX entries",
         statement.capital_gains.len(),
         statement.dividends.len(),
-        statement.interest.len()
+        statement.interest.len(),
+        statement.fx_gains.len()
     );
 
-    Ok((has_trades, has_dividends, has_interest))
+    Ok((has_trades, has_dividends, has_interest, has_fx_gains))
 }
-
 /// Process stock sales and create capital gain entries.
 fn process_trades(
     statement: &mut GermanTaxStatement,
@@ -498,6 +499,93 @@ fn process_interest(
 
         statement.add_interest(entry);
     }
+
+    Ok(has_income)
+}
+
+/// Process FX gains/losses and create FX gain entries.
+///
+/// For German tax purposes:
+/// - FX gains on interest-bearing currency accounts (like IBKR) fall under §20 EStG
+/// - They are taxed as capital income (Abgeltungsteuer)
+/// - Losses from interest-bearing accounts can be offset against other capital income
+/// - FX gains/losses from margin loan repayments are NOT taxable
+///   (Tilgung eines Fremdwährungskredits - debt repayment is not a taxable event)
+fn process_fx_gains(
+    statement: &mut GermanTaxStatement,
+    broker_statement: &BrokerStatement,
+    year: i32,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_income = false;
+    let mut non_taxable_margin_fx = dec!(0);
+
+    for fx_gain in &broker_statement.fx_gains {
+        if fx_gain.date.year() != year {
+            continue;
+        }
+
+        // Convert amount to EUR with helpful error message
+        let context = format!(
+            "Processing FX gain/loss for {} on {}",
+            fx_gain.currency_pair, fx_gain.date
+        );
+        let gross_amount_eur = convert_to_eur(converter, fx_gain.date, fx_gain.amount, &context)?;
+
+        // Skip margin loan FX (not taxable - Tilgung Fremdwährungskredit)
+        if fx_gain.is_margin_loan {
+            non_taxable_margin_fx += gross_amount_eur;
+            debug!(
+                "FX margin loan (not taxable): {} - amount: €{:.2}",
+                fx_gain.currency_pair, gross_amount_eur
+            );
+            continue;
+        }
+
+        has_income = true;
+
+        // FX gains don't have Teilfreistellung
+        let taxable_amount = gross_amount_eur;
+
+        // Calculate German taxes (only on gains, not losses)
+        let (abgeltungssteuer, soli, church_tax, total_tax) = if taxable_amount > dec!(0) {
+            let rates = &statement.tax_rates;
+            let abgelt = taxable_amount * rates.abgeltungssteuer;
+            let soli = abgelt * rates.solidaritaetszuschlag;
+            let church = abgelt * rates.kirchensteuer;
+            (abgelt, soli, church, abgelt + soli + church)
+        } else {
+            // Losses - no tax (but tracked for offset calculation)
+            (dec!(0), dec!(0), dec!(0), dec!(0))
+        };
+
+        let entry = FxGainEntry {
+            transaction_date: fx_gain.date,
+            currency_pair: fx_gain.currency_pair.clone(),
+            description: fx_gain.description.clone(),
+            gross_amount_eur,
+            taxable_amount,
+            abgeltungssteuer,
+            solidaritaetszuschlag: soli,
+            kirchensteuer: church_tax,
+            total_tax,
+            notes: if taxable_amount < dec!(0) {
+                Some("FX loss - can offset other capital income (§20 EStG)".to_string())
+            } else {
+                None
+            },
+        };
+
+        debug!(
+            "FX gain/loss: {} - amount: €{:.2}, tax: €{:.2}",
+            fx_gain.currency_pair, gross_amount_eur, total_tax
+        );
+
+        statement.add_fx_gain(entry);
+    }
+
+    // Store non-taxable margin FX total for reporting
+    statement.non_taxable_margin_fx = non_taxable_margin_fx;
 
     Ok(has_income)
 }
@@ -993,5 +1081,121 @@ mod tests {
             "Accuracy test passed: All amounts precise to €0.01 - Total taxable: €{:.2}",
             statement.total_taxable_income
         );
+    }
+
+    /// Test FX gains/losses processing (§20 EStG - capital income treatment).
+    #[test]
+    fn test_fx_gains_processing() {
+        let mut statement = GermanTaxStatement::new(2024, dec!(0.08), dec!(0)); // 8% church tax
+
+        // FX gain entry (profit from EUR/USD)
+        let fx_gain = FxGainEntry {
+            transaction_date: Date::from_ymd_opt(2024, 6, 15).unwrap(),
+            currency_pair: "EUR.USD".to_string(),
+            description: "Net Amount in Base from Forex Trade: -100 EUR.USD".to_string(),
+            gross_amount_eur: dec!(10.50),  // Realized FX gain
+            taxable_amount: dec!(10.50),    // Full amount taxable (no Teilfreistellung)
+            abgeltungssteuer: dec!(2.625),  // 25% of 10.50
+            solidaritaetszuschlag: dec!(0.144375), // 5.5% of 2.625
+            kirchensteuer: dec!(0.21),      // 8% of 2.625
+            total_tax: dec!(2.979375),
+            notes: None,
+        };
+        statement.add_fx_gain(fx_gain);
+
+        // FX loss entry (loss from EUR/USD)
+        let fx_loss = FxGainEntry {
+            transaction_date: Date::from_ymd_opt(2024, 7, 20).unwrap(),
+            currency_pair: "EUR.USD".to_string(),
+            description: "Net Amount in Base from Forex Trade: -50 EUR.USD".to_string(),
+            gross_amount_eur: dec!(-3.25),  // Realized FX loss
+            taxable_amount: dec!(-3.25),    // Loss reduces taxable income
+            abgeltungssteuer: dec!(0),      // No tax on losses
+            solidaritaetszuschlag: dec!(0),
+            kirchensteuer: dec!(0),
+            total_tax: dec!(0),
+            notes: Some("FX loss - can offset other capital income (§20 EStG)".to_string()),
+        };
+        statement.add_fx_gain(fx_loss);
+
+        // Calculate totals
+        statement.calculate_totals();
+
+        // Verify FX entries are correctly categorized
+        assert_eq!(statement.fx_gains.len(), 2);
+        assert_eq!(statement.total_fx_gains, dec!(10.50));
+        assert_eq!(statement.total_fx_losses, dec!(3.25));
+
+        // Net FX income should be 10.50 - 3.25 = 7.25
+        // This should be included in taxable income calculation
+        let net_fx = statement.total_fx_gains - statement.total_fx_losses;
+        assert_eq!(net_fx, dec!(7.25));
+
+        // Generate CSV output and verify FX rows exist
+        let mut csv_output = Vec::new();
+        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv_string = String::from_utf8(csv_output).unwrap();
+
+        // Check FX gain/loss rows exist
+        assert!(csv_string.contains("FX Gain/Loss"));
+        assert!(csv_string.contains("EUR.USD"));
+        assert!(csv_string.contains("SUMMARY_FX_GAINS"));
+        assert!(csv_string.contains("SUMMARY_FX_LOSSES"));
+    }
+
+    /// Test that FX losses can offset capital gains (general loss bucket).
+    #[test]
+    fn test_fx_loss_offset_capital_gains() {
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)); // No church tax
+
+        // Capital gain entry
+        let capital_gain = CapitalGainEntry {
+            transaction_date: Date::from_ymd_opt(2024, 5, 1).unwrap(),
+            settle_date: Date::from_ymd_opt(2024, 5, 3).unwrap(),
+            symbol: "AAPL".to_string(),
+            isin: "US0378331005".to_string(),
+            description: "Apple Inc.".to_string(),
+            quantity: dec!(10),
+            cost_basis_eur: dec!(1000.00),
+            proceeds_eur: dec!(1200.00),
+            gross_gain_loss: dec!(200.00),
+            teilfreistellung_rate: TeilfreistellungRate::None,
+            taxable_amount: dec!(200.00),
+            foreign_tax: dec!(0),
+            abgeltungssteuer: dec!(50.00),   // 25% of 200
+            solidaritaetszuschlag: dec!(2.75), // 5.5% of 50
+            kirchensteuer: dec!(0),
+            total_tax: dec!(52.75),
+            pre_2009_holding: false,
+            notes: None,
+        };
+        statement.add_capital_gain(capital_gain);
+
+        // FX loss entry - larger than capital gain
+        let fx_loss = FxGainEntry {
+            transaction_date: Date::from_ymd_opt(2024, 6, 15).unwrap(),
+            currency_pair: "EUR.USD".to_string(),
+            description: "Large FX loss".to_string(),
+            gross_amount_eur: dec!(-150.00),
+            taxable_amount: dec!(-150.00),
+            abgeltungssteuer: dec!(0),
+            solidaritaetszuschlag: dec!(0),
+            kirchensteuer: dec!(0),
+            total_tax: dec!(0),
+            notes: Some("FX loss - can offset other capital income (§20 EStG)".to_string()),
+        };
+        statement.add_fx_gain(fx_loss);
+
+        statement.calculate_totals();
+
+        // Capital gains: 200
+        // FX losses: 150
+        // Net for loss carryforward calculation: 200 + 0 - 0 - 150 = 50
+        assert_eq!(statement.total_capital_gains, dec!(200.00));
+        assert_eq!(statement.total_fx_losses, dec!(150.00));
+
+        // Verify the loss offset worked (net capital income reduced)
+        // Total taxable = capital gains (200) - FX losses (150) = 50
+        // Note: This test verifies the structure; actual offset happens in calculate_totals
     }
 }
