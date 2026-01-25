@@ -8,4 +8,6 @@ mod statement;
 
 pub use self::csv_formatter::GermanCsvFormatter;
 pub use self::processor::process_broker_statement;
-pub use self::statement::{CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry};
+pub use self::statement::{
+    CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry,
+};

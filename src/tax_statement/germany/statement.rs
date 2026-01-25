@@ -79,9 +79,9 @@ pub struct InterestEntry {
 #[derive(Debug, Clone)]
 pub struct FxGainEntry {
     pub transaction_date: Date,
-    pub currency_pair: String,      // e.g., "EUR.USD"
+    pub currency_pair: String, // e.g., "EUR.USD"
     pub description: String,
-    pub gross_amount_eur: Decimal,  // Positive = gain, negative = loss
+    pub gross_amount_eur: Decimal, // Positive = gain, negative = loss
     pub taxable_amount: Decimal,
     pub abgeltungssteuer: Decimal,
     pub solidaritaetszuschlag: Decimal,
@@ -262,7 +262,8 @@ impl GermanTaxStatement {
         // Calculate net capital gain/loss for carryforward calculation
         // Note: FX losses from interest-bearing accounts can be included in the general loss bucket
         let net_capital_gain_loss = self.total_capital_gains - self.total_capital_losses
-            + self.total_fx_gains - self.total_fx_losses;
+            + self.total_fx_gains
+            - self.total_fx_losses;
 
         // Apply loss carryforward to capital gains
         // Note: Loss carryforward only applies to capital gains, not dividends or interest
@@ -297,36 +298,37 @@ impl GermanTaxStatement {
         // Note: This uses taxable amounts (after Teilfreistellung) not gross amounts
 
         // Sum gross dividend income
-        let gross_dividend_income: Decimal = self.dividends.iter()
-            .map(|e| e.gross_amount_eur)
-            .sum();
+        let gross_dividend_income: Decimal =
+            self.dividends.iter().map(|e| e.gross_amount_eur).sum();
 
         // Sum gross interest income
-        let gross_interest_income: Decimal = self.interest.iter()
-            .map(|e| e.gross_amount_eur)
-            .sum();
+        let gross_interest_income: Decimal = self.interest.iter().map(|e| e.gross_amount_eur).sum();
 
         // Sum gross capital gains (only gains, not losses)
-        let gross_capital_gains: Decimal = self.capital_gains.iter()
+        let gross_capital_gains: Decimal = self
+            .capital_gains
+            .iter()
             .filter(|e| e.gross_gain_loss > dec!(0))
             .map(|e| e.gross_gain_loss)
             .sum();
 
         // Sum gross FX gains (only gains, not losses)
-        let gross_fx_gains: Decimal = self.fx_gains.iter()
+        let gross_fx_gains: Decimal = self
+            .fx_gains
+            .iter()
             .filter(|e| e.gross_amount_eur > dec!(0))
             .map(|e| e.gross_amount_eur)
             .sum();
 
-        self.kap_zeile_19 = gross_dividend_income
-            + gross_interest_income
-            + gross_fx_gains
-            + gross_capital_gains;
+        self.kap_zeile_19 =
+            gross_dividend_income + gross_interest_income + gross_fx_gains + gross_capital_gains;
 
         // KAP Zeile 22: Losses from non-stock capital transactions (sonstige Verluste)
         // This includes: FX losses (§20 Abs. 2 Nr. 7 EStG) - but NOT stock losses
         // Stock sale losses go to Zeile 23 and have restricted offsetting rules
-        let gross_fx_losses: Decimal = self.fx_gains.iter()
+        let gross_fx_losses: Decimal = self
+            .fx_gains
+            .iter()
             .filter(|e| e.gross_amount_eur < dec!(0))
             .map(|e| e.gross_amount_eur.abs())
             .sum();
@@ -335,7 +337,9 @@ impl GermanTaxStatement {
         // KAP Zeile 23: Losses from stock sales (Aktien-Verluste)
         // These can only be offset against future stock gains (Verlusttopf Aktien)
         // Note: Uses gross loss amounts, not taxable amounts
-        let gross_capital_losses: Decimal = self.capital_gains.iter()
+        let gross_capital_losses: Decimal = self
+            .capital_gains
+            .iter()
             .filter(|e| e.gross_gain_loss < dec!(0))
             .map(|e| e.gross_gain_loss.abs())
             .sum();
