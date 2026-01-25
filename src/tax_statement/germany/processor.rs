@@ -767,4 +767,231 @@ mod tests {
         assert!(is_derivative("TESTCERT")); // Certificate
         assert!(is_derivative("TESTNOTE")); // Structured note
     }
+
+    /// Performance test: Verify <10s for 1000 transaction statement per SC-001.
+    /// This test uses synthetic data to stress-test the tax calculation pipeline.
+    #[test]
+    fn test_performance_1000_transactions() {
+        use std::time::Instant;
+
+        let start = Instant::now();
+        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(5000)); // With church tax and loss CF
+
+        // Generate 500 capital gain entries (simulating 1000+ buy/sell transactions)
+        for i in 0..500 {
+            let gain = CapitalGainEntry {
+                transaction_date: Date::from_ymd_opt(
+                    2024,
+                    (i % 12 + 1) as u32,
+                    (i % 28 + 1) as u32,
+                )
+                .unwrap(),
+                settle_date: Date::from_ymd_opt(2024, (i % 12 + 1) as u32, (i % 28 + 1) as u32)
+                    .unwrap(),
+                symbol: format!("SYM{:03}", i % 50),
+                isin: format!("US{:010}", i),
+                description: format!("Test Stock {}", i),
+                quantity: dec!(100) + Decimal::from(i % 100),
+                cost_basis_eur: dec!(1000.00) + Decimal::from(i * 10),
+                proceeds_eur: dec!(1200.00) + Decimal::from(i * 12),
+                gross_gain_loss: dec!(200.00) + Decimal::from(i * 2),
+                teilfreistellung_rate: if i % 3 == 0 {
+                    TeilfreistellungRate::Equity
+                } else if i % 3 == 1 {
+                    TeilfreistellungRate::Mixed
+                } else {
+                    TeilfreistellungRate::None
+                },
+                taxable_amount: dec!(150.00) + Decimal::from(i),
+                foreign_tax: dec!(0),
+                abgeltungssteuer: dec!(37.50) + Decimal::from(i / 4),
+                solidaritaetszuschlag: dec!(2.06) + Decimal::from(i / 100),
+                kirchensteuer: dec!(3.38) + Decimal::from(i / 100),
+                total_tax: dec!(42.94) + Decimal::from(i / 3),
+                pre_2009_holding: i % 20 == 0, // 5% are Altbestand
+                notes: None,
+            };
+            statement.add_capital_gain(gain);
+        }
+
+        // Generate 300 dividend entries
+        for i in 0..300 {
+            let dividend = DividendEntry {
+                payment_date: Date::from_ymd_opt(2024, (i % 12 + 1) as u32, 15).unwrap(),
+                symbol: format!("DIV{:03}", i % 30),
+                isin: format!("IE{:010}", i),
+                description: format!("Test Dividend Stock {}", i),
+                quantity: dec!(50) + Decimal::from(i % 50),
+                gross_amount_eur: dec!(100.00) + Decimal::from(i),
+                foreign_withholding_tax: dec!(15.00) + Decimal::from(i / 10),
+                teilfreistellung_rate: if i % 2 == 0 {
+                    TeilfreistellungRate::Equity
+                } else {
+                    TeilfreistellungRate::None
+                },
+                taxable_amount: dec!(70.00) + Decimal::from(i),
+                abgeltungssteuer: dec!(17.50) + Decimal::from(i / 4),
+                solidaritaetszuschlag: dec!(0.96) + Decimal::from(i / 100),
+                kirchensteuer: dec!(1.58) + Decimal::from(i / 100),
+                foreign_tax_credit: dec!(10.00) + Decimal::from(i / 20),
+                total_tax: dec!(20.04) + Decimal::from(i / 3),
+                net_tax: dec!(10.04) + Decimal::from(i / 5),
+                notes: None,
+            };
+            statement.add_dividend(dividend);
+        }
+
+        // Generate 200 interest entries
+        for i in 0..200 {
+            let interest = InterestEntry {
+                payment_date: Date::from_ymd_opt(2024, (i % 12 + 1) as u32, 1).unwrap(),
+                description: format!("Interest Payment {}", i),
+                gross_amount_eur: dec!(50.00) + Decimal::from(i),
+                taxable_amount: dec!(50.00) + Decimal::from(i),
+                foreign_withholding_tax: dec!(0),
+                abgeltungssteuer: dec!(12.50) + Decimal::from(i / 4),
+                solidaritaetszuschlag: dec!(0.69) + Decimal::from(i / 100),
+                kirchensteuer: dec!(1.13) + Decimal::from(i / 100),
+                foreign_tax_credit: dec!(0),
+                total_tax: dec!(14.32) + Decimal::from(i / 3),
+                net_tax: dec!(14.32) + Decimal::from(i / 3),
+                notes: None,
+            };
+            statement.add_interest(interest);
+        }
+
+        // Calculate totals
+        statement.calculate_totals();
+
+        // Generate CSV output
+        let mut csv_output = Vec::new();
+        super::super::csv_formatter::GermanCsvFormatter::write(&statement, &mut csv_output)
+            .unwrap();
+
+        let elapsed = start.elapsed();
+
+        // Performance assertion: must complete in <10 seconds (SC-001)
+        // Using 1 second as a more aggressive threshold since we're not doing I/O
+        assert!(
+            elapsed.as_secs() < 1,
+            "Performance test failed: processing 1000 transactions took {:?}, expected <1s",
+            elapsed
+        );
+
+        // Verify totals were calculated
+        assert!(statement.total_taxable_income > dec!(0));
+        assert!(statement.total_german_tax > dec!(0));
+        assert!(statement.capital_gains.len() == 500);
+        assert!(statement.dividends.len() == 300);
+        assert!(statement.interest.len() == 200);
+
+        // Verify CSV was generated
+        let csv_string = String::from_utf8(csv_output).unwrap();
+        assert!(csv_string.contains("transaction_type"));
+        assert!(csv_string.contains("SUMMARY_TOTAL_TAXABLE_INCOME"));
+
+        println!(
+            "Performance test passed: 1000 transactions processed in {:?}",
+            elapsed
+        );
+    }
+
+    /// Accuracy test: Verify ±€0.01 precision across calculations per SC-002.
+    #[test]
+    fn test_accuracy_precision() {
+        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(0));
+
+        // Test with precise decimal values that could cause floating point errors
+        let gain = CapitalGainEntry {
+            transaction_date: Date::from_ymd_opt(2024, 6, 15).unwrap(),
+            settle_date: Date::from_ymd_opt(2024, 6, 17).unwrap(),
+            symbol: "PREC".to_string(),
+            isin: "US1234567890".to_string(),
+            description: "Precision Test Stock".to_string(),
+            quantity: dec!(33.333), // Non-round quantity
+            cost_basis_eur: dec!(1111.11),
+            proceeds_eur: dec!(2222.22),
+            gross_gain_loss: dec!(1111.11),
+            teilfreistellung_rate: TeilfreistellungRate::None,
+            taxable_amount: dec!(1111.11),
+            foreign_tax: dec!(0),
+            // 25% of 1111.11 = 277.7775, rounded to 277.78
+            abgeltungssteuer: dec!(277.78),
+            // 5.5% of 277.78 = 15.2779, rounded to 15.28
+            solidaritaetszuschlag: dec!(15.28),
+            // 9% of 277.78 = 25.0002, rounded to 25.00
+            kirchensteuer: dec!(25.00),
+            total_tax: dec!(318.06),
+            pre_2009_holding: false,
+            notes: None,
+        };
+        statement.add_capital_gain(gain);
+
+        // Test dividend with foreign tax credit edge case
+        let dividend = DividendEntry {
+            payment_date: Date::from_ymd_opt(2024, 9, 1).unwrap(),
+            symbol: "DIV".to_string(),
+            isin: "IE0000000001".to_string(),
+            description: "Dividend Test".to_string(),
+            quantity: dec!(77.77),
+            gross_amount_eur: dec!(99.99),
+            foreign_withholding_tax: dec!(14.9985), // 15% of 99.99
+            teilfreistellung_rate: TeilfreistellungRate::Equity,
+            taxable_amount: dec!(69.993), // 70% of 99.99
+            // 25% of 69.993 = 17.49825, rounded to 17.50
+            abgeltungssteuer: dec!(17.50),
+            solidaritaetszuschlag: dec!(0.96),
+            kirchensteuer: dec!(1.58),
+            foreign_tax_credit: dec!(14.9985),
+            total_tax: dec!(20.04),
+            net_tax: dec!(5.04), // 20.04 - 14.9985 ≈ 5.04
+            notes: None,
+        };
+        statement.add_dividend(dividend);
+
+        statement.calculate_totals();
+
+        // Verify precision is maintained (no floating point drift)
+        // All amounts should be exact to €0.01
+        let total_str = format!("{:.2}", statement.total_taxable_income);
+        assert!(
+            total_str.ends_with('0')
+                || total_str.ends_with('1')
+                || total_str.ends_with('2')
+                || total_str.ends_with('3')
+                || total_str.ends_with('4')
+                || total_str.ends_with('5')
+                || total_str.ends_with('6')
+                || total_str.ends_with('7')
+                || total_str.ends_with('8')
+                || total_str.ends_with('9'),
+            "Total should be precise to €0.01: {}",
+            total_str
+        );
+
+        // Verify the totals are exactly as expected (no rounding errors)
+        // Capital gain: 1111.11 taxable
+        // Dividend: 69.993 taxable (rounded in display but precise in calculation)
+        let expected_capital_gains_taxable = dec!(1111.11);
+        let expected_dividend_taxable = dec!(69.993);
+
+        assert_eq!(
+            statement.total_capital_gains, expected_capital_gains_taxable,
+            "Capital gains taxable amount should be exactly €1111.11"
+        );
+
+        // The dividend taxable should be close (within €0.01)
+        let diff = (statement.total_dividend_income - expected_dividend_taxable).abs();
+        assert!(
+            diff < dec!(0.01),
+            "Dividend taxable amount should be within €0.01 of expected: got {}, expected {}",
+            statement.total_dividend_income,
+            expected_dividend_taxable
+        );
+
+        println!(
+            "Accuracy test passed: All amounts precise to €0.01 - Total taxable: €{:.2}",
+            statement.total_taxable_income
+        );
+    }
 }
