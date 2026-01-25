@@ -23,6 +23,14 @@ taxes:
   loss_carryforward:
     2023: 1500.00
     2024: 2000.00
+
+  # Optional: ETF classification for Teilfreistellung (partial tax exemption)
+  # Map ISIN to classification: equity (30% exempt), mixed (15% exempt), bond (0% exempt)
+  etf_classification:
+    IE00BK5BQT80: equity    # Vanguard FTSE All-World UCITS ETF (VWCE.DE)
+    IE00B4L5Y983: equity    # iShares Core MSCI World UCITS ETF
+    IE00BDBRDM35: mixed     # iShares Core Global Aggregate Bond
+    LU0274211480: bond      # Xtrackers II Eurozone Government Bond
 ```
 
 ### Portfolio Configuration

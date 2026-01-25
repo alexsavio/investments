@@ -14,6 +14,7 @@ use serde::de::{Deserializer, Error};
 use crate::brokers::Broker;
 use crate::core::EmptyResult;
 use crate::currency;
+use crate::instruments::EtfClassification;
 use crate::localities::Jurisdiction;
 use crate::types::Decimal;
 
@@ -40,6 +41,17 @@ pub struct TaxConfig {
     /// Loss carryforward from previous years (year -> amount in EUR)
     #[serde(default)]
     pub loss_carryforward: BTreeMap<i32, Decimal>,
+    /// ETF classification by ISIN for Teilfreistellung (partial exemption)
+    /// Maps ISIN -> classification (equity, mixed, bond)
+    #[serde(default)]
+    pub etf_classification: BTreeMap<String, EtfClassification>,
+}
+
+impl TaxConfig {
+    /// Get the ETF classification for a given ISIN, defaulting to None (no exemption)
+    pub fn get_etf_classification(&self, isin: &str) -> EtfClassification {
+        self.etf_classification.get(isin).copied().unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

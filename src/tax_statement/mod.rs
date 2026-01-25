@@ -204,7 +204,7 @@ fn generate_german_tax_statement(
 
     // Process broker statement and populate entries
     let (has_trades, has_dividends, has_interest) =
-        germany::process_broker_statement(&mut statement, &broker_statement, year, &converter)?;
+        germany::process_broker_statement(&mut statement, &broker_statement, year, &converter, &config.taxes)?;
 
     let has_income = has_trades || has_dividends || has_interest;
 

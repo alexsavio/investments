@@ -10,6 +10,7 @@ use crate::broker_statement::{BrokerStatement, StockSource};
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
+use crate::taxes::TaxConfig;
 use crate::taxes::germany::TeilfreistellungRate;
 use crate::time::Date;
 use crate::types::Decimal;
@@ -98,11 +99,13 @@ pub fn process_broker_statement(
     broker_statement: &BrokerStatement,
     year: i32,
     converter: &CurrencyConverter,
+    tax_config: &TaxConfig,
 ) -> GenericResult<(bool, bool, bool)> {
     debug!("Processing German tax statement for year {}", year);
 
-    let has_trades = process_trades(statement, broker_statement, year, converter)?;
-    let has_dividends = process_dividends(statement, broker_statement, year, converter)?;
+    let has_trades = process_trades(statement, broker_statement, year, converter, tax_config)?;
+    let has_dividends =
+        process_dividends(statement, broker_statement, year, converter, tax_config)?;
     let has_interest = process_interest(statement, broker_statement, year, converter)?;
 
     debug!(
@@ -121,6 +124,7 @@ fn process_trades(
     broker_statement: &BrokerStatement,
     year: i32,
     converter: &CurrencyConverter,
+    tax_config: &TaxConfig,
 ) -> GenericResult<bool> {
     let mut has_income = false;
 
@@ -171,10 +175,21 @@ fn process_trades(
             })
             .unwrap_or_else(|| trade.symbol.clone());
 
-        // Determine Teilfreistellung rate based on instrument type
-        // Note: Full ETF classification lookup will be added in Phase 5 (User Story 3)
-        // For now, default to no exemption (conservative - regular stocks)
-        let teilfreistellung_rate = TeilfreistellungRate::None;
+        // Determine Teilfreistellung rate from ETF classification config
+        // Lookup by ISIN if available, otherwise no exemption (regular stocks)
+        let teilfreistellung_rate = if !isin.is_empty() {
+            let classification = tax_config.get_etf_classification(&isin);
+            let rate = classification.to_teilfreistellung_rate();
+            if rate != TeilfreistellungRate::None {
+                debug!(
+                    "ETF classification for {} ({}): {:?} -> {:?}",
+                    trade.symbol, isin, classification, rate
+                );
+            }
+            rate
+        } else {
+            TeilfreistellungRate::None
+        };
 
         // Calculate cost basis from FIFO lots
         // Note: The broker statement should have already processed FIFO matching
@@ -316,6 +331,7 @@ fn process_dividends(
     broker_statement: &BrokerStatement,
     year: i32,
     converter: &CurrencyConverter,
+    tax_config: &TaxConfig,
 ) -> GenericResult<bool> {
     let mut has_income = false;
 
@@ -355,10 +371,21 @@ fn process_dividends(
             })
             .unwrap_or_else(|| dividend.issuer.clone());
 
-        // Determine Teilfreistellung rate
-        // Note: Full ETF classification lookup will be added in Phase 5 (User Story 3)
-        // For now, default to no exemption (conservative - regular stocks)
-        let teilfreistellung_rate = TeilfreistellungRate::None;
+        // Determine Teilfreistellung rate from ETF classification config
+        // Lookup by ISIN if available, otherwise no exemption (regular stocks)
+        let teilfreistellung_rate = if !isin.is_empty() {
+            let classification = tax_config.get_etf_classification(&isin);
+            let rate = classification.to_teilfreistellung_rate();
+            if rate != TeilfreistellungRate::None {
+                debug!(
+                    "ETF classification for dividend {} ({}): {:?} -> {:?}",
+                    dividend.issuer, isin, classification, rate
+                );
+            }
+            rate
+        } else {
+            TeilfreistellungRate::None
+        };
 
         // Apply Teilfreistellung
         let taxable_amount = apply_teilfreistellung(gross_amount_eur, &teilfreistellung_rate);
