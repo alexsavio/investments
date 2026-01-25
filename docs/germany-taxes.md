@@ -211,3 +211,60 @@ For accounts with many transactions:
 - Processing may take a few seconds
 - The CSV will be sorted chronologically
 - Summary rows appear at the end
+
+## Additional Income Types
+
+### Broker Fees (Werbungskosten)
+
+Broker fees and commissions are tracked separately and reported as deductible expenses:
+
+- Fees are automatically extracted from broker statements
+- All fees are converted to EUR using ECB rates
+- The total is reported in the CSV summary section as deductible expenses
+- Note: German tax law allows deducting fees from capital gains (Werbungskosten)
+
+### Stock Grants / RSUs
+
+Stock grants (Restricted Stock Units) have **two taxable events** in Germany:
+
+1. **At Vesting (Employment Income):** The fair market value (FMV) at vest date is taxed as "geldwerter Vorteil" (benefit in kind) at your marginal income tax rate. This is employment income, not capital gains.
+
+2. **At Sale (Capital Gains):** Only the gain above the vest-date FMV is subject to Abgeltungssteuer (25% flat tax).
+
+The program:
+
+- Reports vest-date FMV as employment income in a separate section
+- Uses IBKR's provided FMV for accurate cost basis
+- Warns if FMV is missing or zero (review manually)
+
+**Important:** Employment income from RSUs must be declared on your Einkommensteuererklärung (income tax return), typically via Anlage N, not Anlage KAP.
+
+### Cash Grants
+
+Cash bonuses from brokers (sign-up bonuses, referral bonuses, etc.) are treated as "sonstige Einkünfte" (other income) under §22 EStG:
+
+- Only taxable if total exceeds €256 per year (Freigrenze)
+- Taxed at your marginal income tax rate, not the flat Abgeltungssteuer
+- The program tracks these and issues a warning if the threshold is exceeded
+
+**Important:** Cash grants should be declared on Anlage SO, not Anlage KAP.
+
+### Corporate Actions
+
+The program handles various corporate actions:
+
+| Action Type | Tax Treatment |
+|-------------|---------------|
+| **Spinoffs** | Cost basis must be allocated between parent and spun-off shares based on market values |
+| **Liquidations** | Treated as a sale event, may result in capital gain or loss |
+| **Stock Splits** | No tax event - only quantity changes, cost basis per share adjusts accordingly |
+| **Stock Dividends** | May be taxable as dividend income |
+| **Delistings** | If shares become worthless, may claim capital loss |
+
+The program:
+
+- Extracts corporate actions from broker statements
+- Reports them with tax impact in EUR
+- Includes notes for manual review
+
+**Note:** Corporate actions often require manual verification. Review these entries with your tax advisor.

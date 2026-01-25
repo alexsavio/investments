@@ -90,6 +90,89 @@ pub struct FxGainEntry {
     pub notes: Option<String>,
 }
 
+/// Entry for broker fees.
+///
+/// Broker fees are deductible from capital gains (Werbungskosten / Anschaffungsnebenkosten).
+/// Note: Trade commissions are already included in capital gain calculations.
+/// This covers standalone fees like account maintenance, data fees, etc.
+#[derive(Debug, Clone)]
+pub struct FeeEntry {
+    pub date: Date,
+    pub description: String,
+    pub amount_eur: Decimal, // Positive = fee paid, negative = refund received
+    pub notes: Option<String>,
+}
+
+/// Entry for stock grants (RSUs, stock options exercised, etc.).
+///
+/// In Germany, stock grants have TWO taxable events:
+/// 1. At vesting: Taxed as employment income (geldwerter Vorteil) at marginal income tax rate
+///    - This is NOT Abgeltungssteuer but regular income tax
+///    - The taxable amount is the FMV at vest date
+/// 2. At sale: Capital gains tax (Abgeltungssteuer) only on gain above vest-date FMV
+///    - Cost basis = FMV at vest date (not zero!)
+#[derive(Debug, Clone)]
+pub struct StockGrantEntry {
+    pub vest_date: Date,
+    pub symbol: String,
+    pub isin: String,
+    pub quantity: Decimal,
+    pub fmv_per_share_eur: Decimal, // Fair market value at vest date
+    pub total_fmv_eur: Decimal,     // Total employment income = quantity × FMV
+    pub notes: Option<String>,
+}
+
+/// Entry for cash grants (broker bonuses, promotional cash, etc.).
+///
+/// Cash grants are "sonstige Einkünfte" (other income) under German tax law.
+/// - Taxable at marginal income tax rate (not Abgeltungssteuer)
+/// - Only taxable if total other income >€256/year
+#[derive(Debug, Clone)]
+pub struct CashGrantEntry {
+    pub date: Date,
+    pub description: String,
+    pub amount_eur: Decimal,
+    pub notes: Option<String>,
+}
+
+/// Entry for corporate actions that have tax implications.
+///
+/// - Spinoffs: May require cost basis allocation between parent and new company
+/// - Liquidations: Treated as sale, triggers capital gain/loss
+/// - Stock splits: No tax event (handled separately by StockSplitController)
+/// - Mergers: May trigger gain if cash received
+#[derive(Debug, Clone)]
+pub struct CorporateActionEntry {
+    pub date: Date,
+    pub action_type: CorporateActionType,
+    pub symbol: String,
+    pub description: String,
+    pub tax_impact_eur: Option<Decimal>, // Capital gain/loss if applicable
+    pub notes: Option<String>,
+}
+
+/// Types of corporate actions for tax purposes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CorporateActionType {
+    Spinoff,
+    Liquidation,
+    Merger,
+    Delisting,
+    Other(String),
+}
+
+impl std::fmt::Display for CorporateActionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CorporateActionType::Spinoff => write!(f, "Spinoff"),
+            CorporateActionType::Liquidation => write!(f, "Liquidation"),
+            CorporateActionType::Merger => write!(f, "Merger"),
+            CorporateActionType::Delisting => write!(f, "Delisting"),
+            CorporateActionType::Other(s) => write!(f, "Other: {}", s),
+        }
+    }
+}
+
 /// Complete German tax statement for a single tax year.
 #[derive(Debug)]
 pub struct GermanTaxStatement {
@@ -100,6 +183,10 @@ pub struct GermanTaxStatement {
     pub dividends: Vec<DividendEntry>,
     pub interest: Vec<InterestEntry>,
     pub fx_gains: Vec<FxGainEntry>,
+    pub fees: Vec<FeeEntry>,
+    pub stock_grants: Vec<StockGrantEntry>,
+    pub cash_grants: Vec<CashGrantEntry>,
+    pub corporate_actions: Vec<CorporateActionEntry>,
 
     // Loss carryforward tracking
     pub loss_carryforward_used: Decimal,
@@ -112,6 +199,9 @@ pub struct GermanTaxStatement {
     pub total_interest_income: Decimal,
     pub total_fx_gains: Decimal,
     pub total_fx_losses: Decimal,
+    pub total_fees: Decimal,
+    pub total_stock_grant_income: Decimal, // Employment income, NOT Abgeltungssteuer
+    pub total_cash_grant_income: Decimal,  // Other income, NOT Abgeltungssteuer
     pub total_taxable_income: Decimal,
     pub total_foreign_tax: Decimal,
     pub total_abgeltungssteuer: Decimal,
@@ -148,6 +238,10 @@ impl GermanTaxStatement {
             dividends: Vec::new(),
             interest: Vec::new(),
             fx_gains: Vec::new(),
+            fees: Vec::new(),
+            stock_grants: Vec::new(),
+            cash_grants: Vec::new(),
+            corporate_actions: Vec::new(),
 
             loss_carryforward_used: dec!(0),
             loss_carryforward_remaining: loss_carryforward,
@@ -158,6 +252,9 @@ impl GermanTaxStatement {
             total_interest_income: dec!(0),
             total_fx_gains: dec!(0),
             total_fx_losses: dec!(0),
+            total_fees: dec!(0),
+            total_stock_grant_income: dec!(0),
+            total_cash_grant_income: dec!(0),
             total_taxable_income: dec!(0),
             total_foreign_tax: dec!(0),
             total_abgeltungssteuer: dec!(0),
@@ -197,6 +294,26 @@ impl GermanTaxStatement {
         self.fx_gains.push(entry);
     }
 
+    /// Add a fee entry.
+    pub fn add_fee(&mut self, entry: FeeEntry) {
+        self.fees.push(entry);
+    }
+
+    /// Add a stock grant entry.
+    pub fn add_stock_grant(&mut self, entry: StockGrantEntry) {
+        self.stock_grants.push(entry);
+    }
+
+    /// Add a cash grant entry.
+    pub fn add_cash_grant(&mut self, entry: CashGrantEntry) {
+        self.cash_grants.push(entry);
+    }
+
+    /// Add a corporate action entry.
+    pub fn add_corporate_action(&mut self, entry: CorporateActionEntry) {
+        self.corporate_actions.push(entry);
+    }
+
     /// Calculate all summary totals.
     pub fn calculate_totals(&mut self) {
         // Reset totals
@@ -206,6 +323,9 @@ impl GermanTaxStatement {
         self.total_interest_income = dec!(0);
         self.total_fx_gains = dec!(0);
         self.total_fx_losses = dec!(0);
+        self.total_fees = dec!(0);
+        self.total_stock_grant_income = dec!(0);
+        self.total_cash_grant_income = dec!(0);
         self.total_foreign_tax = dec!(0);
         self.total_abgeltungssteuer = dec!(0);
         self.total_solidaritaetszuschlag = dec!(0);
@@ -259,11 +379,31 @@ impl GermanTaxStatement {
             self.total_kirchensteuer += entry.kirchensteuer;
         }
 
+        // Sum fees (these are deductible from capital income)
+        // Note: Fees reduce taxable income but are tracked separately for reporting
+        for entry in &self.fees {
+            self.total_fees += entry.amount_eur;
+        }
+
+        // Sum stock grants (employment income - NOT Abgeltungssteuer)
+        // This is reported separately from capital income
+        for entry in &self.stock_grants {
+            self.total_stock_grant_income += entry.total_fmv_eur;
+        }
+
+        // Sum cash grants (other income - NOT Abgeltungssteuer)
+        // Only taxable if >€256/year total
+        for entry in &self.cash_grants {
+            self.total_cash_grant_income += entry.amount_eur;
+        }
+
         // Calculate net capital gain/loss for carryforward calculation
         // Note: FX losses from interest-bearing accounts can be included in the general loss bucket
+        // Note: Fees can be deducted from capital gains
         let net_capital_gain_loss = self.total_capital_gains - self.total_capital_losses
             + self.total_fx_gains
-            - self.total_fx_losses;
+            - self.total_fx_losses
+            - self.total_fees; // Fees reduce taxable capital gains
 
         // Apply loss carryforward to capital gains
         // Note: Loss carryforward only applies to capital gains, not dividends or interest

@@ -33,6 +33,7 @@ pub struct FlexStatements {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Fields used for parsing, not all are read after
 pub struct FlexStatement {
     #[serde(rename = "@accountId")]
     pub account_id: String,
@@ -79,6 +80,7 @@ pub struct CashReport {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Fields used for parsing, not all are read after
 pub struct CashReportCurrency {
     #[serde(rename = "@currency")]
     pub currency: String,
@@ -102,6 +104,7 @@ pub struct StatementOfFunds {
     pub lines: Vec<StatementOfFundsLine>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatementOfFundsLine {
@@ -160,6 +163,7 @@ pub struct Trades {
     pub trades: Vec<Trade>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Trade {
@@ -209,6 +213,7 @@ pub struct CashTransactions {
     pub transactions: Vec<CashTransaction>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CashTransaction {
@@ -237,12 +242,14 @@ pub struct CashTransaction {
     pub transaction_type: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CorporateActions {
     #[serde(rename = "CorporateAction", default)]
     pub actions: Vec<CorporateAction>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorporateAction {
@@ -277,6 +284,7 @@ pub struct OpenPositions {
     pub positions: Vec<OpenPosition>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenPosition {
@@ -299,12 +307,14 @@ pub struct OpenPosition {
     pub mark_price: Decimal,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct SecuritiesInfo {
     #[serde(rename = "SecurityInfo", default)]
     pub securities: Vec<SecurityInfo>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SecurityInfo {
@@ -331,6 +341,7 @@ pub struct FxTransactions {
 
 /// Individual FX transaction with realized P&L.
 /// The `realizedPL` field contains the actual FX gain/loss for tax purposes.
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FxTransactionEntry {
@@ -379,6 +390,7 @@ pub struct StockGrantActivities {
 }
 
 /// Individual stock grant activity (RSU vest, option exercise, etc.)
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StockGrantActivity {

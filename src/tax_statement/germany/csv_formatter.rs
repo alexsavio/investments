@@ -9,7 +9,8 @@ use crate::formatting;
 use crate::types::Decimal;
 
 use super::statement::{
-    CapitalGainEntry, DividendEntry, FxGainEntry, GermanTaxStatement, InterestEntry,
+    CapitalGainEntry, CashGrantEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry,
+    GermanTaxStatement, InterestEntry, StockGrantEntry,
 };
 
 /// CSV formatter for German tax statements.
@@ -36,6 +37,23 @@ impl GermanCsvFormatter {
 
         for entry in &statement.fx_gains {
             Self::write_fx_gain_row(writer, entry)?;
+        }
+
+        // Write additional income types
+        for entry in &statement.fees {
+            Self::write_fee_row(writer, entry)?;
+        }
+
+        for entry in &statement.stock_grants {
+            Self::write_stock_grant_row(writer, entry)?;
+        }
+
+        for entry in &statement.cash_grants {
+            Self::write_cash_grant_row(writer, entry)?;
+        }
+
+        for entry in &statement.corporate_actions {
+            Self::write_corporate_action_row(writer, entry)?;
         }
 
         // Write summary rows
@@ -150,6 +168,90 @@ impl GermanCsvFormatter {
         Ok(())
     }
 
+    fn write_fee_row<W: Write>(writer: &mut W, entry: &FeeEntry) -> GenericResult<()> {
+        // Fees are reported as a deduction - they reduce taxable income
+        writeln!(
+            writer,
+            "Fee/Deduction,{},{},N/A,N/A,{},,,,,{},0.00,{},0.00,0.00,0.00,0.00,0.00,0.00,0.00,{}",
+            formatting::format_date(entry.date),
+            formatting::format_date(entry.date),
+            Self::escape_csv(&entry.description),
+            Self::format_decimal(-entry.amount_eur), // Negative = deduction
+            Self::format_decimal(-entry.amount_eur), // Taxable amount = deduction
+            entry
+                .notes
+                .as_deref()
+                .unwrap_or("Deductible broker fee (Werbungskosten)")
+        )?;
+        Ok(())
+    }
+
+    fn write_stock_grant_row<W: Write>(
+        writer: &mut W,
+        entry: &StockGrantEntry,
+    ) -> GenericResult<()> {
+        // Stock grants are employment income, NOT capital income
+        // They are reported separately for manual declaration as employment income
+        writeln!(
+            writer,
+            "Stock Grant (Employment Income),{},{},{},{},RSU/Stock Grant,{},,,,,N/A,{},0.00,N/A,N/A,N/A,0.00,N/A,N/A,{}",
+            formatting::format_date(entry.vest_date),
+            formatting::format_date(entry.vest_date),
+            Self::escape_csv(&entry.symbol),
+            Self::escape_csv(&entry.isin),
+            Self::format_decimal(entry.quantity),
+            Self::format_decimal(entry.total_fmv_eur),
+            entry
+                .notes
+                .as_deref()
+                .unwrap_or("Geldwerter Vorteil - declare as employment income (Anlage N)")
+        )?;
+        Ok(())
+    }
+
+    fn write_cash_grant_row<W: Write>(writer: &mut W, entry: &CashGrantEntry) -> GenericResult<()> {
+        // Cash grants are other income, NOT capital income
+        // They are reported separately for manual declaration
+        writeln!(
+            writer,
+            "Cash Grant (Other Income),{},{},N/A,N/A,{},,,,,{},N/A,{},0.00,N/A,N/A,N/A,0.00,N/A,N/A,{}",
+            formatting::format_date(entry.date),
+            formatting::format_date(entry.date),
+            Self::escape_csv(&entry.description),
+            Self::format_decimal(entry.amount_eur),
+            Self::format_decimal(entry.amount_eur),
+            entry
+                .notes
+                .as_deref()
+                .unwrap_or("Sonstige Einkünfte §22 EStG - taxable if >€256/year")
+        )?;
+        Ok(())
+    }
+
+    fn write_corporate_action_row<W: Write>(
+        writer: &mut W,
+        entry: &CorporateActionEntry,
+    ) -> GenericResult<()> {
+        // Corporate actions are informational - tax impact varies
+        let tax_impact = entry
+            .tax_impact_eur
+            .map(Self::format_decimal)
+            .unwrap_or_else(|| "N/A".to_string());
+        writeln!(
+            writer,
+            "Corporate Action,{},{},{},N/A,{} - {},,,,,{},N/A,{},0.00,0.00,0.00,0.00,0.00,0.00,0.00,{}",
+            formatting::format_date(entry.date),
+            formatting::format_date(entry.date),
+            Self::escape_csv(&entry.symbol),
+            entry.action_type,
+            Self::escape_csv(&entry.description),
+            tax_impact,
+            tax_impact,
+            entry.notes.as_deref().unwrap_or("")
+        )?;
+        Ok(())
+    }
+
     fn write_summary_rows<W: Write>(
         writer: &mut W,
         statement: &GermanTaxStatement,
@@ -188,6 +290,11 @@ impl GermanCsvFormatter {
             writer,
             "SUMMARY_FX_LOSSES,Total FX Losses,{}",
             Self::format_decimal(statement.total_fx_losses)
+        )?;
+        writeln!(
+            writer,
+            "SUMMARY_TOTAL_FEES,Total Deductible Fees,{}",
+            Self::format_decimal(statement.total_fees)
         )?;
         writeln!(
             writer,
@@ -242,6 +349,37 @@ impl GermanCsvFormatter {
             "KAP_ZEILE_41,Anrechenbare ausländische Steuer (Creditable Foreign Tax),{}",
             Self::format_decimal(statement.kap_zeile_41)
         )?;
+
+        // Non-capital income (reported separately)
+        if statement.total_stock_grant_income > dec!(0)
+            || statement.total_cash_grant_income > dec!(0)
+        {
+            writeln!(writer)?;
+            writeln!(
+                writer,
+                "# NON-CAPITAL INCOME (Not Abgeltungssteuer - requires separate declaration)"
+            )?;
+            if statement.total_stock_grant_income > dec!(0) {
+                writeln!(
+                    writer,
+                    "EMPLOYMENT_INCOME_STOCK_GRANTS,Stock Grants (geldwerter Vorteil - Anlage N),{}",
+                    Self::format_decimal(statement.total_stock_grant_income)
+                )?;
+            }
+            if statement.total_cash_grant_income > dec!(0) {
+                let taxable_note = if statement.total_cash_grant_income > dec!(256) {
+                    " (TAXABLE - exceeds €256 threshold)"
+                } else {
+                    " (not taxable - below €256 threshold)"
+                };
+                writeln!(
+                    writer,
+                    "OTHER_INCOME_CASH_GRANTS,Cash Grants (sonstige Einkünfte §22 EStG){},{}",
+                    taxable_note,
+                    Self::format_decimal(statement.total_cash_grant_income)
+                )?;
+            }
+        }
 
         // Non-taxable amounts (for reference)
         if statement.non_taxable_margin_fx != dec!(0) {
