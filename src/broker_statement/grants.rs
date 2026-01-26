@@ -28,6 +28,9 @@ pub struct StockGrant {
     pub date: Date,
     pub symbol: String,
     pub quantity: Decimal,
+    /// Fair market value per share at vest date (for RSUs/stock grants)
+    /// This is needed for German tax purposes to determine employment income
+    pub fmv_per_share: Option<Cash>,
 }
 
 impl StockGrant {
@@ -35,7 +38,17 @@ impl StockGrant {
         StockGrant{
             date,
             symbol: symbol.to_owned(),
-            quantity: quantity,
+            quantity,
+            fmv_per_share: None,
+        }
+    }
+
+    pub fn with_fmv(date: Date, symbol: &str, quantity: Decimal, fmv_per_share: Cash) -> StockGrant {
+        StockGrant{
+            date,
+            symbol: symbol.to_owned(),
+            quantity,
+            fmv_per_share: Some(fmv_per_share),
         }
     }
 }

@@ -676,7 +676,7 @@ fn process_stock_grants(
     statement: &mut GermanTaxStatement,
     broker_statement: &BrokerStatement,
     year: i32,
-    _converter: &CurrencyConverter,
+    converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
     let mut has_grants = false;
 
@@ -703,25 +703,27 @@ fn process_stock_grants(
             })
             .unwrap_or_default();
 
-        // For RSUs, IBKR provides the FMV at vest in the statement
-        // However, the current StockGrant struct only has date, symbol, quantity
-        // The FMV would need to be obtained from quotes or the broker statement
-        //
-        // IMPORTANT: If FMV is not available, we warn and use zero (which is incorrect
-        // but prevents crashes). User should verify and correct manually.
-        //
-        // TODO: Enhance StockGrant struct to include FMV at vest from broker statement
-        let fmv_per_share = dec!(0); // Placeholder - needs FMV from broker
-        let total_fmv_eur = fmv_per_share * grant.quantity;
-
-        if fmv_per_share.is_zero() {
+        // Use FMV from broker statement if available
+        // IBKR provides FMV at vest in the StockGrantActivity which we now preserve
+        let (fmv_per_share, total_fmv_eur) = if let Some(fmv_cash) = &grant.fmv_per_share {
+            // Convert FMV to EUR
+            let context = format!(
+                "Converting FMV for stock grant {} on {}",
+                grant.symbol, grant.date
+            );
+            let fmv_eur = convert_to_eur(converter, grant.date, *fmv_cash, &context)?;
+            let total = fmv_eur * grant.quantity;
+            (fmv_eur, total)
+        } else {
+            // FMV not available - warn user
             warn!(
                 "Stock grant {} on {}: FMV at vest date is not available. \
                 Employment income will be reported as €0. \
                 Please verify and correct manually for tax purposes.",
                 grant.symbol, grant.date
             );
-        }
+            (dec!(0), dec!(0))
+        };
 
         let entry = StockGrantEntry {
             vest_date: grant.date,
@@ -1547,5 +1549,387 @@ mod tests {
         // Verify the loss offset worked (net capital income reduced)
         // Total taxable = capital gains (200) - FX losses (150) = 50
         // Note: This test verifies the structure; actual offset happens in calculate_totals
+    }
+
+    /// Test broker fee entry creation and deduction tracking.
+    #[test]
+    fn test_fee_entry_creation() {
+        use super::super::statement::FeeEntry;
+
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+
+        // Add a fee entry
+        let fee = FeeEntry {
+            date: Date::from_ymd_opt(2024, 3, 15).unwrap(),
+            description: "Market data subscription".to_string(),
+            amount_eur: dec!(15.50),
+            notes: None,
+        };
+        statement.add_fee(fee);
+
+        // Add a fee refund (negative amount)
+        let fee_refund = FeeEntry {
+            date: Date::from_ymd_opt(2024, 6, 1).unwrap(),
+            description: "Fee refund".to_string(),
+            amount_eur: dec!(-5.00),
+            notes: Some("Fee refund - reduces deductible expenses".to_string()),
+        };
+        statement.add_fee(fee_refund);
+
+        statement.calculate_totals();
+
+        assert_eq!(statement.fees.len(), 2);
+        // Total fees: 15.50 - 5.00 = 10.50
+        assert_eq!(statement.total_fees, dec!(10.50));
+
+        // Generate CSV and verify fee rows exist
+        let mut csv_output = Vec::new();
+        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv_string = String::from_utf8(csv_output).unwrap();
+
+        assert!(csv_string.contains("Fee/Deduction"));
+        assert!(csv_string.contains("Market data subscription"));
+        assert!(csv_string.contains("SUMMARY_TOTAL_FEES"));
+    }
+
+    /// Test stock grant entry creation with FMV.
+    #[test]
+    fn test_stock_grant_entry_with_fmv() {
+        use super::super::statement::StockGrantEntry;
+
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+
+        // Stock grant with FMV (typical RSU vest)
+        let grant = StockGrantEntry {
+            vest_date: Date::from_ymd_opt(2024, 4, 1).unwrap(),
+            symbol: "GOOGL".to_string(),
+            isin: "US02079K3059".to_string(),
+            quantity: dec!(50),
+            fmv_per_share_eur: dec!(150.25),
+            total_fmv_eur: dec!(7512.50), // 50 * 150.25
+            notes: Some("Employment income (geldwerter Vorteil)".to_string()),
+        };
+        statement.add_stock_grant(grant);
+
+        statement.calculate_totals();
+
+        assert_eq!(statement.stock_grants.len(), 1);
+        assert_eq!(statement.total_stock_grant_income, dec!(7512.50));
+
+        // Verify the grant appears in CSV
+        let mut csv_output = Vec::new();
+        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv_string = String::from_utf8(csv_output).unwrap();
+
+        assert!(csv_string.contains("STOCK_GRANT"));
+        assert!(csv_string.contains("GOOGL"));
+        assert!(csv_string.contains("EMPLOYMENT_INCOME_STOCK_GRANTS"));
+    }
+
+    /// Test stock grant entry without FMV (should warn user).
+    #[test]
+    fn test_stock_grant_entry_without_fmv() {
+        use super::super::statement::StockGrantEntry;
+
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+
+        // Stock grant without FMV (FMV was not available from broker)
+        let grant = StockGrantEntry {
+            vest_date: Date::from_ymd_opt(2024, 5, 15).unwrap(),
+            symbol: "MSFT".to_string(),
+            isin: "US5949181045".to_string(),
+            quantity: dec!(25),
+            fmv_per_share_eur: dec!(0), // FMV not available
+            total_fmv_eur: dec!(0),
+            notes: Some("FMV unavailable - verify manually".to_string()),
+        };
+        statement.add_stock_grant(grant);
+
+        statement.calculate_totals();
+
+        assert_eq!(statement.stock_grants.len(), 1);
+        assert_eq!(statement.total_stock_grant_income, dec!(0)); // Zero due to missing FMV
+    }
+
+    /// Test cash grant entry and €256 threshold warning.
+    #[test]
+    fn test_cash_grant_entry_below_threshold() {
+        use super::super::statement::CashGrantEntry;
+
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+
+        // Cash grant below threshold
+        let grant = CashGrantEntry {
+            date: Date::from_ymd_opt(2024, 2, 1).unwrap(),
+            description: "Referral bonus".to_string(),
+            amount_eur: dec!(100.00),
+            notes: None,
+        };
+        statement.add_cash_grant(grant);
+
+        statement.calculate_totals();
+
+        assert_eq!(statement.cash_grants.len(), 1);
+        assert_eq!(statement.total_cash_grant_income, dec!(100.00));
+
+        // Below €256 threshold - informational only
+        assert!(statement.total_cash_grant_income < dec!(256));
+    }
+
+    /// Test cash grant entry exceeding €256 threshold.
+    #[test]
+    fn test_cash_grant_entry_above_threshold() {
+        use super::super::statement::CashGrantEntry;
+
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+
+        // Multiple cash grants exceeding threshold
+        let grant1 = CashGrantEntry {
+            date: Date::from_ymd_opt(2024, 1, 15).unwrap(),
+            description: "Sign-up bonus".to_string(),
+            amount_eur: dec!(200.00),
+            notes: None,
+        };
+        statement.add_cash_grant(grant1);
+
+        let grant2 = CashGrantEntry {
+            date: Date::from_ymd_opt(2024, 6, 1).unwrap(),
+            description: "Referral bonus".to_string(),
+            amount_eur: dec!(100.00),
+            notes: None,
+        };
+        statement.add_cash_grant(grant2);
+
+        statement.calculate_totals();
+
+        assert_eq!(statement.cash_grants.len(), 2);
+        assert_eq!(statement.total_cash_grant_income, dec!(300.00));
+
+        // Above €256 threshold - must be declared as sonstige Einkünfte
+        assert!(statement.total_cash_grant_income > dec!(256));
+
+        // Verify CSV contains warning section
+        let mut csv_output = Vec::new();
+        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv_string = String::from_utf8(csv_output).unwrap();
+
+        assert!(csv_string.contains("CASH_GRANT"));
+        assert!(csv_string.contains("OTHER_INCOME_CASH_GRANTS"));
+    }
+
+    /// Test corporate action entries for spinoffs.
+    #[test]
+    fn test_corporate_action_spinoff() {
+        use super::super::statement::{CorporateActionEntry, CorporateActionType};
+
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+
+        let spinoff = CorporateActionEntry {
+            date: Date::from_ymd_opt(2024, 7, 1).unwrap(),
+            action_type: CorporateActionType::Spinoff,
+            symbol: "GE".to_string(),
+            description: "Spinoff: Received 100 shares of GEHC".to_string(),
+            tax_impact_eur: None, // No immediate tax impact
+            notes: Some("Cost basis must be allocated between parent and spinoff".to_string()),
+        };
+        statement.add_corporate_action(spinoff);
+
+        assert_eq!(statement.corporate_actions.len(), 1);
+        assert!(matches!(
+            statement.corporate_actions[0].action_type,
+            CorporateActionType::Spinoff
+        ));
+    }
+
+    /// Test corporate action entries for liquidations.
+    #[test]
+    fn test_corporate_action_liquidation() {
+        use super::super::statement::{CorporateActionEntry, CorporateActionType};
+
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+
+        let liquidation = CorporateActionEntry {
+            date: Date::from_ymd_opt(2024, 8, 15).unwrap(),
+            action_type: CorporateActionType::Liquidation,
+            symbol: "BANKRUPT".to_string(),
+            description: "Liquidation: 500 shares @ 0.50 USD".to_string(),
+            tax_impact_eur: Some(dec!(225.00)), // Proceeds in EUR
+            notes: Some("Treated as sale - capital gain/loss based on cost basis".to_string()),
+        };
+        statement.add_corporate_action(liquidation);
+
+        assert_eq!(statement.corporate_actions.len(), 1);
+        assert!(matches!(
+            statement.corporate_actions[0].action_type,
+            CorporateActionType::Liquidation
+        ));
+        assert_eq!(
+            statement.corporate_actions[0].tax_impact_eur,
+            Some(dec!(225.00))
+        );
+    }
+
+    /// Test corporate action entries for delistings (total loss).
+    #[test]
+    fn test_corporate_action_delisting() {
+        use super::super::statement::{CorporateActionEntry, CorporateActionType};
+
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+
+        let delisting = CorporateActionEntry {
+            date: Date::from_ymd_opt(2024, 9, 1).unwrap(),
+            action_type: CorporateActionType::Delisting,
+            symbol: "DELIST".to_string(),
+            description: "Delisting of 200 shares".to_string(),
+            tax_impact_eur: None, // Loss depends on cost basis
+            notes: Some(
+                "Total loss - may have restricted deductibility under German tax law".to_string(),
+            ),
+        };
+        statement.add_corporate_action(delisting);
+
+        assert_eq!(statement.corporate_actions.len(), 1);
+        assert!(matches!(
+            statement.corporate_actions[0].action_type,
+            CorporateActionType::Delisting
+        ));
+
+        // Verify CSV contains corporate action
+        let mut csv_output = Vec::new();
+        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv_string = String::from_utf8(csv_output).unwrap();
+
+        assert!(csv_string.contains("Corporate Action"));
+        assert!(csv_string.contains("DELIST"));
+    }
+
+    /// Test combined statement with all entry types.
+    #[test]
+    fn test_combined_statement_all_entry_types() {
+        use super::super::statement::{
+            CashGrantEntry, CorporateActionEntry, CorporateActionType, FeeEntry, StockGrantEntry,
+        };
+
+        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(0)); // 9% church tax
+
+        // Add capital gain
+        let capital_gain = CapitalGainEntry {
+            transaction_date: Date::from_ymd_opt(2024, 3, 1).unwrap(),
+            settle_date: Date::from_ymd_opt(2024, 3, 3).unwrap(),
+            symbol: "AAPL".to_string(),
+            isin: "US0378331005".to_string(),
+            description: "Apple Inc.".to_string(),
+            quantity: dec!(20),
+            cost_basis_eur: dec!(3000.00),
+            proceeds_eur: dec!(4000.00),
+            gross_gain_loss: dec!(1000.00),
+            teilfreistellung_rate: TeilfreistellungRate::None,
+            taxable_amount: dec!(1000.00),
+            foreign_tax: dec!(0),
+            abgeltungssteuer: dec!(250.00),
+            solidaritaetszuschlag: dec!(13.75),
+            kirchensteuer: dec!(22.50),
+            total_tax: dec!(286.25),
+            pre_2009_holding: false,
+            notes: None,
+        };
+        statement.add_capital_gain(capital_gain);
+
+        // Add dividend
+        let dividend = DividendEntry {
+            payment_date: Date::from_ymd_opt(2024, 6, 15).unwrap(),
+            symbol: "MSFT".to_string(),
+            isin: "US5949181045".to_string(),
+            description: "Microsoft Corp.".to_string(),
+            quantity: dec!(0),
+            gross_amount_eur: dec!(200.00),
+            foreign_withholding_tax: dec!(30.00),
+            teilfreistellung_rate: TeilfreistellungRate::None,
+            taxable_amount: dec!(200.00),
+            abgeltungssteuer: dec!(50.00),
+            solidaritaetszuschlag: dec!(2.75),
+            kirchensteuer: dec!(4.50),
+            foreign_tax_credit: dec!(30.00),
+            total_tax: dec!(57.25),
+            net_tax: dec!(27.25),
+            notes: None,
+        };
+        statement.add_dividend(dividend);
+
+        // Add fee
+        let fee = FeeEntry {
+            date: Date::from_ymd_opt(2024, 1, 31).unwrap(),
+            description: "Account maintenance".to_string(),
+            amount_eur: dec!(25.00),
+            notes: None,
+        };
+        statement.add_fee(fee);
+
+        // Add stock grant
+        let stock_grant = StockGrantEntry {
+            vest_date: Date::from_ymd_opt(2024, 4, 1).unwrap(),
+            symbol: "GOOGL".to_string(),
+            isin: "US02079K3059".to_string(),
+            quantity: dec!(10),
+            fmv_per_share_eur: dec!(140.00),
+            total_fmv_eur: dec!(1400.00),
+            notes: None,
+        };
+        statement.add_stock_grant(stock_grant);
+
+        // Add cash grant
+        let cash_grant = CashGrantEntry {
+            date: Date::from_ymd_opt(2024, 2, 15).unwrap(),
+            description: "Welcome bonus".to_string(),
+            amount_eur: dec!(50.00),
+            notes: None,
+        };
+        statement.add_cash_grant(cash_grant);
+
+        // Add corporate action
+        let corp_action = CorporateActionEntry {
+            date: Date::from_ymd_opt(2024, 7, 1).unwrap(),
+            action_type: CorporateActionType::Spinoff,
+            symbol: "JNJ".to_string(),
+            description: "Received 50 shares of KVUE".to_string(),
+            tax_impact_eur: None,
+            notes: None,
+        };
+        statement.add_corporate_action(corp_action);
+
+        // Calculate totals
+        statement.calculate_totals();
+
+        // Verify all entries are tracked
+        assert_eq!(statement.capital_gains.len(), 1);
+        assert_eq!(statement.dividends.len(), 1);
+        assert_eq!(statement.fees.len(), 1);
+        assert_eq!(statement.stock_grants.len(), 1);
+        assert_eq!(statement.cash_grants.len(), 1);
+        assert_eq!(statement.corporate_actions.len(), 1);
+
+        // Verify totals
+        assert_eq!(statement.total_capital_gains, dec!(1000.00));
+        assert_eq!(statement.total_dividend_income, dec!(200.00));
+        assert_eq!(statement.total_fees, dec!(25.00));
+        assert_eq!(statement.total_stock_grant_income, dec!(1400.00));
+        assert_eq!(statement.total_cash_grant_income, dec!(50.00));
+
+        // Generate CSV and verify all sections exist
+        let mut csv_output = Vec::new();
+        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv_string = String::from_utf8(csv_output).unwrap();
+
+        // Check for all row types (human-readable names in CSV)
+        assert!(csv_string.contains("Capital Gain"));
+        assert!(csv_string.contains("Dividend"));
+        assert!(csv_string.contains("Fee/Deduction"));
+        assert!(csv_string.contains("Stock Grant (Employment Income)"));
+        assert!(csv_string.contains("Cash Grant (Other Income)"));
+        assert!(csv_string.contains("Corporate Action"));
+
+        // Check for summary entries
+        assert!(csv_string.contains("SUMMARY_TOTAL_TAXABLE_INCOME"));
+        assert!(csv_string.contains("SUMMARY_TOTAL_FEES"));
     }
 }
