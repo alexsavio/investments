@@ -504,16 +504,25 @@ impl FlexStatement {
 
         // Parse FX transactions for realized FX P&L
         // FxTransactions section has accurate realizedPL values (preferred over StmtFunds FOREX)
+        // Also extract functional currency for stock grant FMV conversion
+        let mut functional_currency: Option<String> = None;
         if let Some(ref fx_transactions) = self.fx_transactions {
             for tx in &fx_transactions.transactions {
                 parse_fx_transaction(&mut statement, tx)?;
+                // Get the functional currency from FX transactions (they all should have the same one)
+                if functional_currency.is_none() && !tx.functional_currency.is_empty() {
+                    functional_currency = Some(tx.functional_currency.clone());
+                }
             }
         }
 
         // Parse stock grant activities (RSUs, stock options, ESPPs)
+        // If we couldn't determine functional currency from FX transactions, use USD as default
+        // (most common for IBKR accounts, user should verify)
+        let grant_currency = functional_currency.as_deref().unwrap_or("USD");
         if let Some(ref grants) = self.stock_grant_activities {
             for grant in &grants.activities {
-                parse_stock_grant(&mut statement, grant)?;
+                parse_stock_grant(&mut statement, grant, grant_currency)?;
             }
         }
 
@@ -874,20 +883,26 @@ fn parse_cash_transaction(statement: &mut PartialBrokerStatement, tx: &CashTrans
 /// - RSU vesting is taxed as employment income (Arbeitslohn) at vest date
 /// - The FMV at vest becomes the cost basis for future capital gains calculations
 /// - This tool tracks the grant for cost basis; employment income is typically on payslip
-fn parse_stock_grant(statement: &mut PartialBrokerStatement, grant: &StockGrantActivity) -> EmptyResult {
+fn parse_stock_grant(statement: &mut PartialBrokerStatement, grant: &StockGrantActivity, functional_currency: &str) -> EmptyResult {
     if grant.symbol.is_empty() || grant.quantity == Decimal::ZERO {
         return Ok(());
     }
 
     let date = parse_flex_date(&grant.report_date)?;
 
-    statement.stock_grants.push(StockGrant::new(date, &grant.symbol, grant.quantity));
+    // Use FMV if available (non-zero), otherwise create grant without FMV
+    if grant.fmv != Decimal::ZERO {
+        let fmv_cash = Cash::new(functional_currency, grant.fmv);
+        statement.stock_grants.push(StockGrant::with_fmv(date, &grant.symbol, grant.quantity, fmv_cash));
+    } else {
+        statement.stock_grants.push(StockGrant::new(date, &grant.symbol, grant.quantity));
+    }
 
     log::debug!(
-        "Stock grant: {} {} shares on {} (type: {}, FMV: {})",
+        "Stock grant: {} {} shares on {} (type: {}, FMV: {} {})",
         grant.symbol, grant.quantity, date,
         if grant.grant_type.is_empty() { "unknown" } else { &grant.grant_type },
-        grant.fmv
+        grant.fmv, functional_currency
     );
 
     Ok(())
