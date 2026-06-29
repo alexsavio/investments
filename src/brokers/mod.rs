@@ -3,6 +3,7 @@ pub mod plans;
 
 use std::collections::BTreeMap;
 
+use itertools::Itertools;
 use matches::matches;
 use serde::Deserialize;
 use serde::de::{Deserializer, Error as _};
@@ -23,6 +24,7 @@ pub enum Broker {
     Firstrade,
     InteractiveBrokers,
     Open,
+    Other,
     Sber,
     Tbank,
 }
@@ -34,6 +36,7 @@ impl Broker {
             Broker::Firstrade => "firstrade",
             Broker::InteractiveBrokers => "interactive-brokers",
             Broker::Open => "open",
+            Broker::Other => "other", // FIXME(konishchev): Support it
             Broker::Sber => "sber",
             Broker::Tbank => "tbank",
         }
@@ -45,6 +48,7 @@ impl Broker {
             Broker::Firstrade => "Firstrade Securities Inc.",
             Broker::InteractiveBrokers => "Interactive Brokers LLC",
             Broker::Open => "АО «Открытие Брокер»",
+            Broker::Other => "УК",
             Broker::Sber => "ПАО «Сбербанк»",
             Broker::Tbank => "АО «ТБанк»",
         }
@@ -56,6 +60,7 @@ impl Broker {
             Broker::Firstrade => "Firstrade",
             Broker::InteractiveBrokers => "Interactive Brokers",
             Broker::Open => "Открытие",
+            Broker::Other => "УК",
             Broker::Sber => "Сбер",
             Broker::Tbank => "Т‑Банк",
         }
@@ -63,7 +68,7 @@ impl Broker {
 
     pub fn jurisdiction(self) -> Jurisdiction {
         match self {
-            Broker::Bcs | Broker::Open | Broker::Sber | Broker::Tbank => Jurisdiction::Russia,
+            Broker::Bcs | Broker::Open | Broker::Other | Broker::Sber | Broker::Tbank => Jurisdiction::Russia,
             Broker::Firstrade | Broker::InteractiveBrokers => Jurisdiction::Usa,
         }
     }
@@ -93,7 +98,7 @@ impl Broker {
         })
     }
 
-    pub fn get_commission_spec(self, plan: Option<&str>) -> GenericResult<CommissionSpec> {
+    pub fn get_commission_spec(self, plan_name: Option<&str>) -> GenericResult<CommissionSpec> {
         type PlanFn = fn() -> CommissionSpec;
 
         let (default, plans): (PlanFn, BTreeMap<&str, PlanFn>) = match self {
@@ -102,10 +107,10 @@ impl Broker {
                 "Трейдер" => plans::bcs::trader as PlanFn,
 
                 "Инвестор Про" => plans::bcs::investor_pro_deprecated as PlanFn,
-                "Профессиональный" => plans::bcs::professional_deprecated as PlanFn,
+                "Профессиональный" => plans::bcs::professional_deprecated as PlanFn,
             }),
 
-            Broker::Firstrade => (plans::firstrade::free, btreemap!{}),
+            Broker::Firstrade => (|| plans::free("USD"), btreemap!{}),
 
             Broker::InteractiveBrokers => (plans::ib::fixed, btreemap!{
                 "Fixed" => plans::ib::fixed as PlanFn,
@@ -115,6 +120,8 @@ impl Broker {
                 "Всё включено" => plans::open::all_inclusive as PlanFn,
                 "Самостоятельное управление (ИИС)" => plans::open::iia as PlanFn,
             }),
+
+            Broker::Other => (|| plans::free("RUB"), btreemap!{}),
 
             Broker::Sber => (plans::sber::investment, btreemap!{
                 "Инвестиционный" => plans::sber::investment as PlanFn,
@@ -128,15 +135,17 @@ impl Broker {
             }),
         };
 
-        let plan = match plan {
-            Some(plan) => {
-                *plans.get(plan).ok_or_else(|| format!(
-                    "Invalid plan for {}: {}. Available plans: {}",
-                    self.name(), plan, plans.keys().copied().collect::<Vec<_>>().join(", "),
-                ))?
-            },
-            None => default,
-        };
+        let plan = plan_name.map(|name| {
+            plans.get(name).ok_or_else(|| {
+                let available_plans = if plans.is_empty() {
+                    s!("It doesn't support plan specification")
+                } else {
+                    format!("Available plans: {}", plans.keys().copied().join(", "))
+                };
+
+                format!("Invalid plan for {}: {name}. {available_plans}", self.name())
+            }).copied()
+        }).transpose()?.unwrap_or(default);
 
         Ok(plan())
     }
@@ -147,6 +156,7 @@ impl Broker {
             Broker::Firstrade => config.firstrade.as_ref(),
             Broker::InteractiveBrokers => config.interactive_brokers.as_ref(),
             Broker::Open => config.open_broker.as_ref(),
+            Broker::Other => None,
             Broker::Sber => config.sber.as_ref(),
             Broker::Tbank => config.tbank.as_ref().and_then(|tbank| tbank.broker.as_ref()),
         }
@@ -162,12 +172,13 @@ impl<'de> Deserialize<'de> for Broker {
             "firstrade" => Broker::Firstrade,
             "interactive-brokers" => Broker::InteractiveBrokers,
             "open-broker" => Broker::Open,
+            "other" => Broker::Other,
             "sber" => Broker::Sber,
             "tbank" => Broker::Tbank,
             "tinkoff" => Broker::Tbank,
 
             _ => return Err(D::Error::unknown_variant(&value, &[
-                "bcs", "firstrade", "interactive-brokers", "open-broker", "sber", "tbank",
+                "bcs", "firstrade", "interactive-brokers", "open-broker", "other", "sber", "tbank",
             ])),
         })
     }
@@ -204,6 +215,7 @@ impl BrokerInfo {
     pub fn exchanges(&self) -> Vec<Exchange> {
         match self.type_ {
             Broker::Bcs | Broker::Open | Broker::Sber => vec![Exchange::Moex, Exchange::Spb],
+            Broker::Other => vec![Exchange::Otc],
             Broker::Tbank => vec![Exchange::Moex, Exchange::Spb, Exchange::Otc],
             Broker::Firstrade => vec![Exchange::Us],
             Broker::InteractiveBrokers => vec![Exchange::Us, Exchange::Lse, Exchange::Other],
