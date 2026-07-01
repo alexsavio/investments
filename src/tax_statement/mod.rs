@@ -24,11 +24,8 @@ pub fn generate_tax_statement(
 ) -> GenericResult<TelemetryRecordBuilder> {
     let country = config.get_tax_country();
     let portfolio = config.get_portfolio(portfolio_name)?;
-    let broker = portfolio.broker.get_info(config, portfolio.plan.as_deref())?;
 
-    let broker_statement = BrokerStatement::read(
-        broker, portfolio.statements_path()?, &portfolio.symbol_remapping, &portfolio.instrument_internal_ids,
-        &portfolio.instrument_names, portfolio.get_tax_remapping()?, &portfolio.tax_exemptions, &portfolio.corporate_actions,
+    let broker_statement = BrokerStatement::load(config, portfolio,
         ReadingStrictness::TRADE_SETTLE_DATE | ReadingStrictness::OTC_INSTRUMENTS | ReadingStrictness::TAX_EXEMPTIONS |
         ReadingStrictness::REPO_TRADES | ReadingStrictness::GRANTS)?;
 

@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn parse_real_empty() {
-        let statement = parse_full("empty", None);
+        let statement = parse_full("other", "ib-empty");
 
         assert!(!statement.assets.cash.is_empty());
         assert!(statement.assets.other.is_some());
@@ -279,9 +279,7 @@ mod tests {
 
     #[test]
     fn parse_real() {
-        let tax_remapping = Config::new("testdata/configs/main", None).unwrap()
-            .get_portfolio("ib").unwrap().get_tax_remapping().unwrap();
-        let statement = parse_full("my", Some(tax_remapping));
+        let statement = parse_full("main", "ib");
         let current_year = statement.period.next_date().year();
 
         assert!(!statement.assets.cash.is_empty());
@@ -331,7 +329,7 @@ mod tests {
         "symbol-with-space",
     ])]
     fn parse_real_other(name: &str) {
-        parse_full(name, None);
+        parse_full("other", &format!("ib-{name}"));
     }
 
     #[rstest(name => ["no-activity", "multi-currency-activity"])]
@@ -341,12 +339,12 @@ mod tests {
             .read(&path, true).unwrap();
     }
 
-    fn parse_full(name: &str, tax_remapping: Option<TaxRemapping>) -> BrokerStatement {
-        let broker = Broker::InteractiveBrokers.get_info(&Config::mock(), None).unwrap();
-        let path = PathBuf::from(format!("testdata/interactive-brokers/{name}"));
-        let tax_remapping = tax_remapping.unwrap_or_else(TaxRemapping::new);
-        BrokerStatement::read(
-            broker, &path, &Default::default(), &Default::default(), &Default::default(), tax_remapping, &[], &[],
-            ReadingStrictness::all()).unwrap()
+    fn parse_full(namespace: &str, name: &str) -> BrokerStatement {
+        let config = Config::new(format!("testdata/configs/{namespace}"), None).unwrap();
+
+        let portfolio = config.get_portfolio(name).unwrap();
+        assert_eq!(portfolio.broker, Broker::InteractiveBrokers);
+
+        BrokerStatement::load(&config, portfolio, ReadingStrictness::all()).unwrap()
     }
 }

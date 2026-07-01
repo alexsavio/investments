@@ -22,13 +22,13 @@ mod tbank;
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, BTreeMap, BTreeSet, hash_map::Entry};
-use std::path::Path;
 
 use itertools::Itertools;
 use log::{Level, log_enabled, debug, warn};
 
 use crate::brokers::{BrokerInfo, Broker};
 use crate::commissions::CommissionCalc;
+use crate::config::{Config, PortfolioConfig};
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::{Cash, CashAssets, MultiCurrencyCashAccount};
 use crate::currency::converter::CurrencyConverter;
@@ -90,15 +90,30 @@ pub struct BrokerStatement {
 }
 
 impl BrokerStatement {
-    pub fn read(
-        broker: BrokerInfo, statement_dir_path: &Path, symbol_remapping: &SymbolRemappingRules,
+    pub fn load(config: &Config, portfolio: &PortfolioConfig, strictness: ReadingStrictness) -> GenericResult<BrokerStatement> {
+        let broker = portfolio.broker.get_info(config, portfolio.plan.as_deref())?;
+        let statement_dir_path = portfolio.statements.as_ref().ok_or(
+            "Broker statements path is not specified in the portfolio's config")?;
+
+        let statements = reader::read(broker.type_, statement_dir_path, portfolio.get_tax_remapping()?, strictness)?;
+
+        BrokerStatement::load_inner(
+            broker, statements, &portfolio.symbol_remapping, &portfolio.instrument_internal_ids,
+            &portfolio.instrument_names, &portfolio.tax_exemptions, &portfolio.corporate_actions,
+            false, strictness)
+    }
+
         instrument_internal_ids: &InstrumentInternalIds, instrument_names: &HashMap<String, String>,
         tax_remapping: TaxRemapping, tax_exemptions: &[TaxExemption], corporate_actions: &[CorporateAction],
         strictness: ReadingStrictness,
+
+    fn load_inner(
+        broker: BrokerInfo, mut statements: Vec<PartialBrokerStatement>, symbol_remapping: &SymbolRemappingRules,
+        instrument_internal_ids: &InstrumentInternalIds, instrument_names: &HashMap<String, String>,
+        tax_exemptions: &[TaxExemption], corporate_actions: &[CorporateAction], generate_open_positions: bool,
+        strictness: ReadingStrictness,
     ) -> GenericResult<BrokerStatement> {
         let broker_jurisdiction = broker.type_.jurisdiction();
-
-        let mut statements = reader::read(broker.type_, statement_dir_path, tax_remapping, strictness)?;
         statements.sort_by_key(|statement| statement.period.unwrap());
 
         let mut last_period = statements.first().unwrap().period.unwrap();
@@ -163,7 +178,7 @@ impl BrokerStatement {
                 hint = format!("\n\nProbably manual tax remapping rules are required (see {url})");
             }
 
-            return Err!("Unable to find origin operations for the following taxes:\n{}{}", taxes, hint);
+            return Err!("Unable to find origin operations for the following taxes:\n{taxes}{hint}");
         }
 
         process_grants(&mut statement, strictness.contains(ReadingStrictness::GRANTS))?;
@@ -176,7 +191,7 @@ impl BrokerStatement {
             }.push(rule);
         }
 
-        if log_enabled!(Level::Debug) {
+        if !generate_open_positions && log_enabled!(Level::Debug) {
             debug!("Parsed open positions:");
             for (symbol, position) in &statement.open_positions {
                 debug!("* {symbol}: {position}");
@@ -215,14 +230,23 @@ impl BrokerStatement {
             }).map_err(|e| format!("Failed to remap {} to {}: {e}", rule.from, rule.to))?;
         }
 
-        if log_enabled!(Level::Debug) {
+        if !generate_open_positions && log_enabled!(Level::Debug) {
             debug!("Open positions after all corporate actions and renames:");
             for (symbol, position) in &statement.open_positions {
                 debug!("* {symbol}: {position}");
             }
         }
 
-        statement.process_trades(None)?;
+        statement.process_trades(None, generate_open_positions)?;
+        if generate_open_positions {
+            if !statement.open_positions.is_empty() {
+                return Err!("The statement has a non-empty open positions which is not expected");
+            }
+            statement.open_positions = statement.calculate_open_positions().into_iter()
+                .map(|(symbol, quantity)| (symbol.to_owned(), quantity))
+                .collect();
+        }
+
         statement.check_otc_instruments(strictness);
         statement.validate_tax_exemptions(tax_exemptions, strictness)?;
 
@@ -378,11 +402,11 @@ impl BrokerStatement {
                     *available = (*available - quantity).normalize();
                 },
                 Ordering::Greater => {
-                    return Err!("The portfolio has not enough open positions for {}", symbol);
+                    return Err!("The portfolio has not enough open positions for {symbol}");
                 },
             }
         } else {
-            return Err!("The portfolio has no open {} position", symbol);
+            return Err!("The portfolio has no open {symbol} position");
         }
 
         self.assets.cash.deposit(volume);
@@ -405,7 +429,7 @@ impl BrokerStatement {
         Ok(total)
     }
 
-    pub fn process_trades(&mut self, until: Option<DateOptTime>) -> EmptyResult {
+    pub fn process_trades(&mut self, until: Option<DateOptTime>, skip_open_positions_validation: bool) -> EmptyResult {
         let mut unsold_buys: HashMap<String, Vec<usize>> = HashMap::new();
 
         for (index, stock_buy) in self.stock_buys.iter().enumerate().rev() {
@@ -474,7 +498,7 @@ impl BrokerStatement {
             stock_sell.process(sources);
         }
 
-        if until.is_none() {
+        if until.is_none() && !skip_open_positions_validation {
             self.validate_open_positions()?;
         }
 
@@ -610,6 +634,35 @@ impl BrokerStatement {
         }
 
         Ok(())
+    }
+
+    fn calculate_open_positions(&self) -> HashMap<&str, Decimal> {
+        let mut open_positions: HashMap<&str, Decimal> = HashMap::new();
+
+        for stock_buy in &self.stock_buys {
+            if stock_buy.is_sold() {
+                continue;
+            }
+
+            let multiplier = self.stock_splits.get_multiplier(
+                &stock_buy.symbol, stock_buy.conclusion_time,
+                DateOptTime::new_max_time(self.period.last_date()));
+
+            let quantity = multiplier * stock_buy.get_unsold();
+
+            open_positions.entry(&stock_buy.symbol)
+                .and_modify(|position| *position += quantity)
+                .or_insert(quantity);
+        }
+
+        if log_enabled!(Level::Debug) {
+            debug!("Calculated open positions:");
+            for (symbol, position) in &open_positions {
+                debug!("* {symbol}: {position}");
+            }
+        }
+
+        open_positions
     }
 
     fn validate(&mut self, strictness: ReadingStrictness) -> EmptyResult {
@@ -754,30 +807,7 @@ impl BrokerStatement {
     }
 
     fn validate_open_positions(&self) -> EmptyResult {
-        let mut open_positions: HashMap<&str, Decimal> = HashMap::new();
-
-        for stock_buy in &self.stock_buys {
-            if stock_buy.is_sold() {
-                continue;
-            }
-
-            let multiplier = self.stock_splits.get_multiplier(
-                &stock_buy.symbol, stock_buy.conclusion_time,
-                DateOptTime::new_max_time(self.period.last_date()));
-
-            let quantity = multiplier * stock_buy.get_unsold();
-
-            open_positions.entry(&stock_buy.symbol)
-                .and_modify(|position| *position += quantity)
-                .or_insert(quantity);
-        }
-
-        if log_enabled!(Level::Debug) {
-            debug!("Calculated open positions:");
-            for (symbol, position) in &open_positions {
-                debug!("* {symbol}: {position}");
-            }
-        }
+        let open_positions = self.calculate_open_positions();
 
         let symbols: BTreeSet<&str> = self.open_positions.keys().map(String::as_str)
             .chain(open_positions.keys().copied())

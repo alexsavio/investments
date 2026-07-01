@@ -93,7 +93,7 @@ pub fn simulate_sell(
 ) -> GenericResult<TelemetryRecordBuilder> {
     let portfolio = config.get_portfolio(portfolio_name)?;
 
-    let statement = load_portfolio(config, portfolio,
+    let statement = BrokerStatement::load(config, portfolio,
         ReadingStrictness::TRADE_SETTLE_DATE | ReadingStrictness::OTC_INSTRUMENTS | ReadingStrictness::TAX_EXEMPTIONS)?;
     let (converter, quotes) = load_tools(config)?;
 
@@ -111,7 +111,7 @@ fn load_portfolios<'a>(
 
     if let Some(name) = name {
         let portfolio = config.get_portfolio(name)?;
-        let statement = load_portfolio(config, portfolio, reading_strictness)?;
+        let statement = BrokerStatement::load(config, portfolio, reading_strictness)?;
         portfolios.push((portfolio, statement));
     } else {
         if config.portfolios.is_empty() {
@@ -122,20 +122,12 @@ fn load_portfolios<'a>(
 
         for portfolio in &config.portfolios {
             let _logging_context = multiple.then(|| GlobalContext::new(&portfolio.name));
-            let statement = load_portfolio(config, portfolio, reading_strictness)?;
+            let statement = BrokerStatement::load(config, portfolio, reading_strictness)?;
             portfolios.push((portfolio, statement));
         }
     }
 
     Ok(portfolios)
-}
-
-fn load_portfolio(config: &Config, portfolio: &PortfolioConfig, strictness: ReadingStrictness) -> GenericResult<BrokerStatement> {
-    let broker = portfolio.broker.get_info(config, portfolio.plan.as_deref())?;
-    BrokerStatement::read(
-        broker, portfolio.statements_path()?, &portfolio.symbol_remapping, &portfolio.instrument_internal_ids,
-        &portfolio.instrument_names, portfolio.get_tax_remapping()?, &portfolio.tax_exemptions,
-        &portfolio.corporate_actions, strictness)
 }
 
 fn load_tools(config: &Config) -> GenericResult<(CurrencyConverterRc, QuotesRc)> {

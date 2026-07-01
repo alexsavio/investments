@@ -14,7 +14,6 @@ use std::path::Path;
 #[cfg(test)] use crate::brokers::Broker;
 #[cfg(test)] use crate::config::Config;
 use crate::core::GenericResult;
-#[cfg(test)] use crate::taxes::TaxRemapping;
 use crate::util;
 
 #[cfg(test)] use super::{BrokerStatement, ReadingStrictness};
@@ -84,11 +83,12 @@ mod tests {
 
     #[test]
     fn parse_real() {
-        let broker = Broker::Firstrade.get_info(&Config::mock(), None).unwrap();
+        let config = Config::new("testdata/configs/main", None).unwrap();
 
-        let statement = BrokerStatement::read(
-            broker, Path::new("testdata/firstrade/my"), &Default::default(), &Default::default(), &Default::default(),
-            TaxRemapping::new(), &[], &[], ReadingStrictness::all()).unwrap();
+        let portfolio = config.get_portfolio("firstrade").unwrap();
+        assert_eq!(portfolio.broker, Broker::Firstrade);
+
+        let statement = BrokerStatement::load(&config, portfolio, ReadingStrictness::all()).unwrap();
 
         assert!(!statement.assets.cash.is_empty());
         assert!(statement.assets.other.is_none()); // TODO(konishchev): Get it from statements

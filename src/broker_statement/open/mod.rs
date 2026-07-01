@@ -1,5 +1,4 @@
 use std::path::Path;
-#[cfg(test)] use std::path::PathBuf;
 
 use serde::Deserialize;
 use ::xml::reader::{ParserConfig, EventReader, XmlEvent};
@@ -8,7 +7,6 @@ use ::xml::reader::{ParserConfig, EventReader, XmlEvent};
 #[cfg(test)] use crate::config::Config;
 use crate::core::GenericResult;
 use crate::formats::xml;
-#[cfg(test)] use crate::taxes::TaxRemapping;
 use crate::util;
 
 #[cfg(test)] use super::{BrokerStatement, ReadingStrictness};
@@ -90,50 +88,41 @@ mod tests {
     use rstest::rstest;
     use super::*;
 
-    #[rstest(name => ["main/my", "other/iia-a", "other/iia-b", "other/inactive-with-forex"])]
+    #[rstest(name => ["main/investpalata", "other/open-iia-a", "other/open-iia-b", "other/open-inactive-with-forex"])]
     fn parse_real(name: &str) {
         let (namespace, name) = name.split_once('/').unwrap();
         let statement = parse(namespace, name);
 
-        assert_eq!(statement.assets.cash.is_empty(), name == "inactive-with-forex");
+        assert_eq!(statement.assets.cash.is_empty(), name == "open-inactive-with-forex");
         assert!(statement.assets.other.is_none()); // TODO(konishchev): Get it from statements
         assert!(!statement.deposits_and_withdrawals.is_empty());
 
-        assert_eq!(statement.fees.is_empty(), name == "iia-b");
+        assert_eq!(statement.fees.is_empty(), name == "open-iia-b");
         assert!(statement.cash_grants.is_empty());
         assert!(statement.idle_cash_interest.is_empty());
-        assert_eq!(statement.tax_agent_withholdings.is_empty(), name != "my");
+        assert_eq!(statement.tax_agent_withholdings.is_empty(), name != "investpalata");
 
-        assert_eq!(statement.forex_trades.is_empty(), matches!(name, "iia-a" | "iia-b"));
-        assert_eq!(statement.stock_buys.is_empty(), name == "inactive-with-forex");
-        assert_eq!(statement.stock_sells.is_empty(), name == "inactive-with-forex");
+        assert_eq!(statement.forex_trades.is_empty(), matches!(name, "open-iia-a" | "open-iia-b"));
+        assert_eq!(statement.stock_buys.is_empty(), name == "open-inactive-with-forex");
+        assert_eq!(statement.stock_sells.is_empty(), name == "open-inactive-with-forex");
         assert!(statement.dividends.is_empty());
 
-        assert_eq!(statement.open_positions.is_empty(), name == "inactive-with-forex");
-        assert_eq!(statement.instrument_info.is_empty(), name == "inactive-with-forex");
+        assert_eq!(statement.open_positions.is_empty(), name == "open-inactive-with-forex");
+        assert_eq!(statement.instrument_info.is_empty(), name == "open-inactive-with-forex");
     }
 
-    #[rstest(name => ["dividends/moex", "dividends/spb"])]
+    #[rstest(name => ["open-dividends-moex", "open-dividends-spb"])]
     fn parse_real_dividends(name: &str) {
         let statement = parse("other", name);
         assert!(!statement.dividends.is_empty());
     }
 
     fn parse(namespace: &str, name: &str) -> BrokerStatement {
-        let portfolio_name = match (namespace, name) {
-            ("main", "my") => s!("investpalata"),
-            ("other", name) => format!("open-{}", name.replace('/', "-")),
-            _ => name.to_owned(),
-        };
-
-        let broker = Broker::Open.get_info(&Config::mock(), None).unwrap();
         let config = Config::new(format!("testdata/configs/{namespace}"), None).unwrap();
-        let portfolio = config.get_portfolio(&portfolio_name).unwrap();
 
-        BrokerStatement::read(
-            broker, &PathBuf::from(format!("testdata/open/{name}")),
-            &Default::default(), &portfolio.instrument_internal_ids, &Default::default(), TaxRemapping::new(), &[],
-            &portfolio.corporate_actions, ReadingStrictness::all(),
-        ).unwrap()
+        let portfolio = config.get_portfolio(name).unwrap();
+        assert_eq!(portfolio.broker, Broker::Open);
+
+        BrokerStatement::load(&config, portfolio, ReadingStrictness::all()).unwrap()
     }
 }

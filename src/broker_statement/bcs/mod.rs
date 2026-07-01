@@ -6,7 +6,6 @@ mod securities;
 mod trades;
 
 use std::path::Path;
-#[cfg(test)] use std::path::PathBuf;
 use std::rc::Rc;
 
 #[cfg(test)] use crate::brokers::Broker;
@@ -14,7 +13,6 @@ use std::rc::Rc;
 use crate::core::GenericResult;
 use crate::exchanges::Exchange;
 use crate::formats::xls::{XlsStatementParser, Section, SheetParser};
-#[cfg(test)] use crate::taxes::TaxRemapping;
 use crate::util;
 
 #[cfg(test)] use super::{BrokerStatement, ReadingStrictness};
@@ -90,35 +88,27 @@ mod tests {
     use rstest::rstest;
     use super::*;
 
-    #[rstest(name => ["my", "iia", "kate", "kate-iia"])]
+    #[rstest(name => ["bcs", "bcs-iia", "kate", "kate-iia"])]
     fn parse_real(name: &str) {
-        let portfolio_name = match name {
-            "my" => "bcs",
-            "iia" => "bcs-iia",
-            _ => name,
-        };
-
-        let path = PathBuf::from(format!("testdata/bcs/{name}"));
-        let broker = Broker::Bcs.get_info(&Config::mock(), None).unwrap();
         let config = Config::new("testdata/configs/main", None).unwrap();
-        let corporate_actions = &config.get_portfolio(portfolio_name).unwrap().corporate_actions;
 
-        let statement = BrokerStatement::read(
-            broker, &path, &Default::default(), &Default::default(), &Default::default(), TaxRemapping::new(), &[],
-            corporate_actions, ReadingStrictness::all()).unwrap();
+        let portfolio = config.get_portfolio(name).unwrap();
+        assert_eq!(portfolio.broker, Broker::Bcs);
+
+        let statement = BrokerStatement::load(&config, portfolio, ReadingStrictness::all()).unwrap();
 
         assert!(!statement.assets.cash.is_empty());
         assert!(statement.assets.other.is_none()); // TODO(konishchev): Get it from statements
         assert!(!statement.deposits_and_withdrawals.is_empty());
 
-        assert_eq!(statement.fees.is_empty(), name == "iia");
+        assert_eq!(statement.fees.is_empty(), name == "bcs-iia");
         assert!(statement.cash_grants.is_empty());
-        assert_eq!(statement.idle_cash_interest.is_empty(), name != "iia");
-        assert_eq!(statement.tax_agent_withholdings.is_empty(), name == "iia" || name == "kate-iia");
+        assert_eq!(statement.idle_cash_interest.is_empty(), name != "bcs-iia");
+        assert_eq!(statement.tax_agent_withholdings.is_empty(), name == "bcs-iia" || name == "kate-iia");
 
         assert!(statement.forex_trades.is_empty());
         assert!(!statement.stock_buys.is_empty());
-        assert_eq!(statement.stock_sells.is_empty(), name == "iia");
+        assert_eq!(statement.stock_sells.is_empty(), name == "bcs-iia");
         assert!(statement.dividends.is_empty());
 
         assert!(!statement.open_positions.is_empty());

@@ -25,7 +25,6 @@ mod trades;
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::path::Path;
-#[cfg(test)] use std::path::PathBuf;
 use std::rc::Rc;
 
 use itertools::Itertools;
@@ -42,7 +41,6 @@ use crate::exchanges::Exchange;
 use crate::formats::xls::{XlsStatementParser, Section, SheetParser, SectionParserRc, Cell};
 use crate::formatting;
 use crate::instruments::{InstrumentId, parse_isin};
-#[cfg(test)] use crate::taxes::TaxRemapping;
 use crate::util;
 
 #[cfg(test)] use super::{BrokerStatement, ReadingStrictness};
@@ -285,7 +283,7 @@ mod tests {
     use rstest::rstest;
     use super::*;
 
-    #[rstest(name => ["my", "iia"])]
+    #[rstest(name => ["tbank", "tbank-iia"])]
     fn parse_real(name: &str) {
         let statement = parse("main", name);
 
@@ -293,15 +291,15 @@ mod tests {
         assert!(statement.assets.other.is_none()); // TODO(konishchev): Get it from statements
         assert!(!statement.deposits_and_withdrawals.is_empty());
 
-        assert_eq!(statement.fees.is_empty(), name == "iia");
+        assert_eq!(statement.fees.is_empty(), name == "tbank-iia");
         assert!(statement.cash_grants.is_empty());
         assert!(statement.idle_cash_interest.is_empty());
-        assert_eq!(statement.tax_agent_withholdings.is_empty(), name == "iia");
+        assert_eq!(statement.tax_agent_withholdings.is_empty(), name == "tbank-iia");
 
-        assert_eq!(statement.forex_trades.is_empty(), name == "iia");
+        assert_eq!(statement.forex_trades.is_empty(), name == "tbank-iia");
         assert!(!statement.stock_buys.is_empty());
-        assert_eq!(statement.stock_sells.is_empty(), name == "iia");
-        assert_eq!(statement.dividends.is_empty(), name == "iia");
+        assert_eq!(statement.stock_sells.is_empty(), name == "tbank-iia");
+        assert_eq!(statement.dividends.is_empty(), name == "tbank-iia");
 
         assert!(!statement.open_positions.is_empty());
         assert!(!statement.instrument_info.is_empty());
@@ -309,29 +307,16 @@ mod tests {
 
     #[rstest(name => ["complex", "mixed-currency-trade"])]
     fn parse_real_other(name: &str) {
-        let statement = parse("other", name);
+        let statement = parse("other", &format!("tbank-{name}"));
         assert_eq!(!statement.dividends.is_empty(), name == "complex");
     }
 
     fn parse(namespace: &str, name: &str) -> BrokerStatement {
-        let path = PathBuf::from(format!("testdata/tbank/{name}"));
-        assert!(!ForeignIncomeStatementReader::is_statement(&path).unwrap());
-
-        let portfolio_name = match (namespace, name) {
-            ("main", "my") => s!("tbank"),
-            ("main", "iia") => s!("tbank-iia"),
-            ("other", name) => format!("tbank-{name}"),
-            _ => name.to_owned(),
-        };
-
-        let broker = Broker::Tbank.get_info(&Config::mock(), None).unwrap();
         let config = Config::new(format!("testdata/configs/{namespace}"), None).unwrap();
-        let portfolio = config.get_portfolio(&portfolio_name).unwrap();
 
-        BrokerStatement::read(
-            broker, &path,
-            &Default::default(), &Default::default(), &Default::default(), TaxRemapping::new(), &[],
-            &portfolio.corporate_actions, ReadingStrictness::all(),
-        ).unwrap()
+        let portfolio = config.get_portfolio(name).unwrap();
+        assert_eq!(portfolio.broker, Broker::Tbank);
+
+        BrokerStatement::load(&config, portfolio, ReadingStrictness::all()).unwrap()
     }
 }

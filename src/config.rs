@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use chrono::Duration;
 use clap::{Arg, ArgAction, ArgMatches, value_parser};
 use serde::Deserialize;
-use serde::de::IgnoredAny;
+use serde::de::{Deserializer, Error, IgnoredAny};
 use validator::Validate;
 
 use crate::analysis::backtesting::config::BacktestingConfig;
@@ -192,9 +192,6 @@ impl Config {
                 return Err!("Duplicate portfolio name: {:?}", portfolio.name);
             }
 
-            portfolio.statements = portfolio.statements.as_ref().map(|path|
-                shellexpand::tilde(path).to_string());
-
             portfolio.validate().map_err(|e| format!(
                 "{:?} portfolio: {}", portfolio.name, e))?;
         }
@@ -270,7 +267,9 @@ pub struct PortfolioConfig {
     pub broker: Broker,
     pub plan: Option<String>,
 
-    pub statements: Option<String>,
+    #[serde(deserialize_with = "deserialize_optional_path")]
+    pub statements: Option<PathBuf>,
+    #[serde(default)]
     #[serde(default)]
     pub symbol_remapping: SymbolRemappingRules,
     #[serde(default, deserialize_with = "InstrumentInternalIds::deserialize")]
@@ -365,4 +364,21 @@ impl PortfolioConfig {
 
 fn default_expire_time() -> Duration {
     Duration::minutes(1)
+}
+
+fn deserialize_optional_path<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
+    where D: Deserializer<'de>
+{
+    let path: Option<String> = Deserialize::deserialize(deserializer)?;
+    path.as_deref().map(parse_path::<D>).transpose()
+}
+
+fn parse_path<'de, D>(path: &str) -> Result<PathBuf, D::Error>
+    where D: Deserializer<'de>
+{
+    let path = PathBuf::from(shellexpand::tilde(path).to_string());
+    if !path.is_absolute() {
+        return Err(D::Error::custom("The path must be absolute"));
+    }
+    Ok(path)
 }

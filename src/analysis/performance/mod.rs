@@ -97,7 +97,7 @@ impl<'a> PortfolioAnalyser<'a> {
                 Ok(())
             })?;
 
-            statement.process_trades(None)?;
+            statement.process_trades(None, false)?;
 
             for trade in statement.stock_sells.iter().rev() {
                 if !trade.emulation {

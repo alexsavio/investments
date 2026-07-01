@@ -5,7 +5,6 @@ mod formatting;
 mod rebalancing;
 
 use std::collections::hash_map::Entry;
-use std::path::Path;
 use std::rc::Rc;
 
 use crate::broker_statement::{BrokerStatement, ReadingStrictness};
@@ -24,13 +23,9 @@ use self::formatting::print_portfolio;
 
 pub fn sync(config: &Config, portfolio_name: &str) -> GenericResult<TelemetryRecordBuilder> {
     let portfolio = config.get_portfolio(portfolio_name)?;
-    let broker = portfolio.broker.get_info(config, portfolio.plan.as_deref())?;
     let database = db::connect(&config.db_path)?;
 
-    let statement = BrokerStatement::read(
-        broker, portfolio.statements_path()?, &portfolio.symbol_remapping, &portfolio.instrument_internal_ids,
-        &portfolio.instrument_names, portfolio.get_tax_remapping()?, &portfolio.tax_exemptions,
-        &portfolio.corporate_actions, ReadingStrictness::empty())?;
+    let statement = BrokerStatement::load(config, portfolio, ReadingStrictness::empty())?;
     statement.check_date();
 
     let assets = Assets::new(statement.assets.cash, statement.open_positions);
@@ -140,11 +135,8 @@ fn process(config: &Config, portfolio_name: &str, rebalance: bool, flat: bool) -
     let assets = Assets::load(database, &portfolio_config.name)?;
     assets.validate(portfolio_config)?;
 
-    let statement = portfolio_config.statements.as_ref().map(|path| {
-        BrokerStatement::read(
-            broker.clone(), Path::new(path), &portfolio_config.symbol_remapping, &portfolio_config.instrument_internal_ids,
-            &portfolio_config.instrument_names, portfolio_config.get_tax_remapping()?, &portfolio_config.tax_exemptions,
-            &portfolio_config.corporate_actions, ReadingStrictness::empty())
+    let statement = portfolio_config.has_statement().then(|| {
+        BrokerStatement::load(config, portfolio_config, ReadingStrictness::empty())
     }).transpose()?;
 
     let mut portfolio = Portfolio::load(

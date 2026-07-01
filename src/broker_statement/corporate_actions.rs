@@ -326,7 +326,7 @@ fn process_complex_stock_split(
     split_time: DateOptTime, symbol: &str, ratio: StockSplitRatio,
     withdrawal: Option<Decimal>, deposit: Option<Decimal>,
 ) -> EmptyResult {
-    statement.process_trades(Some(split_time))?;
+    statement.process_trades(Some(split_time), false)?;
 
     let mut quantity = dec!(0);
     let mut sell_sources = Vec::new();
