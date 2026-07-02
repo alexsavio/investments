@@ -181,9 +181,10 @@ fn generate_german_tax_statement(
     // Create the German tax statement
     let mut statement = germany::GermanTaxStatement::new(year, church_tax_rate, loss_carryforward);
 
-    // Connect to database for currency conversion
+    // Connect to database for currency conversion using official ECB reference rates (required by
+    // German tax authorities), not the Central Bank of Russia rates used for other jurisdictions.
     let database = db::connect(&config.db_path)?;
-    let converter = CurrencyConverter::new(database, None, true);
+    let converter = CurrencyConverter::new_ecb(database, None, true);
 
     // Process broker statement and populate entries
     let (has_trades, has_dividends, has_interest, has_fx_gains) =

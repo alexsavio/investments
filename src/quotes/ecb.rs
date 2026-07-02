@@ -35,7 +35,7 @@ pub const BASE_CURRENCY: &str = "EUR";
 pub struct Ecb {
     url: String,
     client: Client,
-    rates: OnceLock<GenericResult<HashMap<String, Decimal>>>,
+    rates: OnceLock<HashMap<String, Decimal>>,
 }
 
 impl Ecb {
@@ -52,10 +52,12 @@ impl Ecb {
     /// Returns a map of currency codes to their EUR exchange rates.
     /// For example, USD → 1.08 means 1 EUR = 1.08 USD.
     fn get_currency_rates(&self) -> GenericResult<HashMap<String, Decimal>> {
-        // ECB SDMX-ML format for daily exchange rates
-        // D = Daily, . = all currencies, EUR = base, SP00 = spot, A = average
+        // ECB SDMX-ML format for daily exchange rates.
+        // D = Daily, . = all currencies, EUR = base, SP00 = spot, A = average.
+        // lastNObservations=1 keeps the response to the latest value per currency instead of the
+        // full history back to 1999.
         let result: GenericMessage =
-            self.query("currency rates", "service/data/EXR/D..EUR.SP00.A")?;
+            self.query("currency rates", "service/data/EXR/D..EUR.SP00.A?lastNObservations=1")?;
 
         let today = time::today();
         let mut rates = HashMap::new();
@@ -99,7 +101,7 @@ impl Ecb {
             }
         }
 
-        // Warn if rates seem outdated (more than 3 business days old)
+        // Warn if rates seem outdated (more than 5 calendar days old, i.e. beyond a normal weekend)
         if let Some(date) = latest_date {
             let days_old = (today - date).num_days();
             if days_old > 5 {
@@ -114,6 +116,11 @@ impl Ecb {
     }
 
     /// Get historical exchange rates for a specific currency over a date range.
+    ///
+    /// The ECB `EXR/D.<CCY>.EUR.SP00.A` series publishes the rate as units of `<CCY>` per 1 EUR
+    /// (e.g. USD ≈ 1.08). The currency rate cache, however, stores the base-currency price of one
+    /// unit of the foreign currency (EUR per `<CCY>`, matching the CBR convention consumed by
+    /// `CurrencyConverter`). We therefore invert the published rate before returning it.
     pub fn get_historical_currency_rates(
         &self,
         currency: &str,
@@ -146,7 +153,7 @@ impl Ecb {
 
                     rates.push(CurrencyRate {
                         date: parsed_date,
-                        price: parsed_rate,
+                        price: dec!(1) / parsed_rate,
                     });
                 }
             }
@@ -182,11 +189,16 @@ impl QuotesProvider for Ecb {
     }
 
     fn get_quotes(&self, symbols: &[&str]) -> GenericResult<QuotesMap> {
-        let rates = self
-            .rates
-            .get_or_init(|| self.get_currency_rates())
-            .as_ref()
-            .map_err(|e| e.to_string())?;
+        // Cache only successful fetches: a transient HTTP failure must not be memoized for the
+        // lifetime of the process.
+        let rates = match self.rates.get() {
+            Some(rates) => rates,
+            None => {
+                let fetched = self.get_currency_rates()?;
+                let _ = self.rates.set(fetched);
+                self.rates.get().unwrap()
+            }
+        };
 
         let mut quotes = QuotesMap::new();
 
@@ -302,7 +314,7 @@ mod tests {
 
         let _rates_mock = mock_response(
             &mut server,
-            "/service/data/EXR/D..EUR.SP00.A",
+            "/service/data/EXR/D..EUR.SP00.A?lastNObservations=1",
             indoc!(
                 r#"
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -416,17 +428,19 @@ mod tests {
             .get_historical_currency_rates("USD", start, end)
             .unwrap();
 
+        // The published series is USD-per-EUR; the cache stores EUR-per-USD, so the returned
+        // prices are the inverse of the raw observations (1.0956 -> 1/1.0956).
         assert_eq!(rates.len(), 4);
         assert_eq!(
             rates[0].date,
             time::parse_date("2024-01-02", "%Y-%m-%d").unwrap()
         );
-        assert_eq!(rates[0].price, dec!(1.0956));
+        assert_eq!(rates[0].price, dec!(1) / dec!(1.0956));
         assert_eq!(
             rates[3].date,
             time::parse_date("2024-01-05", "%Y-%m-%d").unwrap()
         );
-        assert_eq!(rates[3].price, dec!(1.0942));
+        assert_eq!(rates[3].price, dec!(1) / dec!(1.0942));
     }
 
     fn create_server() -> (ServerGuard, Ecb) {
