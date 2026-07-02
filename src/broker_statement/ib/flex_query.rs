@@ -957,6 +957,43 @@ fn parse_forex_notional(description: &str) -> Option<Decimal> {
 mod tests {
     use super::*;
 
+    /// The parser must not ingest the same income twice when both StmtFunds and CashTransactions
+    /// are present (the docs tell users to enable both), must treat a negative dividend as a
+    /// reversal instead of panicking, must skip the `BASE_SUMMARY` aggregate cash row, must drop
+    /// cancelled trades and keep fees, and must filter short positions.
+    ///
+    /// Enabled by T3 (parser dedup + reversal/edge-row handling).
+    #[test]
+    #[ignore = "enabled by T3: parser dedup and edge-row handling"]
+    fn dedups_income_and_handles_edge_rows() {
+        let data =
+            std::fs::read("src/tax_statement/germany/testdata/income_edge/statement.xml").unwrap();
+        // Must not panic (negative dividend) or error (cancelled trade).
+        let partial = FlexQueryResponse::parse(&data).unwrap();
+
+        // The single credit-interest event appears in both StmtFunds (CINT) and CashTransactions
+        // (Broker Interest Received). Dividends/withholding share this code path.
+        assert_eq!(partial.idle_cash_interest.len(), 1, "interest double-counted");
+
+        // The BASE_SUMMARY aggregate row must not become a phantom currency balance.
+        assert!(
+            !partial.assets.cash.as_ref().is_some_and(|cash| cash.has_assets("BASE_SUMMARY")),
+            "BASE_SUMMARY leaked into cash assets",
+        );
+
+        // The "Other Fees" cash transaction must be recorded, not dropped.
+        assert!(!partial.fees.is_empty(), "fee not ingested");
+
+        // The cancelled BUY and its original must both be dropped.
+        assert!(partial.stock_buys.is_empty(), "cancelled trade not voided");
+
+        // Short positions are filtered (out of scope), never passed through as holdings.
+        assert!(
+            partial.open_positions.values().all(|&position| position > dec!(0)),
+            "short position leaked into open positions",
+        );
+    }
+
     #[test]
     fn test_parse_flex_date() {
         assert_eq!(
