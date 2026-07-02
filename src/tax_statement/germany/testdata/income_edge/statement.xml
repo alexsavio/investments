@@ -1,0 +1,29 @@
+<FlexQueryResponse queryName="german-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20240101" toDate="20241231" period="LastYear" whenGenerated="20250115;120000">
+      <CashReport>
+        <CashReportCurrency currency="BASE_SUMMARY" endingCash="1000" dividends="10" brokerInterest="5" withholdingTax="-1.5"/>
+        <CashReportCurrency currency="USD" endingCash="1000" dividends="10" brokerInterest="5" withholdingTax="-1.5"/>
+      </CashReport>
+      <Trades>
+        <Trade currency="USD" symbol="TSLA" isin="US88160R1014" description="TESLA INC" assetCategory="STK" dateTime="20240520;100000" settleDate="20240522" quantity="10" tradePrice="100" tradeMoney="-1000" ibCommission="0" buySell="BUY" openCloseIndicator="O" tradeID="1"/>
+        <Trade currency="USD" symbol="TSLA" isin="US88160R1014" description="TESLA INC" assetCategory="STK" dateTime="20240520;100000" settleDate="20240522" quantity="-10" tradePrice="100" tradeMoney="1000" ibCommission="0" buySell="BUY (Ca.)" openCloseIndicator="O" tradeID="2" origTradeID="1"/>
+      </Trades>
+      <StatementOfFunds>
+        <StatementOfFundsLine currency="USD" date="20240701" activityCode="CINT" activityDescription="USD CREDIT INT" amount="5" levelOfDetail="BaseCurrency"/>
+        <StatementOfFundsLine currency="USD" date="20240815" activityCode="DIV" activityDescription="MSFT CASH DIVIDEND" symbol="MSFT" isin="US5949181045" amount="10" levelOfDetail="BaseCurrency"/>
+        <StatementOfFundsLine currency="USD" date="20240815" activityCode="FRTAX" activityDescription="MSFT WITHHOLDING" symbol="MSFT" isin="US5949181045" amount="-1.5" levelOfDetail="BaseCurrency"/>
+      </StatementOfFunds>
+      <CashTransactions>
+        <CashTransaction currency="USD" description="USD CREDIT INT" dateTime="20240701;235959" amount="5" type="Broker Interest Received"/>
+        <CashTransaction currency="USD" symbol="MSFT" isin="US5949181045" description="MSFT CASH DIVIDEND" dateTime="20240815;235959" amount="10" type="Dividends"/>
+        <CashTransaction currency="USD" symbol="MSFT" isin="US5949181045" description="MSFT WITHHOLDING" dateTime="20240815;235959" amount="-1.5" type="Withholding Tax"/>
+        <CashTransaction currency="USD" symbol="GOOG" isin="US02079K1079" description="GOOG DIVIDEND REVERSAL" dateTime="20240905;235959" amount="-4" type="Dividends"/>
+        <CashTransaction currency="USD" description="ADR FEE" dateTime="20241001;235959" amount="-2" type="Other Fees"/>
+      </CashTransactions>
+      <OpenPositions>
+        <OpenPosition currency="USD" symbol="SPY" isin="US78462F1030" description="SPDR S&amp;P 500" position="-5" markPrice="500"/>
+      </OpenPositions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>
