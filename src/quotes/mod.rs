@@ -4,6 +4,7 @@ mod cache;
 pub mod cbr;
 mod common;
 mod custom_provider;
+pub mod ecb;
 pub mod fcsapi;
 mod finex;
 pub mod finnhub;
