@@ -6,7 +6,9 @@
 use chrono::Datelike;
 use log::{debug, warn};
 
-use crate::broker_statement::{BrokerCorporateActionType, BrokerStatement, StockSource};
+use crate::broker_statement::{
+    BrokerCorporateActionType, BrokerStatement, FifoDetails, StockSourceDetails,
+};
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
@@ -152,9 +154,15 @@ fn process_trades(
 ) -> GenericResult<bool> {
     let mut has_income = false;
 
+    // Germany taxes capital gains at a flat rate in EUR; build the jurisdiction once so the shared
+    // trade engine converts through the ECB rates supplied by the caller.
+    let country = crate::localities::germany(tax_config);
+    let pre_2009_cutoff = Date::from_ymd_opt(2009, 1, 1).unwrap();
+
     for trade in &broker_statement.stock_sells {
-        let trade_year = trade.execution_date.year();
-        if trade_year != year {
+        // Germany assigns the tax year by the obligatory transaction (conclusion) date, not the
+        // settlement date.
+        if trade.conclusion_time.date.year() != year {
             continue;
         }
 
@@ -163,26 +171,57 @@ fn process_trades(
             continue;
         }
 
+        // Only genuine trades yield capital gains here; corporate-action disposals are handled by
+        // process_corporate_actions.
+        if !matches!(
+            trade.type_,
+            crate::broker_statement::StockSellType::Trade { .. }
+        ) {
+            continue;
+        }
+
         has_income = true;
 
-        // Get trade details
-        let (_price, volume, commission) = match &trade.type_ {
-            crate::broker_statement::StockSellType::Trade {
-                price,
-                volume,
-                commission,
-                ..
-            } => (*price, *volume, *commission),
-            crate::broker_statement::StockSellType::CorporateAction => continue, // Skip corporate actions
-        };
+        // Real per-lot FIFO cost basis via the shared broker-statement engine: it consumes lots in
+        // acquisition order (so repeated sales don't re-use the same lot) and folds in buy-side
+        // commissions (Anschaffungsnebenkosten). FX follows SellDetails conventions — revenue at
+        // settlement, each lot's purchase cost at its own settlement — a documented simplification.
+        let instrument = broker_statement.instrument_info.get_or_empty(&trade.symbol);
+        let details = trade.calculate(&country, &instrument, &[], converter)?;
 
-        // Convert amounts to EUR with helpful error messages
-        let context = format!(
-            "Processing sale of {} on {}",
-            trade.symbol, trade.execution_date
-        );
-        let proceeds_eur = convert_to_eur(converter, trade.execution_date, volume, &context)?;
-        let commission_eur = convert_to_eur(converter, trade.execution_date, commission, &context)?;
+        let net_proceeds_eur = details.local_revenue.amount - details.local_commission.amount;
+        let total_quantity: Decimal = details
+            .fifo
+            .iter()
+            .map(|lot| lot.quantity * lot.multiplier)
+            .sum();
+
+        // Walk the matched lots once: accumulate the true cost basis, and isolate the profit share
+        // of pre-2009 (Altbestand) lots so only those are grandfathered out of the taxable base.
+        let mut cost_basis_eur = dec!(0);
+        let mut pre_2009_profit = dec!(0);
+        let mut has_pre_2009_lot = false;
+        for lot in &details.fifo {
+            let lot_cost_eur = match lot.source {
+                // Vested RSU shares are acquired at their vest-date FMV (already taxed as employment
+                // income); StockSourceDetails::Grant carries zero trade cost, so substitute the FMV.
+                StockSourceDetails::Grant => {
+                    grant_lot_cost_basis_eur(broker_statement, lot, converter)?
+                }
+                _ => lot.total_cost("EUR", converter)?.amount,
+            };
+            cost_basis_eur += lot_cost_eur;
+
+            if lot.conclusion_time.date < pre_2009_cutoff {
+                has_pre_2009_lot = true;
+                if !total_quantity.is_zero() {
+                    let lot_share = (lot.quantity * lot.multiplier) / total_quantity;
+                    pre_2009_profit += net_proceeds_eur * lot_share - lot_cost_eur;
+                }
+            }
+        }
+
+        let gross_gain_loss = net_proceeds_eur - cost_basis_eur;
 
         // Get instrument info for ISIN and name
         let instrument_info = broker_statement.instrument_info.get(&trade.symbol);
@@ -215,30 +254,22 @@ fn process_trades(
             TeilfreistellungRate::None
         };
 
-        // Calculate cost basis from FIFO lots
-        // Note: The broker statement should have already processed FIFO matching
-        let cost_basis_eur = calculate_cost_basis(trade, broker_statement, converter)?;
-
-        // Calculate gross gain/loss
-        let gross_gain_loss = proceeds_eur - commission_eur - cost_basis_eur;
-
-        // Apply Teilfreistellung
-        let taxable_amount = apply_teilfreistellung(gross_gain_loss, &teilfreistellung_rate);
-
-        // Check for pre-2009 holdings (Altbestand)
-        let pre_2009_holding = check_pre_2009_holding(trade, broker_statement);
+        // Altbestand (§52 Abs. 28 S. 11 EStG): shares acquired before 2009-01-01 are grandfathered
+        // per lot, so their profit (gain or loss) is excluded before Teilfreistellung and tax.
+        let taxable_before_exemption = gross_gain_loss - pre_2009_profit;
+        let taxable_amount =
+            apply_teilfreistellung(taxable_before_exemption, &teilfreistellung_rate);
 
         // Calculate German taxes
-        let (abgeltungssteuer, soli, church_tax, total_tax) =
-            if pre_2009_holding || taxable_amount <= dec!(0) {
-                (dec!(0), dec!(0), dec!(0), dec!(0))
-            } else {
-                let rates = &statement.tax_rates;
-                let abgelt = taxable_amount * rates.abgeltungssteuer;
-                let soli = abgelt * rates.solidaritaetszuschlag;
-                let church = abgelt * rates.kirchensteuer;
-                (abgelt, soli, church, abgelt + soli + church)
-            };
+        let (abgeltungssteuer, soli, church_tax, total_tax) = if taxable_amount <= dec!(0) {
+            (dec!(0), dec!(0), dec!(0), dec!(0))
+        } else {
+            let rates = &statement.tax_rates;
+            let abgelt = taxable_amount * rates.abgeltungssteuer;
+            let soli = abgelt * rates.solidaritaetszuschlag;
+            let church = abgelt * rates.kirchensteuer;
+            (abgelt, soli, church, abgelt + soli + church)
+        };
 
         let entry = CapitalGainEntry {
             transaction_date: trade.conclusion_time.date,
@@ -248,7 +279,7 @@ fn process_trades(
             description,
             quantity: trade.quantity,
             cost_basis_eur,
-            proceeds_eur: proceeds_eur - commission_eur,
+            proceeds_eur: net_proceeds_eur,
             gross_gain_loss,
             teilfreistellung_rate,
             taxable_amount,
@@ -257,9 +288,9 @@ fn process_trades(
             solidaritaetszuschlag: soli,
             kirchensteuer: church_tax,
             total_tax,
-            pre_2009_holding,
-            notes: if pre_2009_holding {
-                Some("Altbestand (pre-2009) - tax exempt".to_string())
+            pre_2009_holding: has_pre_2009_lot,
+            notes: if has_pre_2009_lot {
+                Some("Altbestand (pre-2009) lots grandfathered — their profit excluded".to_string())
             } else {
                 None
             },
@@ -270,7 +301,7 @@ fn process_trades(
             trade.symbol,
             trade.quantity,
             cost_basis_eur,
-            proceeds_eur - commission_eur,
+            net_proceeds_eur,
             gross_gain_loss,
             total_tax
         );
@@ -281,72 +312,45 @@ fn process_trades(
     Ok(has_income)
 }
 
-/// Calculate cost basis for a trade using FIFO data from broker statement.
-fn calculate_cost_basis(
-    trade: &crate::broker_statement::StockSell,
+/// Cost basis (in EUR) of a vested-RSU FIFO lot: its vest-date fair market value.
+///
+/// German tax already taxed that FMV as employment income at vesting, so it becomes the
+/// capital-gains cost basis of the shares. If the vest-date FMV is unavailable, warn and fall back
+/// to zero (conservative: overstates the gain rather than understating it).
+fn grant_lot_cost_basis_eur(
     broker_statement: &BrokerStatement,
+    lot: &FifoDetails,
     converter: &CurrencyConverter,
 ) -> GenericResult<Decimal> {
-    // Find matching buy transactions using FIFO
-    // For now, use a simplified approach - the actual FIFO matching is complex
-    // and already done by the broker statement processing
+    let vest_date = lot.conclusion_time.date;
 
-    // Look through stock_buys to find matching purchases
-    let mut total_cost = dec!(0);
-    let mut remaining_qty = trade.quantity;
-
-    // Sort buys by date for FIFO
-    let mut buys: Vec<_> = broker_statement
-        .stock_buys
+    let Some(grant) = broker_statement
+        .stock_grants
         .iter()
-        .filter(|buy| {
-            buy.symbol == trade.symbol && buy.conclusion_time.date <= trade.conclusion_time.date
-        })
-        .collect();
-    buys.sort_by_key(|buy| buy.conclusion_time.date);
-
-    for buy in buys {
-        if remaining_qty <= dec!(0) {
-            break;
-        }
-
-        let buy_qty = buy.quantity.min(remaining_qty);
-        let (price_per_share, currency) = match &buy.type_ {
-            StockSource::Trade { price, .. } => (price.amount, &price.currency),
-            StockSource::Grant => continue,
-            _ => continue,
-        };
-
-        let cost = buy_qty * price_per_share;
-        let cost_cash = crate::currency::Cash::new(currency, cost);
-        let context = format!(
-            "Calculating cost basis for {} purchase on {}",
-            buy.symbol, buy.conclusion_time.date
+        .find(|grant| grant.symbol == lot.original_symbol && grant.date == vest_date)
+    else {
+        warn!(
+            "Stock grant lot for {} vested {} has no matching grant record; using €0 cost basis.",
+            lot.original_symbol, vest_date
         );
-        let cost_eur = convert_to_eur(converter, buy.conclusion_time.date, cost_cash, &context)?;
+        return Ok(dec!(0));
+    };
 
-        total_cost += cost_eur;
-        remaining_qty -= buy_qty;
-    }
+    let Some(fmv) = grant.fmv_per_share else {
+        warn!(
+            "Stock grant {} vested {}: vest-date FMV unavailable; using €0 cost basis (overstates gain).",
+            lot.original_symbol, vest_date
+        );
+        return Ok(dec!(0));
+    };
 
-    Ok(total_cost)
-}
-
-/// Check if the trade involves pre-2009 holdings (Altbestand).
-fn check_pre_2009_holding(
-    trade: &crate::broker_statement::StockSell,
-    broker_statement: &BrokerStatement,
-) -> bool {
-    let cutoff_date = Date::from_ymd_opt(2009, 1, 1).unwrap();
-
-    // Check if any of the source buys are from before 2009
-    for buy in &broker_statement.stock_buys {
-        if buy.symbol == trade.symbol && buy.conclusion_time.date < cutoff_date {
-            return true;
-        }
-    }
-
-    false
+    // fmv is per original (un-split) share; lot.quantity is likewise the pre-multiplier share count.
+    let cost = Cash::new(fmv.currency, fmv.amount * lot.quantity);
+    let context = format!(
+        "Converting vest-date FMV for stock grant {} on {}",
+        lot.original_symbol, vest_date
+    );
+    convert_to_eur(converter, vest_date, cost, &context)
 }
 
 /// Process dividends and create dividend entries.
