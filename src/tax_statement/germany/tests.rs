@@ -104,7 +104,6 @@ fn harness_reads_fifo_fixture() {
 ///
 /// Enabled by T2 (per-lot FIFO via `StockSell::calculate`).
 #[test]
-#[ignore = "enabled by T2: per-lot FIFO cost basis"]
 fn fifo_cost_basis_consumes_lots() {
     let german = run_pipeline("fifo", 2024);
     assert_eq!(german.total_capital_gains, dec!(900));
