@@ -5,15 +5,18 @@
 
 use serde::Deserialize;
 
+use std::collections::HashSet;
+
 use crate::broker_statement::grants::StockGrant;
 use crate::broker_statement::interest::{IdleCashInterest, FxGain};
 use crate::broker_statement::partial::PartialBrokerStatement;
 use crate::broker_statement::trades::{StockBuy, StockSell};
+use crate::broker_statement::{Fee, Withholding};
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::{Cash, CashAssets};
 use crate::exchanges::Exchange;
 use crate::formats::xml;
-use crate::instruments::InstrumentId;
+use crate::instruments::{InstrumentId, parse_isin};
 use crate::time::{Date, DateOptTime, Period};
 use crate::types::Decimal;
 
@@ -205,6 +208,12 @@ pub struct Trade {
 
     #[serde(rename = "@openCloseIndicator", default)]
     pub open_close_indicator: String,
+
+    #[serde(rename = "@tradeID", default)]
+    pub trade_id: String,
+
+    #[serde(rename = "@origTradeID", default)]
+    pub orig_trade_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -427,7 +436,15 @@ impl FlexQueryResponse {
             return Err!("No statements found in Flex Query response");
         }
 
-        // For now, process the first statement
+        // Silently truncating extra accounts would drop income; require one account per query.
+        if response.flex_statements.statements.len() > 1 {
+            return Err!(
+                "Multi-account Flex Query responses are not supported: found {} statements. \
+                 Export one account per Flex Query.",
+                response.flex_statements.statements.len()
+            );
+        }
+
         let statement = &response.flex_statements.statements[0];
         statement.parse()
     }
@@ -452,18 +469,61 @@ impl FlexStatement {
         // Parse cash balances from CashReport
         if let Some(ref cash_report) = self.cash_report {
             for currency_report in &cash_report.currencies {
+                // IB emits a BASE_SUMMARY aggregate row (sum across currencies); depositing it would
+                // double-count cash and later fail to convert a currency that does not exist.
+                if currency_report.currency == "BASE_SUMMARY" || currency_report.currency.len() != 3 {
+                    if currency_report.currency != "BASE_SUMMARY" {
+                        log::warn!(
+                            "Skipping cash report row for unexpected currency {:?}.",
+                            currency_report.currency
+                        );
+                    }
+                    continue;
+                }
                 let cash_assets = statement.assets.cash.get_or_insert_with(Default::default);
                 let cash = Cash::new(&currency_report.currency, currency_report.ending_cash);
                 cash_assets.deposit(cash);
             }
         }
 
-        // Parse trades from Trades section (preferred if it has content)
+        // Parse trades from Trades section (preferred if it has content).
         let mut trades_found = false;
         if let Some(ref trades) = self.trades {
+            // A "BUY (Ca.)" / "SELL (Ca.)" row cancels an earlier trade referenced by origTradeID;
+            // drop both the cancellation row and the original it voids. A cancellation whose original
+            // is not in this statement (e.g. a trade cancelled in the next year's separate export) or
+            // that carries no origTradeID has nothing to void here, so warn and drop only the
+            // cancellation row rather than aborting the whole statement.
+            let mut cancelled_ids = HashSet::new();
             for trade in &trades.trades {
-                parse_trade(&mut statement, trade)?;
-                trades_found = true;
+                if !is_cancelled_trade(&trade.buy_sell) {
+                    continue;
+                }
+                if trade.orig_trade_id.is_empty() {
+                    log::warn!(
+                        "Ignoring cancellation of {} on {} that carries no origTradeID.",
+                        trade.symbol, trade.date_time
+                    );
+                } else if trades.trades.iter().any(|t| t.trade_id == trade.orig_trade_id) {
+                    cancelled_ids.insert(trade.orig_trade_id.clone());
+                } else {
+                    log::warn!(
+                        "Ignoring cancellation of {} on {}: original trade ID {} is not in this \
+                         statement (likely cancelled in a different reporting period).",
+                        trade.symbol, trade.date_time, trade.orig_trade_id
+                    );
+                }
+            }
+
+            for trade in &trades.trades {
+                if is_cancelled_trade(&trade.buy_sell) || cancelled_ids.contains(&trade.trade_id) {
+                    continue;
+                }
+                // Only count the section as populated once a trade is actually ingested, so a
+                // section holding nothing but skipped non-stock rows still falls back to StmtFunds.
+                if parse_trade(&mut statement, trade)? {
+                    trades_found = true;
+                }
             }
         }
 
@@ -476,13 +536,26 @@ impl FlexStatement {
             }
         }
 
-        // Parse dividends and withholding taxes from Statement of Funds
-        // (These are often here instead of CashTransactions)
-        // Skip FOREX parsing if FxTransactions section is available (more accurate)
+        // Parse dividends and withholding taxes from Statement of Funds.
+        // The docs tell users to enable both StmtFunds and CashTransactions, so income that appears
+        // in both would be double-counted. Suppress a StmtFunds income type only when the
+        // CashTransactions section actually carries that same type (per-type, so a present-but-empty
+        // — or fees-only — CashTransactions section never silently drops StmtFunds income).
+        // Likewise skip FOREX when the richer FxTransactions section exists.
         let has_fx_transactions = self.fx_transactions.is_some();
+        let cash_income = self
+            .cash_transactions
+            .as_ref()
+            .map(CashTxIncome::from_transactions)
+            .unwrap_or_default();
         if let Some(ref stmtfunds) = self.statement_of_funds {
             for line in &stmtfunds.lines {
-                parse_statement_of_funds_dividend(&mut statement, line, has_fx_transactions)?;
+                parse_statement_of_funds_dividend(
+                    &mut statement,
+                    line,
+                    has_fx_transactions,
+                    cash_income,
+                )?;
             }
         }
 
@@ -496,9 +569,19 @@ impl FlexStatement {
         // Parse open positions to register instruments
         if let Some(ref positions) = self.open_positions {
             for pos in &positions.positions {
-                if !pos.symbol.is_empty() && pos.position != Decimal::ZERO {
-                    statement.add_open_position(&pos.symbol, pos.position)?;
+                if pos.symbol.is_empty() || pos.position == Decimal::ZERO {
+                    continue;
                 }
+                // add_open_position enforces strictly-positive quantities; German tax handling of
+                // short positions is out of scope, so warn and skip rather than abort the statement.
+                if pos.position < Decimal::ZERO {
+                    log::warn!(
+                        "Ignoring short position of {} {} (short positions are not handled).",
+                        pos.position, pos.symbol
+                    );
+                    continue;
+                }
+                statement.add_open_position(&pos.symbol, pos.position)?;
             }
         }
 
@@ -568,10 +651,7 @@ fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: 
     let commission = Cash::new(&line.currency, line.trade_commission.abs());
     let conclusion_time: DateOptTime = date.into();
 
-    // Register the instrument
-    if !line.isin.is_empty() {
-        let _ = statement.instrument_info.get_or_add(&line.isin);
-    }
+    register_instrument_isin(statement, symbol, &line.isin);
 
     match line.buy_sell.as_str() {
         "BUY" => {
@@ -590,9 +670,11 @@ fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: 
     Ok(())
 }
 
-/// Parse dividend, withholding tax, interest, and FX gain entries from Statement of Funds section
-/// If `skip_forex` is true, FOREX entries are skipped (because FxTransactions section is available)
-fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, line: &StatementOfFundsLine, skip_forex: bool) -> EmptyResult {
+/// Parse dividend, withholding tax, interest, and FX gain entries from Statement of Funds section.
+/// `cash_income` records which income types the CashTransactions section already carries; those
+/// types are skipped here (that section is authoritative) so income is not counted twice. If
+/// `skip_forex` is true, FOREX entries are skipped because the FxTransactions section is available.
+fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, line: &StatementOfFundsLine, skip_forex: bool, cash_income: CashTxIncome) -> EmptyResult {
     // Only process from base currency lines to avoid duplicates
     // (entries appear in both Currency and BaseCurrency detail levels)
     if line.level_of_detail != "BaseCurrency" {
@@ -606,6 +688,11 @@ fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, lin
     };
 
     match line.activity_code.as_str() {
+        // Skip a type only when CashTransactions already carries it, so the same income is not
+        // counted twice while StmtFunds-only income is still ingested.
+        "DIV" if cash_income.dividends => {}
+        "FRTAX" if cash_income.withholding => {}
+        "CINT" if cash_income.interest => {}
         "DIV" => {
             // Dividend payment - requires symbol
             if line.symbol.is_empty() {
@@ -780,10 +867,12 @@ fn determine_fx_is_margin_loan(description: &str, quantity: Decimal) -> bool {
     quantity.abs() > dec!(100)
 }
 
-fn parse_trade(statement: &mut PartialBrokerStatement, trade: &Trade) -> EmptyResult {
+/// Ingest a stock trade. Returns `true` if a trade was recorded, `false` if the row was skipped as
+/// a non-stock instrument. Cancellation rows are filtered out by the caller before this is reached.
+fn parse_trade(statement: &mut PartialBrokerStatement, trade: &Trade) -> GenericResult<bool> {
     // Skip non-stock trades (forex, options, etc.)
     if trade.asset_category != "STK" {
-        return Ok(());
+        return Ok(false);
     }
 
     let date = parse_flex_datetime(&trade.date_time)?;
@@ -800,10 +889,7 @@ fn parse_trade(statement: &mut PartialBrokerStatement, trade: &Trade) -> EmptyRe
     let commission = Cash::new(&trade.currency, trade.commission.abs());
     let conclusion_time: DateOptTime = date.into();
 
-    // Register the instrument
-    if !trade.isin.is_empty() {
-        let _ = statement.instrument_info.get_or_add(&trade.isin);
-    }
+    register_instrument_isin(statement, symbol, &trade.isin);
 
     match trade.buy_sell.as_str() {
         "BUY" => {
@@ -821,7 +907,53 @@ fn parse_trade(statement: &mut PartialBrokerStatement, trade: &Trade) -> EmptyRe
         }
     }
 
-    Ok(())
+    Ok(true)
+}
+
+/// Whether an IB trade row is a cancellation (`buySell` = "BUY (Ca.)" / "SELL (Ca.)").
+fn is_cancelled_trade(buy_sell: &str) -> bool {
+    buy_sell.contains("(Ca.)")
+}
+
+/// Register `symbol` and link its ISIN (parsed with the strict ISIN type). Unlike keying an
+/// instrument by its raw ISIN string, this keeps the symbol as the primary key and attaches the
+/// ISIN, matching the CSV path. Invalid ISINs are warned about, not fatal.
+fn register_instrument_isin(statement: &mut PartialBrokerStatement, symbol: &str, isin: &str) {
+    if isin.is_empty() {
+        return;
+    }
+    match parse_isin(isin) {
+        Ok(isin) => {
+            statement.instrument_info.get_or_add(symbol).add_isin(isin);
+        }
+        Err(e) => {
+            log::warn!("Ignoring invalid ISIN {isin:?} for {symbol}: {e}");
+        }
+    }
+}
+
+/// Which income types the CashTransactions section carries. Used to dedup against the StmtFunds
+/// section per type: a type is authoritative there only if at least one such row is present.
+#[derive(Clone, Copy, Default)]
+struct CashTxIncome {
+    dividends: bool,
+    withholding: bool,
+    interest: bool,
+}
+
+impl CashTxIncome {
+    fn from_transactions(transactions: &CashTransactions) -> CashTxIncome {
+        let mut income = CashTxIncome::default();
+        for tx in &transactions.transactions {
+            match tx.transaction_type.as_str() {
+                "Dividends" | "Payment In Lieu Of Dividends" => income.dividends = true,
+                "Withholding Tax" => income.withholding = true,
+                "Broker Interest Paid" | "Broker Interest Received" => income.interest = true,
+                _ => {}
+            }
+        }
+        income
+    }
 }
 
 fn parse_cash_transaction(statement: &mut PartialBrokerStatement, tx: &CashTransaction) -> EmptyResult {
@@ -834,9 +966,15 @@ fn parse_cash_transaction(statement: &mut PartialBrokerStatement, tx: &CashTrans
                 return Err!("Dividend without symbol: {:?}", tx.description);
             }
 
-            // Track dividend for later tax matching
+            // Track dividend for later tax matching. A negative amount is a correction/reversal of
+            // an earlier accrual (Payments::add would panic on it), so route it through reverse.
             let issuer = InstrumentId::Symbol(tx.symbol.clone());
-            statement.dividend_accruals(date, issuer, true).add(date, amount);
+            let accruals = statement.dividend_accruals(date, issuer, true);
+            if tx.amount.is_sign_negative() {
+                accruals.reverse(date, -amount);
+            } else {
+                accruals.add(date, amount);
+            }
         }
 
         "Withholding Tax" => {
@@ -865,8 +1003,10 @@ fn parse_cash_transaction(statement: &mut PartialBrokerStatement, tx: &CashTrans
         }
 
         "Other Fees" | "Commission Adjustments" => {
-            // These are typically small adjustments, log but don't fail
-            log::debug!("Skipping cash transaction: {} - {}", tx.transaction_type, tx.description);
+            // Broker fees (e.g. ADR fees) arrive as a debit (negative amount); store them as a
+            // deductible fee the same way the CSV path does so the fee section is not a no-op.
+            let description = (!tx.description.is_empty()).then(|| tx.description.clone());
+            statement.fees.push(Fee::new(date, Withholding::new(-amount), description));
         }
 
         _ => {
@@ -964,7 +1104,6 @@ mod tests {
     ///
     /// Enabled by T3 (parser dedup + reversal/edge-row handling).
     #[test]
-    #[ignore = "enabled by T3: parser dedup and edge-row handling"]
     fn dedups_income_and_handles_edge_rows() {
         let data =
             std::fs::read("src/tax_statement/germany/testdata/income_edge/statement.xml").unwrap();
