@@ -24,6 +24,8 @@ use crate::time::{self, Date};
 use crate::types::Decimal;
 use crate::util::{self, DecimalRestrictions};
 
+// Referenced only by the non-test `RateSource::Ecb` constructor, so it reads as dead under `cfg(test)`.
+#[cfg_attr(test, allow(dead_code))]
 pub const BASE_URL: &str = "https://data-api.ecb.europa.eu";
 pub const BASE_CURRENCY: &str = "EUR";
 
