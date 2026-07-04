@@ -113,6 +113,35 @@ For ETFs, partial tax exemptions apply based on the fund composition:
 
 **Note:** Configure ETF classifications in your config to apply correct exemption rates.
 
+## Anlage KAP vs Anlage KAP-INV
+
+Foreign capital income is declared on two different forms depending on whether it comes from an
+investment fund:
+
+- **Anlage KAP** — non-fund income: direct-share (Aktien) sale gains/losses, dividends from
+  non-funds, interest, and FX results. The statement fills:
+  - `Zeile 19`: net foreign capital income (all positives − contained losses).
+  - `Zeile 20`: share-sale gains contained in Zeile 19 (needed to operate the §20(6) stock pot).
+  - `Zeile 22`: contained losses **excluding** share-sale losses (FX / other §20 losses).
+  - `Zeile 23`: contained share-sale losses.
+  - `Zeile 41`: creditable foreign withholding tax.
+- **Anlage KAP-INV** — investment-fund income (any Teilfreistellung classification, **including bond
+  funds**): reported per fund type (Aktienfonds / Mischfonds / sonstige) as **gross** distributions
+  and gross sale gains/losses. Enter these gross figures as-is; the Finanzamt applies the
+  Teilfreistellung itself. The tool still applies Teilfreistellung in its own tax *estimate*, but the
+  reported KAP-INV values stay pre-exemption.
+
+Line numbers follow the 2024/2025 Anlage KAP; the forms shift between years, so re-check them against
+the form for your filing year.
+
+**Altbestand on KAP:** a pure pre-2009 (Altbestand) share sale has a positive gross gain but a
+taxable amount of 0, so it contributes nothing to Zeile 19/20 — the tax-free gain is not declared as
+income.
+
+**Vorabpauschale not included:** the advance lump-sum taxation of accumulating funds
+(Vorabpauschale, §18 InvStG) is **not yet computed**. When any fund classification appears in the
+statement, review Vorabpauschale for those holdings separately.
+
 ## Foreign Tax Credits
 
 For dividends from foreign sources, you may have already paid withholding tax in the source country. German tax law allows crediting foreign taxes against German tax liability, subject to limits.
