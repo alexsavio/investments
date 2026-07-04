@@ -3,6 +3,7 @@
 //! Contains the main GermanTaxStatement struct and entry types for capital gains,
 //! dividends, interest, and FX gains/losses.
 
+use crate::core::GenericResult;
 use crate::taxes::germany::{
     GermanTaxRates, TeilfreistellungRate, calculate_with_loss_carryforward,
 };
@@ -229,10 +230,14 @@ pub struct GermanTaxStatement {
 
 impl GermanTaxStatement {
     /// Create a new German tax statement for the given year.
-    pub fn new(year: i32, church_tax_rate: Decimal, loss_carryforward: Decimal) -> Self {
-        GermanTaxStatement {
+    pub fn new(
+        year: i32,
+        church_tax_rate: Decimal,
+        loss_carryforward: Decimal,
+    ) -> GenericResult<Self> {
+        Ok(GermanTaxStatement {
             year,
-            tax_rates: GermanTaxRates::for_year(year, church_tax_rate),
+            tax_rates: GermanTaxRates::for_year(year, church_tax_rate)?,
 
             capital_gains: Vec::new(),
             dividends: Vec::new(),
@@ -271,7 +276,7 @@ impl GermanTaxStatement {
             kap_zeile_22: dec!(0),
             kap_zeile_23: dec!(0),
             kap_zeile_41: dec!(0),
-        }
+        })
     }
 
     /// Add a capital gain entry.
@@ -422,12 +427,10 @@ impl GermanTaxStatement {
             + self.total_solidaritaetszuschlag
             + self.total_kirchensteuer;
 
-        self.net_tax_due = self.total_german_tax - self.total_foreign_tax_credit;
-
-        // Ensure net tax is not negative
-        if self.net_tax_due < dec!(0) {
-            self.net_tax_due = dec!(0);
-        }
+        // Creditable foreign tax is already folded into each entry's tax via the §32d(1) formula
+        // (tax = (e − 4q)/(4 + k)), so total_german_tax is already net of the credit — do not
+        // subtract it a second time.
+        self.net_tax_due = self.total_german_tax.max(dec!(0));
 
         // Calculate Anlage KAP form line values
         //
