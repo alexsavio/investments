@@ -274,6 +274,8 @@ Round **once** per reported figure (components and totals each rounded from full
 
 ### T11. Vorabpauschale (advance lump-sum taxation for funds)
 
+**Interim done** (commit `88866a53`) — the "until implemented" warning is live: `fund_identifiers()` drives a console `warn!` and a `# WARNING` CSV block naming any fund holding, so the omission is loud, not silent. The full calc remains deferred (blocked on year-boundary per-fund NAVs — `OpenPosition` only carries a single report-date `markPrice`, so `nav_jan1` needs the prior year's statement or a config carry-in — plus per-lot cross-year netting at sale, plus BMF Basiszins verification).
+
 Missing entirely and *not* in the spec's out-of-scope list; for accumulating ETFs at a foreign broker this is a mandatory yearly taxable event since 2023. It is deferred because it needs year-start/year-end NAVs per fund (new data dependency).
 
 Sketch for when approved: per fund holding — `basisertrag = nav_jan1 × basiszins(year) × 0.7`, prorated by 1/12 for each full month before purchase in the acquisition year; `vorabpauschale = max(0, min(basisertrag − distributions_of_year, max(0, nav_dec31 − nav_jan1)))`; taxed (with Teilfreistellung) as income of the **first business day of the following year**; accumulated Vorabpauschalen reduce the taxable gain at sale. Basiszins: 2023 = 2.55%, 2024 = 2.29%, 2025 = 2.53% (BMF publishes each January — make it a config table with these defaults). Verify against §18 InvStG / current BMF letter before implementing. **Until implemented**: emit a prominent warning in the CSV + console when any configured fund classification appears in the statement, saying Vorabpauschale is not computed.
