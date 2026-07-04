@@ -2115,4 +2115,82 @@ mod tests {
         assert_eq!(statement.total_taxable_income, dec!(1000));
         assert_eq!(statement.total_fees, dec!(200));
     }
+
+    // --- T6: Anlage KAP / KAP-INV mapping ---
+
+    fn fund_dividend_entry(gross: Decimal, rate: TeilfreistellungRate) -> DividendEntry {
+        DividendEntry {
+            teilfreistellung_rate: rate,
+            ..dividend_entry(gross)
+        }
+    }
+
+    fn fund_capital_entry(gross: Decimal, rate: TeilfreistellungRate) -> CapitalGainEntry {
+        CapitalGainEntry {
+            teilfreistellung_rate: rate,
+            is_stock: false,
+            ..stock_capital_entry(gross)
+        }
+    }
+
+    #[test]
+    fn kap_zeilen_split_share_gains_losses_and_exclude_funds() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_capital_gain(stock_capital_entry(dec!(1000))); // share-sale gain
+        statement.add_capital_gain(stock_capital_entry(dec!(-400))); // share-sale loss
+        statement.add_dividend(fund_dividend_entry(dec!(800), TeilfreistellungRate::Equity));
+        statement.add_fx_gain(fx_entry(dec!(-200))); // FX loss
+        statement.calculate_totals();
+
+        assert_eq!(statement.kap_zeile_20, dec!(1000)); // contained share-sale gains
+        assert_eq!(statement.kap_zeile_23, dec!(400)); // contained share-sale losses
+        assert_eq!(statement.kap_zeile_22, dec!(200)); // contained non-share losses (FX)
+        assert_eq!(statement.kap_zeile_19, dec!(400)); // 1000 − 200 − 400
+
+        // Zeile 19 == (all positive foreign capital income) − Zeile 22 − Zeile 23. The only positive
+        // non-fund contribution is the €1,000 share gain; the fund dividend is on KAP-INV, not here.
+        let all_positives = dec!(1000);
+        assert_eq!(
+            statement.kap_zeile_19,
+            all_positives - statement.kap_zeile_22 - statement.kap_zeile_23
+        );
+
+        // The fund dividend lands on Anlage KAP-INV (gross), never on the KAP lines.
+        assert_eq!(statement.kap_inv_equity.distributions, dec!(800));
+    }
+
+    #[test]
+    fn pure_altbestand_sale_absent_from_kap_lines() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        // Pure pre-2009 lot: raw gross gain +€1,000 but Altbestand-exempt, so taxable_amount is 0.
+        // It must land on neither Zeile 19 nor Zeile 20.
+        let mut entry = stock_capital_entry(dec!(0));
+        entry.gross_gain_loss = dec!(1000);
+        entry.pre_2009_holding = true;
+        statement.add_capital_gain(entry);
+        statement.calculate_totals();
+        assert_eq!(statement.kap_zeile_19, dec!(0));
+        assert_eq!(statement.kap_zeile_20, dec!(0));
+        assert_eq!(statement.kap_zeile_23, dec!(0));
+    }
+
+    #[test]
+    fn fund_entries_populate_kap_inv_groups_gross() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_dividend(fund_dividend_entry(dec!(500), TeilfreistellungRate::Equity));
+        statement.add_capital_gain(fund_capital_entry(dec!(1000), TeilfreistellungRate::Equity));
+        statement.add_capital_gain(fund_capital_entry(dec!(-300), TeilfreistellungRate::Mixed));
+        statement.calculate_totals();
+
+        // KAP-INV reports gross, pre-Teilfreistellung figures grouped by fund type.
+        assert_eq!(statement.kap_inv_equity.distributions, dec!(500));
+        assert_eq!(statement.kap_inv_equity.sale_gains, dec!(1000));
+        assert_eq!(statement.kap_inv_mixed.sale_losses, dec!(300));
+        // Fund income must not leak onto the non-fund KAP lines.
+        assert_eq!(statement.kap_zeile_20, dec!(0));
+        assert_eq!(statement.kap_zeile_19, dec!(0));
+    }
 }

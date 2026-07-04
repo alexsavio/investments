@@ -228,16 +228,35 @@ pub struct GermanTaxStatement {
     /// FX gains/losses from margin loan repayments (not taxable - Tilgung Fremdwährungskredit)
     pub non_taxable_margin_fx: Decimal,
 
-    // Anlage KAP form line values
-    // These map to specific lines on the German tax form "Anlage KAP"
-    /// KAP Zeile 19: Foreign capital income (dividends, interest, FX gains from abroad)
+    // Anlage KAP form line values (non-fund entries only; fund income is declared on KAP-INV).
+    // TODO(verify): re-check these line numbers against the current-year Anlage KAP form.
+    /// KAP Zeile 19: net foreign capital income (dividends + interest + share gains/losses + FX).
     pub kap_zeile_19: Decimal,
-    /// KAP Zeile 22: Losses from non-stock capital income (FX losses, interest losses)
+    /// KAP Zeile 20: share-sale gains contained in Zeile 19.
+    pub kap_zeile_20: Decimal,
+    /// KAP Zeile 22: contained losses excluding share-sale losses (FX / other §20 losses).
     pub kap_zeile_22: Decimal,
-    /// KAP Zeile 23: Losses from stock sales
+    /// KAP Zeile 23: contained share-sale losses.
     pub kap_zeile_23: Decimal,
-    /// KAP Zeile 41: Creditable foreign withholding tax (anrechenbare ausländische Quellensteuer)
+    /// KAP Zeile 41: creditable foreign withholding tax (anrechenbare ausländische Quellensteuer).
     pub kap_zeile_41: Decimal,
+
+    // Anlage KAP-INV: gross (pre-Teilfreistellung) investment-fund figures by fund type. The
+    // Finanzamt applies the Teilfreistellung to these values itself.
+    pub kap_inv_equity: KapInvGroup,
+    pub kap_inv_mixed: KapInvGroup,
+    pub kap_inv_other: KapInvGroup,
+}
+
+/// Gross (pre-Teilfreistellung) Anlage KAP-INV figures for one fund-type group.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct KapInvGroup {
+    /// Gross fund distributions received.
+    pub distributions: Decimal,
+    /// Gross gains from fund-unit sales.
+    pub sale_gains: Decimal,
+    /// Gross losses from fund-unit sales (positive magnitude).
+    pub sale_losses: Decimal,
 }
 
 impl GermanTaxStatement {
@@ -295,9 +314,14 @@ impl GermanTaxStatement {
 
             // KAP line values (calculated)
             kap_zeile_19: dec!(0),
+            kap_zeile_20: dec!(0),
             kap_zeile_22: dec!(0),
             kap_zeile_23: dec!(0),
             kap_zeile_41: dec!(0),
+
+            kap_inv_equity: KapInvGroup::default(),
+            kap_inv_mixed: KapInvGroup::default(),
+            kap_inv_other: KapInvGroup::default(),
         })
     }
 
@@ -452,65 +476,87 @@ impl GermanTaxStatement {
         self.total_german_tax = taxes.total;
         self.net_tax_due = taxes.total.max(dec!(0));
 
-        // Calculate Anlage KAP form line values
+        // Anlage KAP (non-fund entries) and Anlage KAP-INV (investment-fund entries).
         //
-        // KAP Zeile 19: Foreign capital income from abroad (ausländische Kapitalerträge)
-        // This is the GROSS income before loss offsetting
-        // Includes: dividends, interest, FX gains, and capital gains (all from foreign sources)
-        // Note: For IBKR accounts, all income is considered "foreign" (ausländisch)
-        // Note: This uses taxable amounts (after Teilfreistellung) not gross amounts
+        // Investment-fund income — any Teilfreistellung classification, including Bond — is declared
+        // GROSS on Anlage KAP-INV (the Finanzamt applies the exemption). Everything else stays on
+        // Anlage KAP. KAP capital-gain figures are built from the Altbestand-adjusted taxable_amount
+        // (for non-fund entries that equals the post-Altbestand gross, since Teilfreistellung is
+        // None), never the raw gross_gain_loss — a pure pre-2009 sale then lands on neither line.
 
-        // Sum gross dividend income
-        let gross_dividend_income: Decimal =
-            self.dividends.iter().map(|e| e.gross_amount_eur).sum();
+        // --- Anlage KAP: non-fund entries, losses INCLUDED in Zeile 19 ---
+        let mut kap_positive = dec!(0);
+        let mut zeile_20 = dec!(0); // share-sale gains contained in Zeile 19
+        let mut zeile_23 = dec!(0); // share-sale losses (positive magnitude)
+        let mut zeile_22 = dec!(0); // non-share losses (FX / other §20)
 
-        // Sum gross interest income
-        let gross_interest_income: Decimal = self.interest.iter().map(|e| e.gross_amount_eur).sum();
+        for entry in &self.capital_gains {
+            if entry.teilfreistellung_rate != TeilfreistellungRate::None {
+                continue; // fund unit → KAP-INV
+            }
+            let amount = entry.taxable_amount;
+            if amount > dec!(0) {
+                zeile_20 += amount;
+                kap_positive += amount;
+            } else if amount < dec!(0) {
+                zeile_23 += -amount;
+            }
+        }
+        for entry in &self.dividends {
+            if entry.teilfreistellung_rate == TeilfreistellungRate::None {
+                kap_positive += entry.gross_amount_eur;
+            }
+        }
+        for entry in &self.interest {
+            kap_positive += entry.gross_amount_eur;
+        }
+        for entry in &self.fx_gains {
+            let amount = entry.taxable_amount;
+            if amount >= dec!(0) {
+                kap_positive += amount;
+            } else {
+                zeile_22 += -amount;
+            }
+        }
 
-        // Sum gross capital gains (only gains, not losses)
-        let gross_capital_gains: Decimal = self
-            .capital_gains
-            .iter()
-            .filter(|e| e.gross_gain_loss > dec!(0))
-            .map(|e| e.gross_gain_loss)
-            .sum();
-
-        // Sum gross FX gains (only gains, not losses)
-        let gross_fx_gains: Decimal = self
-            .fx_gains
-            .iter()
-            .filter(|e| e.gross_amount_eur > dec!(0))
-            .map(|e| e.gross_amount_eur)
-            .sum();
-
-        self.kap_zeile_19 =
-            gross_dividend_income + gross_interest_income + gross_fx_gains + gross_capital_gains;
-
-        // KAP Zeile 22: Losses from non-stock capital transactions (sonstige Verluste)
-        // This includes: FX losses (§20 Abs. 2 Nr. 7 EStG) - but NOT stock losses
-        // Stock sale losses go to Zeile 23 and have restricted offsetting rules
-        let gross_fx_losses: Decimal = self
-            .fx_gains
-            .iter()
-            .filter(|e| e.gross_amount_eur < dec!(0))
-            .map(|e| e.gross_amount_eur.abs())
-            .sum();
-        self.kap_zeile_22 = gross_fx_losses;
-
-        // KAP Zeile 23: Losses from stock sales (Aktien-Verluste)
-        // These can only be offset against future stock gains (Verlusttopf Aktien)
-        // Note: Uses gross loss amounts, not taxable amounts
-        let gross_capital_losses: Decimal = self
-            .capital_gains
-            .iter()
-            .filter(|e| e.gross_gain_loss < dec!(0))
-            .map(|e| e.gross_gain_loss.abs())
-            .sum();
-        self.kap_zeile_23 = gross_capital_losses;
-
-        // KAP Zeile 41: Creditable foreign withholding tax (anrechenbare ausländische Steuer)
-        // This is the amount of foreign tax that can be credited against German tax liability
-        // Limited to the German tax on the same income (proportional crediting)
+        self.kap_zeile_19 = kap_positive - zeile_22 - zeile_23;
+        self.kap_zeile_20 = zeile_20;
+        self.kap_zeile_22 = zeile_22;
+        self.kap_zeile_23 = zeile_23;
+        // Fund distributions carry no creditable foreign tax (q = 0), so the aggregate credit is
+        // already non-fund only.
         self.kap_zeile_41 = self.total_foreign_tax_credit;
+
+        // --- Anlage KAP-INV: fund entries, GROSS (pre-Teilfreistellung) figures by fund type ---
+        let mut equity = KapInvGroup::default();
+        let mut mixed = KapInvGroup::default();
+        let mut other = KapInvGroup::default();
+
+        for entry in &self.dividends {
+            let group = match entry.teilfreistellung_rate {
+                TeilfreistellungRate::Equity => &mut equity,
+                TeilfreistellungRate::Mixed => &mut mixed,
+                TeilfreistellungRate::Bond => &mut other,
+                TeilfreistellungRate::None => continue,
+            };
+            group.distributions += entry.gross_amount_eur;
+        }
+        for entry in &self.capital_gains {
+            let group = match entry.teilfreistellung_rate {
+                TeilfreistellungRate::Equity => &mut equity,
+                TeilfreistellungRate::Mixed => &mut mixed,
+                TeilfreistellungRate::Bond => &mut other,
+                TeilfreistellungRate::None => continue,
+            };
+            if entry.gross_gain_loss >= dec!(0) {
+                group.sale_gains += entry.gross_gain_loss;
+            } else {
+                group.sale_losses += -entry.gross_gain_loss;
+            }
+        }
+
+        self.kap_inv_equity = equity;
+        self.kap_inv_mixed = mixed;
+        self.kap_inv_other = other;
     }
 }

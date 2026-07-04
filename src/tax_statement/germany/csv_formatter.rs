@@ -337,26 +337,34 @@ impl GermanCsvFormatter {
             Self::format_decimal(statement.loss_carryforward_other_next)
         )?;
 
-        // Anlage KAP form line values
+        // Anlage KAP form line values (non-fund income only).
         writeln!(writer)?;
-        writeln!(writer, "# ANLAGE KAP - German Tax Form Values")?;
         writeln!(
             writer,
-            "# These values can be transferred directly to the Anlage KAP form"
+            "# ANLAGE KAP - German Tax Form Values (non-fund income)"
         )?;
         writeln!(
             writer,
-            "KAP_ZEILE_19,Ausländische Kapitalerträge (Foreign Capital Income),{}",
+            "# Line numbers follow the 2024/2025 Anlage KAP; re-check against the year's form."
+        )?;
+        writeln!(
+            writer,
+            "KAP_ZEILE_19,Ausländische Kapitalerträge (net foreign capital income),{}",
             Self::format_decimal(statement.kap_zeile_19)
         )?;
         writeln!(
             writer,
-            "KAP_ZEILE_22,Sonstige Verluste ohne Aktien (Non-Stock Losses),{}",
+            "KAP_ZEILE_20,Enthaltene Gewinne aus Aktienveräußerungen (contained share-sale gains),{}",
+            Self::format_decimal(statement.kap_zeile_20)
+        )?;
+        writeln!(
+            writer,
+            "KAP_ZEILE_22,Enthaltene Verluste ohne Aktien (contained non-share losses),{}",
             Self::format_decimal(statement.kap_zeile_22)
         )?;
         writeln!(
             writer,
-            "KAP_ZEILE_23,Verluste aus Aktienveräußerungen (Stock Sale Losses),{}",
+            "KAP_ZEILE_23,Enthaltene Verluste aus Aktienveräußerungen (contained share-sale losses),{}",
             Self::format_decimal(statement.kap_zeile_23)
         )?;
         writeln!(
@@ -364,6 +372,9 @@ impl GermanCsvFormatter {
             "KAP_ZEILE_41,Anrechenbare ausländische Steuer (Creditable Foreign Tax),{}",
             Self::format_decimal(statement.kap_zeile_41)
         )?;
+
+        // Anlage KAP-INV: investment-fund income, reported GROSS (pre-Teilfreistellung).
+        Self::write_kap_inv_section(writer, statement)?;
 
         // Non-capital income (reported separately)
         if statement.total_stock_grant_income > dec!(0)
@@ -407,6 +418,64 @@ impl GermanCsvFormatter {
             )?;
         }
 
+        Ok(())
+    }
+
+    fn write_kap_inv_section<W: Write>(
+        writer: &mut W,
+        statement: &GermanTaxStatement,
+    ) -> GenericResult<()> {
+        let groups = [
+            (
+                "AKTIENFONDS",
+                "Aktienfonds (equity, 30% Teilfreistellung)",
+                &statement.kap_inv_equity,
+            ),
+            (
+                "MISCHFONDS",
+                "Mischfonds (mixed, 15% Teilfreistellung)",
+                &statement.kap_inv_mixed,
+            ),
+            (
+                "SONSTIGE",
+                "Sonstige Fonds (bond/other, 0% Teilfreistellung)",
+                &statement.kap_inv_other,
+            ),
+        ];
+
+        let is_empty = |g: &super::statement::KapInvGroup| {
+            g.distributions == dec!(0) && g.sale_gains == dec!(0) && g.sale_losses == dec!(0)
+        };
+        if groups.iter().all(|(_, _, g)| is_empty(g)) {
+            return Ok(());
+        }
+
+        writeln!(writer)?;
+        writeln!(
+            writer,
+            "# ANLAGE KAP-INV - Investment fund income. Enter these GROSS values; the tax office"
+        )?;
+        writeln!(writer, "# applies the Teilfreistellung itself.")?;
+        for (key, label, group) in groups {
+            if is_empty(group) {
+                continue;
+            }
+            writeln!(
+                writer,
+                "KAP_INV_{key}_DISTRIBUTIONS,{label} — gross distributions,{}",
+                Self::format_decimal(group.distributions)
+            )?;
+            writeln!(
+                writer,
+                "KAP_INV_{key}_SALE_GAINS,{label} — gross sale gains,{}",
+                Self::format_decimal(group.sale_gains)
+            )?;
+            writeln!(
+                writer,
+                "KAP_INV_{key}_SALE_LOSSES,{label} — gross sale losses,{}",
+                Self::format_decimal(group.sale_losses)
+            )?;
+        }
         Ok(())
     }
 
