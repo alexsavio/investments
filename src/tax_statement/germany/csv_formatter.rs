@@ -169,19 +169,20 @@ impl GermanCsvFormatter {
     }
 
     fn write_fee_row<W: Write>(writer: &mut W, entry: &FeeEntry) -> GenericResult<()> {
-        // Fees are reported as a deduction - they reduce taxable income
+        // Fees are informational only: §20(9) EStG bars deducting expenses under the Abgeltungsteuer,
+        // so the fee is reported but the taxable-amount column stays zero (no deduction).
         writeln!(
             writer,
             "Fee/Deduction,{},{},N/A,N/A,{},,,,,{},0.00,{},0.00,0.00,0.00,0.00,0.00,0.00,0.00,{}",
             formatting::format_date(entry.date),
             formatting::format_date(entry.date),
             Self::escape_csv(&entry.description),
-            Self::format_decimal(-entry.amount_eur), // Negative = deduction
-            Self::format_decimal(-entry.amount_eur), // Taxable amount = deduction
+            Self::format_decimal(entry.amount_eur), // informational fee amount
+            Self::format_decimal(dec!(0)),          // not deductible (§20(9) EStG)
             entry
                 .notes
                 .as_deref()
-                .unwrap_or("Deductible broker fee (Werbungskosten)")
+                .unwrap_or("Informational — not deductible under §20(9) EStG")
         )?;
         Ok(())
     }
@@ -256,6 +257,15 @@ impl GermanCsvFormatter {
         writer: &mut W,
         statement: &GermanTaxStatement,
     ) -> GenericResult<()> {
+        writeln!(writer)?;
+        writeln!(
+            writer,
+            "# Summary tax is computed on the year's net taxable base after the §20(6) loss pots,"
+        )?;
+        writeln!(
+            writer,
+            "# carryforward, and the Sparer-Pauschbetrag — NOT the sum of the per-row tax columns."
+        )?;
         writeln!(
             writer,
             "SUMMARY_TOTAL_TAXABLE_INCOME,Total Taxable Income,{}",
@@ -293,7 +303,7 @@ impl GermanCsvFormatter {
         )?;
         writeln!(
             writer,
-            "SUMMARY_TOTAL_FEES,Total Deductible Fees,{}",
+            "SUMMARY_TOTAL_FEES,Total Fees (informational — not deductible under §20(9) EStG),{}",
             Self::format_decimal(statement.total_fees)
         )?;
         writeln!(
@@ -313,13 +323,18 @@ impl GermanCsvFormatter {
         )?;
         writeln!(
             writer,
-            "SUMMARY_LOSS_CF_USED,Loss Carryforward Used,{}",
-            Self::format_decimal(statement.loss_carryforward_used)
+            "SUMMARY_SPARER_PAUSCHBETRAG,Sparer-Pauschbetrag applied,{}",
+            Self::format_decimal(statement.sparer_pauschbetrag_used)
         )?;
         writeln!(
             writer,
-            "SUMMARY_LOSS_CF_NEW,New Loss Carryforward,{}",
-            Self::format_decimal(statement.loss_carryforward_remaining)
+            "SUMMARY_LOSS_CF_STOCK_NEXT,Stock loss carryforward to next year (§20(6) Aktien),{}",
+            Self::format_decimal(statement.loss_carryforward_stock_next)
+        )?;
+        writeln!(
+            writer,
+            "SUMMARY_LOSS_CF_GENERAL_NEXT,General loss carryforward to next year,{}",
+            Self::format_decimal(statement.loss_carryforward_other_next)
         )?;
 
         // Anlage KAP form line values

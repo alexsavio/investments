@@ -18,11 +18,15 @@ taxes:
   # Accepted forms: 0, 8, 9 (percent) or 0.08 / 0.09 (fraction). Default: 0 (no church tax)
   church_tax_rate: 9
 
-  # Optional: Loss carryforward from previous years (Verlustvortrag)
-  # Specify amounts by year
-  loss_carryforward:
-    2023: 1500.00
-    2024: 2000.00
+  # Optional: Festgestellter Verlustvortrag (loss carryforward) as of Dec 31 of the prior year.
+  # §20(6) EStG keeps two separate pots: share-sale (Aktien) losses offset only future share-sale
+  # gains; all other losses form the general pot. Each is a single EUR amount.
+  loss_carryforward_stock: 1500.00   # Verlustverrechnungstopf Aktien
+  loss_carryforward_other: 2000.00   # general pot (funds, FX, dividends, interest)
+
+  # Optional: Sparer-Pauschbetrag (saver's allowance). Defaults to 1000 (2023+) / 801 (before).
+  # Set to 0 if the allowance is already used via a Freistellungsauftrag at a German bank.
+  sparer_pauschbetrag: 1000
 
   # Optional: ETF classification for Teilfreistellung (partial tax exemption)
   # Map ISIN to classification: equity (30% exempt), mixed (15% exempt), bond (0% exempt)
@@ -220,14 +224,25 @@ For accounts with many transactions:
 
 ## Additional Income Types
 
-### Broker Fees (Werbungskosten)
+### Broker Fees (informational only)
 
-Broker fees and commissions are tracked separately and reported as deductible expenses:
+Standalone broker fees are extracted and reported, but they do **not** reduce taxable income:
 
-- Fees are automatically extracted from broker statements
-- All fees are converted to EUR using ECB rates
-- The total is reported in the CSV summary section as deductible expenses
-- Note: German tax law allows deducting fees from capital gains (Werbungskosten)
+- Fees are automatically extracted from broker statements and converted to EUR using ECB rates
+- They are reported in the CSV summary section for information only
+- Under the Abgeltungsteuer, §20(9) EStG bars deducting actual expenses (Werbungskosten); the only
+  deduction is the Sparer-Pauschbetrag. Trade commissions are already folded into the cost basis
+  (Anschaffungsnebenkosten) at the point of sale.
+
+### Loss offsetting and the Sparer-Pauschbetrag
+
+- §20(6) EStG keeps two loss pots: share-sale (Aktien) losses offset only future share-sale gains;
+  every other loss (fund/ETF sales, FX, etc.) forms the general pot, which also offsets dividends
+  and interest. Neither pot offsets the other, and there is no carry-back.
+- The Sparer-Pauschbetrag (€1,000 single since 2023, €801 before) is applied to the combined net
+  positive result before tax.
+- The summary tax is therefore computed once on the year's net taxable base — it is not the sum of
+  the per-row tax columns, which are informational.
 
 ### Stock Grants / RSUs
 
