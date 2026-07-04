@@ -139,8 +139,10 @@ taxable amount of 0, so it contributes nothing to Zeile 19/20 — the tax-free g
 income.
 
 **Vorabpauschale not included:** the advance lump-sum taxation of accumulating funds
-(Vorabpauschale, §18 InvStG) is **not yet computed**. When any fund classification appears in the
-statement, review Vorabpauschale for those holdings separately.
+(Vorabpauschale, §18 InvStG) is **not yet computed** — it needs per-fund NAVs at the start and end
+of the year, a data source the tool does not yet consume. When any fund classification appears in
+the statement, the tool emits a warning (console log + a `# WARNING` block in the CSV) naming those
+holdings; review Vorabpauschale for them separately.
 
 ## Foreign Tax Credits
 

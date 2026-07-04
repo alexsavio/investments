@@ -365,6 +365,34 @@ impl GermanTaxStatement {
         self.corporate_actions.push(entry);
     }
 
+    /// Distinct fund identifiers (ISIN, or symbol when the ISIN is absent) present in the statement.
+    ///
+    /// A "fund" is any capital-gain or dividend entry with a Teilfreistellung classification
+    /// (equity/mixed/bond) — the same test that routes income to Anlage KAP-INV. Used to warn that
+    /// Vorabpauschale (§18 InvStG) is not yet computed for these accumulating-fund holdings.
+    pub fn fund_identifiers(&self) -> Vec<String> {
+        let mut ids: Vec<String> = Vec::new();
+        let entries = self
+            .capital_gains
+            .iter()
+            .map(|e| (&e.isin, &e.symbol, e.teilfreistellung_rate))
+            .chain(
+                self.dividends
+                    .iter()
+                    .map(|e| (&e.isin, &e.symbol, e.teilfreistellung_rate)),
+            );
+        for (isin, symbol, rate) in entries {
+            if rate == TeilfreistellungRate::None {
+                continue;
+            }
+            let id = if isin.is_empty() { symbol } else { isin };
+            if !id.is_empty() && !ids.iter().any(|existing| existing == id) {
+                ids.push(id.clone());
+            }
+        }
+        ids
+    }
+
     /// Calculate all summary totals.
     pub fn calculate_totals(&mut self) {
         // Reset reporting totals.

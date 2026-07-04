@@ -375,6 +375,7 @@ impl GermanCsvFormatter {
 
         // Anlage KAP-INV: investment-fund income, reported GROSS (pre-Teilfreistellung).
         Self::write_kap_inv_section(writer, statement)?;
+        Self::write_vorabpauschale_warning(writer, statement)?;
 
         // Non-capital income (reported separately)
         if statement.total_stock_grant_income > dec!(0)
@@ -476,6 +477,27 @@ impl GermanCsvFormatter {
                 Self::format_decimal(group.sale_losses)
             )?;
         }
+        Ok(())
+    }
+
+    fn write_vorabpauschale_warning<W: Write>(
+        writer: &mut W,
+        statement: &GermanTaxStatement,
+    ) -> GenericResult<()> {
+        let funds = statement.fund_identifiers();
+        if funds.is_empty() {
+            return Ok(());
+        }
+        writeln!(writer)?;
+        writeln!(
+            writer,
+            "# WARNING: Vorabpauschale (§18 InvStG) is NOT computed. Accumulating funds owe a yearly"
+        )?;
+        writeln!(
+            writer,
+            "# advance lump-sum tax; review these fund holdings separately: {}",
+            funds.join(", ")
+        )?;
         Ok(())
     }
 

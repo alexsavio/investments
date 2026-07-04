@@ -142,6 +142,17 @@ pub fn process_broker_statement(
         has_corporate_actions,
     );
 
+    // Vorabpauschale (§18 InvStG) is not yet computed; warn loudly so fund income is not silently
+    // under-taxed. Needs year-boundary NAVs per fund (a new data dependency), tracked as T11.
+    let fund_ids = statement.fund_identifiers();
+    if !fund_ids.is_empty() {
+        warn!(
+            "Vorabpauschale (§18 InvStG advance lump-sum tax on accumulating funds) is NOT \
+             computed. Accumulating funds owe it yearly since 2023 — review it separately for: {}.",
+            fund_ids.join(", ")
+        );
+    }
+
     Ok((has_trades, has_dividends, has_interest, has_fx_gains))
 }
 /// Process stock sales and create capital gain entries.
@@ -2192,5 +2203,72 @@ mod tests {
         // Fund income must not leak onto the non-fund KAP lines.
         assert_eq!(statement.kap_zeile_20, dec!(0));
         assert_eq!(statement.kap_zeile_19, dec!(0));
+    }
+
+    // --- T11 interim: Vorabpauschale-not-computed warning ---
+
+    fn fund_capital_entry_isin(isin: &str, rate: TeilfreistellungRate) -> CapitalGainEntry {
+        CapitalGainEntry {
+            isin: isin.to_string(),
+            ..fund_capital_entry(dec!(100), rate)
+        }
+    }
+
+    #[test]
+    fn fund_identifiers_lists_distinct_funds_and_excludes_non_funds() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_capital_gain(fund_capital_entry_isin(
+            "IE00BK5BQT80",
+            TeilfreistellungRate::Equity,
+        ));
+        // Same fund again (a second sale) must not duplicate.
+        statement.add_capital_gain(fund_capital_entry_isin(
+            "IE00BK5BQT80",
+            TeilfreistellungRate::Equity,
+        ));
+        statement.add_capital_gain(fund_capital_entry_isin(
+            "LU0274211480",
+            TeilfreistellungRate::Bond,
+        ));
+        // A direct share (no Teilfreistellung) is not a fund and must not appear.
+        statement.add_capital_gain(stock_capital_entry(dec!(500)));
+
+        let ids = statement.fund_identifiers();
+        assert_eq!(
+            ids,
+            vec!["IE00BK5BQT80".to_string(), "LU0274211480".to_string()]
+        );
+    }
+
+    #[test]
+    fn csv_warns_about_vorabpauschale_when_funds_present() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_dividend(DividendEntry {
+            isin: "IE00BK5BQT80".to_string(),
+            ..fund_dividend_entry(dec!(500), TeilfreistellungRate::Equity)
+        });
+        statement.calculate_totals();
+
+        let mut csv_output = Vec::new();
+        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv_string = String::from_utf8(csv_output).unwrap();
+        assert!(csv_string.contains("Vorabpauschale"));
+        assert!(csv_string.contains("IE00BK5BQT80"));
+    }
+
+    #[test]
+    fn csv_omits_vorabpauschale_warning_without_funds() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_capital_gain(stock_capital_entry(dec!(500)));
+        statement.add_dividend(dividend_entry(dec!(100)));
+        statement.calculate_totals();
+
+        let mut csv_output = Vec::new();
+        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv_string = String::from_utf8(csv_output).unwrap();
+        assert!(!csv_string.contains("Vorabpauschale"));
     }
 }
