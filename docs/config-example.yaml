@@ -207,9 +207,9 @@ portfolios:
 #  # For Germany:
 #  jurisdiction: germany            # Enable German tax calculations
 #  church_tax_rate: 9               # Optional: Kirchensteuer. Accepted: 0, 8, 9 (percent) or 0.08 / 0.09. Default 0
-#  loss_carryforward:               # Optional: Loss carryforward from previous years
-#    2023: 1500
-#    2024: 2000
+#  loss_carryforward_stock: 1500    # Optional: §20(6) Aktien loss pot (festgestellter Verlustvortrag)
+#  loss_carryforward_other: 2000    # Optional: general loss pot (funds, FX, dividends, interest)
+#  sparer_pauschbetrag: 1000        # Optional: saver's allowance; default 1000 (2023+) / 801 (before)
 #  etf_classification:              # Optional: ETF Teilfreistellung classification by ISIN
 #    IE00BK5BQT80: equity           # Vanguard FTSE All-World UCITS ETF (VWCE.DE) - 30% exemption
 #    IE00B4L5Y983: equity           # iShares Core MSCI World UCITS ETF - 30% exemption

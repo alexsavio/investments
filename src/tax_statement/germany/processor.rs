@@ -280,6 +280,8 @@ fn process_trades(
             proceeds_eur: net_proceeds_eur,
             gross_gain_loss,
             teilfreistellung_rate,
+            // Direct shares (no fund classification) drive the §20(6) stock loss pot.
+            is_stock: teilfreistellung_rate == TeilfreistellungRate::None,
             taxable_amount,
             foreign_tax: dec!(0), // Foreign withholding on capital gains is rare
             abgeltungssteuer,
@@ -1003,7 +1005,8 @@ mod tests {
     #[test]
     fn test_end_to_end_csv_generation() {
         // Create a German tax statement for 2024
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.08), dec!(0)).unwrap(); // 8% church tax
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0.08), dec!(0), dec!(0), dec!(0)).unwrap(); // 8% church tax
 
         // Add a capital gain entry (sold stock with profit)
         let capital_gain = CapitalGainEntry {
@@ -1017,6 +1020,7 @@ mod tests {
             proceeds_eur: dec!(2000.00),
             gross_gain_loss: dec!(500.00),
             teilfreistellung_rate: TeilfreistellungRate::None,
+            is_stock: true,
             taxable_amount: dec!(500.00),
             foreign_tax: dec!(0),
             abgeltungssteuer: dec!(125.00),     // 25% of 500
@@ -1040,6 +1044,7 @@ mod tests {
             proceeds_eur: dec!(1600.00),
             gross_gain_loss: dec!(-200.00),
             teilfreistellung_rate: TeilfreistellungRate::None,
+            is_stock: true,
             taxable_amount: dec!(-200.00),
             foreign_tax: dec!(0),
             abgeltungssteuer: dec!(0),
@@ -1140,7 +1145,8 @@ mod tests {
     /// Test that the statement correctly handles pre-2009 (Altbestand) holdings.
     #[test]
     fn test_pre_2009_altbestand_handling() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         // Pre-2009 holding should be tax-exempt
         let altbestand_gain = CapitalGainEntry {
@@ -1154,7 +1160,10 @@ mod tests {
             proceeds_eur: dec!(5000.00),
             gross_gain_loss: dec!(4000.00),
             teilfreistellung_rate: TeilfreistellungRate::None,
-            taxable_amount: dec!(4000.00),
+            is_stock: true,
+            // Post-T2 a pure Altbestand sale has its pre-2009 profit excluded, so the taxable
+            // amount is zero even though the gross gain is €4,000.
+            taxable_amount: dec!(0),
             foreign_tax: dec!(0),
             abgeltungssteuer: dec!(0), // Tax exempt!
             solidaritaetszuschlag: dec!(0),
@@ -1175,7 +1184,8 @@ mod tests {
     /// Test Teilfreistellung for ETFs.
     #[test]
     fn test_equity_etf_teilfreistellung() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         // Equity ETF dividend with 30% exemption
         let etf_dividend = DividendEntry {
@@ -1237,7 +1247,8 @@ mod tests {
         use std::time::Instant;
 
         let start = Instant::now();
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(5000)).unwrap(); // With church tax and loss CF
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0.09), dec!(5000), dec!(0), dec!(0)).unwrap(); // With church tax and loss CF
 
         // Generate 500 capital gain entries (simulating 1000+ buy/sell transactions)
         for i in 0..500 {
@@ -1264,6 +1275,7 @@ mod tests {
                 } else {
                     TeilfreistellungRate::None
                 },
+                is_stock: i % 3 == 2,
                 taxable_amount: dec!(150.00) + Decimal::from(i),
                 foreign_tax: dec!(0),
                 abgeltungssteuer: dec!(37.50) + Decimal::from(i / 4),
@@ -1361,7 +1373,8 @@ mod tests {
     /// Accuracy test: Verify ±€0.01 precision across calculations per SC-002.
     #[test]
     fn test_accuracy_precision() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0.09), dec!(0), dec!(0), dec!(0)).unwrap();
 
         // Test with precise decimal values that could cause floating point errors
         let gain = CapitalGainEntry {
@@ -1375,6 +1388,7 @@ mod tests {
             proceeds_eur: dec!(2222.22),
             gross_gain_loss: dec!(1111.11),
             teilfreistellung_rate: TeilfreistellungRate::None,
+            is_stock: true,
             taxable_amount: dec!(1111.11),
             foreign_tax: dec!(0),
             // 25% of 1111.11 = 277.7775, rounded to 277.78
@@ -1460,7 +1474,8 @@ mod tests {
     /// Test FX gains/losses processing (§20 EStG - capital income treatment).
     #[test]
     fn test_fx_gains_processing() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.08), dec!(0)).unwrap(); // 8% church tax
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0.08), dec!(0), dec!(0), dec!(0)).unwrap(); // 8% church tax
 
         // FX gain entry (profit from EUR/USD)
         let fx_gain = FxGainEntry {
@@ -1520,7 +1535,8 @@ mod tests {
     /// Test that FX losses can offset capital gains (general loss bucket).
     #[test]
     fn test_fx_loss_offset_capital_gains() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap(); // No church tax
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap(); // No church tax
 
         // Capital gain entry
         let capital_gain = CapitalGainEntry {
@@ -1534,6 +1550,7 @@ mod tests {
             proceeds_eur: dec!(1200.00),
             gross_gain_loss: dec!(200.00),
             teilfreistellung_rate: TeilfreistellungRate::None,
+            is_stock: true,
             taxable_amount: dec!(200.00),
             foreign_tax: dec!(0),
             abgeltungssteuer: dec!(50.00),     // 25% of 200
@@ -1578,7 +1595,8 @@ mod tests {
     fn test_fee_entry_creation() {
         use super::super::statement::FeeEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         // Add a fee entry
         let fee = FeeEntry {
@@ -1619,7 +1637,8 @@ mod tests {
     fn test_stock_grant_entry_with_fmv() {
         use super::super::statement::StockGrantEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         // Stock grant with FMV (typical RSU vest)
         let grant = StockGrantEntry {
@@ -1653,7 +1672,8 @@ mod tests {
     fn test_stock_grant_entry_without_fmv() {
         use super::super::statement::StockGrantEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         // Stock grant without FMV (FMV was not available from broker)
         let grant = StockGrantEntry {
@@ -1678,7 +1698,8 @@ mod tests {
     fn test_cash_grant_entry_below_threshold() {
         use super::super::statement::CashGrantEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         // Cash grant below threshold
         let grant = CashGrantEntry {
@@ -1703,7 +1724,8 @@ mod tests {
     fn test_cash_grant_entry_above_threshold() {
         use super::super::statement::CashGrantEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         // Multiple cash grants exceeding threshold
         let grant1 = CashGrantEntry {
@@ -1744,7 +1766,8 @@ mod tests {
     fn test_corporate_action_spinoff() {
         use super::super::statement::{CorporateActionEntry, CorporateActionType};
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         let spinoff = CorporateActionEntry {
             date: Date::from_ymd_opt(2024, 7, 1).unwrap(),
@@ -1768,7 +1791,8 @@ mod tests {
     fn test_corporate_action_liquidation() {
         use super::super::statement::{CorporateActionEntry, CorporateActionType};
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         let liquidation = CorporateActionEntry {
             date: Date::from_ymd_opt(2024, 8, 15).unwrap(),
@@ -1796,7 +1820,8 @@ mod tests {
     fn test_corporate_action_delisting() {
         use super::super::statement::{CorporateActionEntry, CorporateActionType};
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
 
         let delisting = CorporateActionEntry {
             date: Date::from_ymd_opt(2024, 9, 1).unwrap(),
@@ -1832,7 +1857,8 @@ mod tests {
             CashGrantEntry, CorporateActionEntry, CorporateActionType, FeeEntry, StockGrantEntry,
         };
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(0)).unwrap(); // 9% church tax
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0.09), dec!(0), dec!(0), dec!(0)).unwrap(); // 9% church tax
 
         // Add capital gain
         let capital_gain = CapitalGainEntry {
@@ -1846,6 +1872,7 @@ mod tests {
             proceeds_eur: dec!(4000.00),
             gross_gain_loss: dec!(1000.00),
             teilfreistellung_rate: TeilfreistellungRate::None,
+            is_stock: true,
             taxable_amount: dec!(1000.00),
             foreign_tax: dec!(0),
             abgeltungssteuer: dec!(250.00),
@@ -1953,5 +1980,139 @@ mod tests {
         // Check for summary entries
         assert!(csv_string.contains("SUMMARY_TOTAL_TAXABLE_INCOME"));
         assert!(csv_string.contains("SUMMARY_TOTAL_FEES"));
+    }
+
+    // --- T5: §20(6) loss pots, Sparer-Pauschbetrag, and §20(9) fee treatment ---
+
+    fn stock_capital_entry(taxable: Decimal) -> CapitalGainEntry {
+        CapitalGainEntry {
+            transaction_date: Date::from_ymd_opt(2024, 6, 1).unwrap(),
+            settle_date: Date::from_ymd_opt(2024, 6, 3).unwrap(),
+            symbol: "SYM".to_string(),
+            isin: String::new(),
+            description: "Sym".to_string(),
+            quantity: dec!(1),
+            cost_basis_eur: dec!(0),
+            proceeds_eur: taxable,
+            gross_gain_loss: taxable,
+            teilfreistellung_rate: TeilfreistellungRate::None,
+            is_stock: true,
+            taxable_amount: taxable,
+            foreign_tax: dec!(0),
+            abgeltungssteuer: dec!(0),
+            solidaritaetszuschlag: dec!(0),
+            kirchensteuer: dec!(0),
+            total_tax: dec!(0),
+            pre_2009_holding: false,
+            notes: None,
+        }
+    }
+
+    fn fx_entry(gross: Decimal) -> FxGainEntry {
+        FxGainEntry {
+            transaction_date: Date::from_ymd_opt(2024, 6, 1).unwrap(),
+            currency_pair: "EUR.USD".to_string(),
+            description: "fx".to_string(),
+            gross_amount_eur: gross,
+            taxable_amount: gross,
+            abgeltungssteuer: dec!(0),
+            solidaritaetszuschlag: dec!(0),
+            kirchensteuer: dec!(0),
+            total_tax: dec!(0),
+            notes: None,
+        }
+    }
+
+    fn dividend_entry(taxable: Decimal) -> DividendEntry {
+        DividendEntry {
+            payment_date: Date::from_ymd_opt(2024, 6, 1).unwrap(),
+            symbol: "DIV".to_string(),
+            isin: String::new(),
+            description: "Div".to_string(),
+            quantity: dec!(0),
+            gross_amount_eur: taxable,
+            foreign_withholding_tax: dec!(0),
+            teilfreistellung_rate: TeilfreistellungRate::None,
+            taxable_amount: taxable,
+            abgeltungssteuer: dec!(0),
+            solidaritaetszuschlag: dec!(0),
+            kirchensteuer: dec!(0),
+            foreign_tax_credit: dec!(0),
+            total_tax: dec!(0),
+            net_tax: dec!(0),
+            notes: None,
+        }
+    }
+
+    #[test]
+    fn stock_loss_and_fx_gain_use_separate_pots() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_capital_gain(stock_capital_entry(dec!(-500)));
+        statement.add_fx_gain(fx_entry(dec!(500)));
+        statement.calculate_totals();
+        // §20(6): a share-sale loss cannot offset the FX gain — it carries forward in its own pot,
+        // and the general pot's €500 gain is fully taxable (net is NOT zero).
+        assert_eq!(statement.total_taxable_income, dec!(500));
+        assert_eq!(statement.loss_carryforward_stock_next, dec!(500));
+        assert_eq!(statement.loss_carryforward_other_next, dec!(0));
+    }
+
+    #[test]
+    fn general_loss_offsets_dividends() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_dividend(dividend_entry(dec!(1000)));
+        statement.add_fx_gain(fx_entry(dec!(-300)));
+        statement.calculate_totals();
+        // The general pot offsets the FX loss against dividends: 1000 − 300 = 700.
+        assert_eq!(statement.total_taxable_income, dec!(700));
+        assert_eq!(statement.loss_carryforward_other_next, dec!(0));
+    }
+
+    #[test]
+    fn sparer_pauschbetrag_absorbs_small_income() {
+        // €900 of income under the €1,000 allowance → nothing taxable.
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(1000)).unwrap();
+        statement.add_dividend(dividend_entry(dec!(900)));
+        statement.calculate_totals();
+        assert_eq!(statement.total_taxable_income, dec!(0));
+        assert_eq!(statement.total_german_tax, dec!(0));
+        assert_eq!(statement.sparer_pauschbetrag_used, dec!(900));
+    }
+
+    #[test]
+    fn mixed_altbestand_sale_filed_by_taxable_amount_not_gross() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        // Gross gain is +€1,000 (a pre-2009 lot dominates) but the Altbestand-adjusted taxable
+        // amount is a €300 loss. It must file as a loss, driven by taxable_amount, not gross.
+        let mut entry = stock_capital_entry(dec!(-300));
+        entry.gross_gain_loss = dec!(1000);
+        entry.pre_2009_holding = true;
+        statement.add_capital_gain(entry);
+        statement.calculate_totals();
+        assert_eq!(statement.total_capital_gains, dec!(0));
+        assert_eq!(statement.total_capital_losses, dec!(300));
+        assert_eq!(statement.loss_carryforward_stock_next, dec!(300));
+        assert_eq!(statement.total_taxable_income, dec!(0));
+    }
+
+    #[test]
+    fn fees_are_not_deducted_from_taxable_income() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_dividend(dividend_entry(dec!(1000)));
+        statement.add_fee(FeeEntry {
+            date: Date::from_ymd_opt(2024, 3, 1).unwrap(),
+            description: "Account fee".to_string(),
+            amount_eur: dec!(200),
+            notes: None,
+        });
+        statement.calculate_totals();
+        // §20(9): the €200 fee is reported but does not reduce the €1,000 taxable base.
+        assert_eq!(statement.total_taxable_income, dec!(1000));
+        assert_eq!(statement.total_fees, dec!(200));
     }
 }

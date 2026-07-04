@@ -38,7 +38,20 @@ pub struct TaxConfig {
     /// Kirchensteuer (church tax) rate for Germany (8% or 9%), default 0
     #[serde(default)]
     pub church_tax_rate: Option<Decimal>,
-    /// Loss carryforward from previous years (year -> amount in EUR)
+    /// Festgestellter Verlustvortrag for the stock pot (Verlustverrechnungstopf Aktien, §20(6)
+    /// S.4 EStG) as of Dec 31 of the prior year, in EUR. Offsets only future share-sale gains.
+    #[serde(default)]
+    pub loss_carryforward_stock: Option<Decimal>,
+    /// Festgestellter Verlustvortrag for the general pot as of Dec 31 of the prior year, in EUR.
+    /// Offsets all other capital income (dividends, interest, fund/FX gains).
+    #[serde(default)]
+    pub loss_carryforward_other: Option<Decimal>,
+    /// Sparer-Pauschbetrag (saver's allowance) in EUR. Defaults to €1,000 (2023+) / €801 (before);
+    /// set to 0 if the allowance is already consumed via a Freistellungsauftrag at a German bank.
+    #[serde(default)]
+    pub sparer_pauschbetrag: Option<Decimal>,
+    /// Deprecated per-year loss carryforward. Superseded by `loss_carryforward_stock` /
+    /// `loss_carryforward_other`; kept only to emit a clear migration error if still present.
     #[serde(default)]
     pub loss_carryforward: BTreeMap<i32, Decimal>,
     /// ETF classification by ISIN for Teilfreistellung (partial exemption)
@@ -67,6 +80,35 @@ impl TaxConfig {
             other => return Err!(
                 "Invalid church_tax_rate {other}: use 0, 8, or 9 (percent), or 0.08 / 0.09 (fraction)"
             ),
+        })
+    }
+
+    /// German loss carryforward as (stock pot, general pot) EUR amounts. Rejects the deprecated
+    /// per-year `loss_carryforward` map with migration guidance.
+    pub fn german_loss_carryforward(&self) -> GenericResult<(Decimal, Decimal)> {
+        if !self.loss_carryforward.is_empty() {
+            return Err!(
+                "`taxes.loss_carryforward` (per-year map) is no longer supported: it summed every \
+                 year, including future ones. Replace it with `loss_carryforward_stock` and \
+                 `loss_carryforward_other` — single EUR amounts, the festgestellter Verlustvortrag \
+                 of each pot as of Dec 31 of the prior year"
+            );
+        }
+        Ok((
+            self.loss_carryforward_stock.unwrap_or(Decimal::ZERO),
+            self.loss_carryforward_other.unwrap_or(Decimal::ZERO),
+        ))
+    }
+
+    /// German Sparer-Pauschbetrag for the year: the configured value, or the statutory default
+    /// (€1,000 single since 2023, €801 before).
+    pub fn german_sparer_pauschbetrag(&self, year: i32) -> Decimal {
+        self.sparer_pauschbetrag.unwrap_or_else(|| {
+            if year >= 2023 {
+                dec!(1000)
+            } else {
+                dec!(801)
+            }
         })
     }
 }
@@ -173,5 +215,38 @@ mod tests {
             ..Default::default()
         };
         assert!(config.german_church_tax_fraction().is_err());
+    }
+
+    #[test]
+    fn german_loss_carryforward_reads_split_pots() {
+        let config = TaxConfig {
+            loss_carryforward_stock: Some(dec!(500)),
+            loss_carryforward_other: Some(dec!(300)),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.german_loss_carryforward().unwrap(),
+            (dec!(500), dec!(300))
+        );
+    }
+
+    #[test]
+    fn german_loss_carryforward_rejects_deprecated_map() {
+        let mut config = TaxConfig::default();
+        config.loss_carryforward.insert(2023, dec!(1500));
+        assert!(config.german_loss_carryforward().is_err());
+    }
+
+    #[test]
+    fn german_sparer_pauschbetrag_defaults_by_year() {
+        let config = TaxConfig::default();
+        assert_eq!(config.german_sparer_pauschbetrag(2024), dec!(1000));
+        assert_eq!(config.german_sparer_pauschbetrag(2022), dec!(801));
+
+        let overridden = TaxConfig {
+            sparer_pauschbetrag: Some(dec!(0)),
+            ..Default::default()
+        };
+        assert_eq!(overridden.german_sparer_pauschbetrag(2024), dec!(0));
     }
 }

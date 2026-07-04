@@ -22,6 +22,10 @@ pub struct CapitalGainEntry {
     pub proceeds_eur: Decimal,
     pub gross_gain_loss: Decimal,
     pub teilfreistellung_rate: TeilfreistellungRate,
+    /// True for direct shares (Aktien) — no fund classification. Drives the §20(6) stock loss pot;
+    /// fund/ETF units (any Teilfreistellung classification, incl. Bond) are false and use the
+    /// general pot.
+    pub is_stock: bool,
     pub taxable_amount: Decimal,
     pub foreign_tax: Decimal,
     pub abgeltungssteuer: Decimal,
@@ -189,9 +193,17 @@ pub struct GermanTaxStatement {
     pub cash_grants: Vec<CashGrantEntry>,
     pub corporate_actions: Vec<CorporateActionEntry>,
 
-    // Loss carryforward tracking
-    pub loss_carryforward_used: Decimal,
-    pub loss_carryforward_remaining: Decimal,
+    // Loss carryforward pots (§20(6) EStG). `prior` is the festgestellter Verlustvortrag brought
+    // in from the previous year; `next` is what carries to the following year after this year's
+    // offsetting. Share-sale losses live in their own pot and never offset the general pot.
+    pub loss_carryforward_stock_prior: Decimal,
+    pub loss_carryforward_other_prior: Decimal,
+    pub loss_carryforward_stock_next: Decimal,
+    pub loss_carryforward_other_next: Decimal,
+
+    // Sparer-Pauschbetrag (saver's allowance) for the year and the portion actually consumed.
+    pub sparer_pauschbetrag: Decimal,
+    pub sparer_pauschbetrag_used: Decimal,
 
     // Summary totals (calculated)
     pub total_capital_gains: Decimal,
@@ -230,10 +242,15 @@ pub struct GermanTaxStatement {
 
 impl GermanTaxStatement {
     /// Create a new German tax statement for the given year.
+    ///
+    /// `loss_carryforward_stock` / `loss_carryforward_other` are the prior-year festgestellter
+    /// Verlustvortrag of each §20(6) pot; `sparer_pauschbetrag` is the saver's allowance.
     pub fn new(
         year: i32,
         church_tax_rate: Decimal,
-        loss_carryforward: Decimal,
+        loss_carryforward_stock: Decimal,
+        loss_carryforward_other: Decimal,
+        sparer_pauschbetrag: Decimal,
     ) -> GenericResult<Self> {
         Ok(GermanTaxStatement {
             year,
@@ -248,8 +265,13 @@ impl GermanTaxStatement {
             cash_grants: Vec::new(),
             corporate_actions: Vec::new(),
 
-            loss_carryforward_used: dec!(0),
-            loss_carryforward_remaining: loss_carryforward,
+            loss_carryforward_stock_prior: loss_carryforward_stock,
+            loss_carryforward_other_prior: loss_carryforward_other,
+            loss_carryforward_stock_next: dec!(0),
+            loss_carryforward_other_next: dec!(0),
+
+            sparer_pauschbetrag,
+            sparer_pauschbetrag_used: dec!(0),
 
             total_capital_gains: dec!(0),
             total_capital_losses: dec!(0),
@@ -321,7 +343,7 @@ impl GermanTaxStatement {
 
     /// Calculate all summary totals.
     pub fn calculate_totals(&mut self) {
-        // Reset totals
+        // Reset reporting totals.
         self.total_capital_gains = dec!(0);
         self.total_capital_losses = dec!(0);
         self.total_dividend_income = dec!(0);
@@ -332,105 +354,103 @@ impl GermanTaxStatement {
         self.total_stock_grant_income = dec!(0);
         self.total_cash_grant_income = dec!(0);
         self.total_foreign_tax = dec!(0);
-        self.total_abgeltungssteuer = dec!(0);
-        self.total_solidaritaetszuschlag = dec!(0);
-        self.total_kirchensteuer = dec!(0);
         self.total_foreign_tax_credit = dec!(0);
 
-        // Sum capital gains
+        // §20(6) EStG loss pots. Share-sale (Aktien) results form their own pot; everything else —
+        // fund-unit sales, FX, dividends, interest — forms the general pot, which also offsets
+        // dividends and interest. Gain vs. loss is decided by the sign of `taxable_amount`
+        // (Altbestand- and Teilfreistellung-adjusted), never the raw gross_gain_loss, so a mixed
+        // pre-2009/post-2009 sale files into the correct side.
+        let mut stock_gains = dec!(0);
+        let mut stock_losses = dec!(0);
+        let mut general_gains = dec!(0);
+        let mut general_losses = dec!(0);
+
         for entry in &self.capital_gains {
-            if entry.gross_gain_loss >= dec!(0) {
-                self.total_capital_gains += entry.taxable_amount;
-            } else {
-                self.total_capital_losses += entry.taxable_amount.abs();
-            }
             self.total_foreign_tax += entry.foreign_tax;
-            self.total_abgeltungssteuer += entry.abgeltungssteuer;
-            self.total_solidaritaetszuschlag += entry.solidaritaetszuschlag;
-            self.total_kirchensteuer += entry.kirchensteuer;
+            let amount = entry.taxable_amount;
+            let (gains, losses) = if entry.is_stock {
+                (&mut stock_gains, &mut stock_losses)
+            } else {
+                (&mut general_gains, &mut general_losses)
+            };
+            if amount >= dec!(0) {
+                *gains += amount;
+                self.total_capital_gains += amount;
+            } else {
+                *losses += -amount;
+                self.total_capital_losses += -amount;
+            }
         }
 
-        // Sum dividends
         for entry in &self.dividends {
             self.total_dividend_income += entry.taxable_amount;
             self.total_foreign_tax += entry.foreign_withholding_tax;
-            self.total_abgeltungssteuer += entry.abgeltungssteuer;
-            self.total_solidaritaetszuschlag += entry.solidaritaetszuschlag;
-            self.total_kirchensteuer += entry.kirchensteuer;
             self.total_foreign_tax_credit += entry.foreign_tax_credit;
+            general_gains += entry.taxable_amount;
         }
 
-        // Sum interest
         for entry in &self.interest {
             self.total_interest_income += entry.taxable_amount;
             self.total_foreign_tax += entry.foreign_withholding_tax;
-            self.total_abgeltungssteuer += entry.abgeltungssteuer;
-            self.total_solidaritaetszuschlag += entry.solidaritaetszuschlag;
-            self.total_kirchensteuer += entry.kirchensteuer;
             self.total_foreign_tax_credit += entry.foreign_tax_credit;
+            general_gains += entry.taxable_amount;
         }
 
-        // Sum FX gains/losses
-        // FX gains on interest-bearing accounts (§20 EStG) are capital income
-        // and can be offset against other capital income
+        // FX gains/losses on interest-bearing accounts (§20 Abs. 2 Nr. 7 EStG) join the general pot.
         for entry in &self.fx_gains {
             if entry.gross_amount_eur >= dec!(0) {
                 self.total_fx_gains += entry.taxable_amount;
+                general_gains += entry.taxable_amount;
             } else {
                 self.total_fx_losses += entry.taxable_amount.abs();
+                general_losses += entry.taxable_amount.abs();
             }
-            self.total_abgeltungssteuer += entry.abgeltungssteuer;
-            self.total_solidaritaetszuschlag += entry.solidaritaetszuschlag;
-            self.total_kirchensteuer += entry.kirchensteuer;
         }
 
-        // Sum fees (these are deductible from capital income)
-        // Note: Fees reduce taxable income but are tracked separately for reporting
+        // Fees are collected for information only. §20(9) EStG bars deducting actual expenses under
+        // the Abgeltungsteuer (only the Sparer-Pauschbetrag applies), so they never reduce the base.
         for entry in &self.fees {
             self.total_fees += entry.amount_eur;
         }
 
-        // Sum stock grants (employment income - NOT Abgeltungssteuer)
-        // This is reported separately from capital income
         for entry in &self.stock_grants {
             self.total_stock_grant_income += entry.total_fmv_eur;
         }
-
-        // Sum cash grants (other income - NOT Abgeltungssteuer)
-        // Only taxable if >€256/year total
         for entry in &self.cash_grants {
             self.total_cash_grant_income += entry.amount_eur;
         }
 
-        // Calculate net capital gain/loss for carryforward calculation
-        // Note: FX losses from interest-bearing accounts can be included in the general loss bucket
-        // Note: Fees can be deducted from capital gains
-        let net_capital_gain_loss = self.total_capital_gains - self.total_capital_losses
-            + self.total_fx_gains
-            - self.total_fx_losses
-            - self.total_fees; // Fees reduce taxable capital gains
+        // Offset within each pot and apply the prior-year carryforward; a net loss becomes next
+        // year's carryforward for that pot (no cross-pot offset, no carry-back).
+        let (stock_result, _stock_used, stock_next) = calculate_with_loss_carryforward(
+            stock_gains - stock_losses,
+            self.loss_carryforward_stock_prior,
+        );
+        let (general_result, _general_used, general_next) = calculate_with_loss_carryforward(
+            general_gains - general_losses,
+            self.loss_carryforward_other_prior,
+        );
+        self.loss_carryforward_stock_next = stock_next;
+        self.loss_carryforward_other_next = general_next;
 
-        // Apply loss carryforward to capital gains
-        // Note: Loss carryforward only applies to capital gains, not dividends or interest
-        let previous_carryforward = self.loss_carryforward_remaining;
-        let (taxable_capital_gains, cf_used, cf_remaining) =
-            calculate_with_loss_carryforward(net_capital_gain_loss, previous_carryforward);
+        // Sparer-Pauschbetrag reduces the combined positive result; unused allowance is not carried.
+        let taxable_before_allowance = stock_result + general_result;
+        self.sparer_pauschbetrag_used = self.sparer_pauschbetrag.min(taxable_before_allowance);
+        let taxable = (taxable_before_allowance - self.sparer_pauschbetrag).max(dec!(0));
+        self.total_taxable_income = taxable;
 
-        self.loss_carryforward_used = cf_used;
-        self.loss_carryforward_remaining = cf_remaining;
-
-        // Calculate final totals
-        self.total_taxable_income =
-            taxable_capital_gains + self.total_dividend_income + self.total_interest_income;
-
-        self.total_german_tax = self.total_abgeltungssteuer
-            + self.total_solidaritaetszuschlag
-            + self.total_kirchensteuer;
-
-        // Creditable foreign tax is already folded into each entry's tax via the §32d(1) formula
-        // (tax = (e − 4q)/(4 + k)), so total_german_tax is already net of the credit — do not
-        // subtract it a second time.
-        self.net_tax_due = self.total_german_tax.max(dec!(0));
+        // Summary tax is computed ONCE on the final taxable base with the aggregate creditable
+        // foreign tax. It is deliberately NOT the sum of the per-row taxes — those are informational
+        // and ignore the pots, the carryforward, and the allowance, which only apply year-wide.
+        let taxes = self
+            .tax_rates
+            .compute_taxes(taxable, self.total_foreign_tax_credit);
+        self.total_abgeltungssteuer = taxes.abgeltungssteuer;
+        self.total_solidaritaetszuschlag = taxes.solidaritaetszuschlag;
+        self.total_kirchensteuer = taxes.kirchensteuer;
+        self.total_german_tax = taxes.total;
+        self.net_tax_due = taxes.total.max(dec!(0));
 
         // Calculate Anlage KAP form line values
         //
