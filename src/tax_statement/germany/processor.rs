@@ -13,7 +13,7 @@ use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
 use crate::taxes::TaxConfig;
-use crate::taxes::germany::TeilfreistellungRate;
+use crate::taxes::germany::{AbgeltungsteuerBreakdown, TeilfreistellungRate};
 use crate::time::Date;
 use crate::types::Decimal;
 
@@ -260,16 +260,14 @@ fn process_trades(
         let taxable_amount =
             apply_teilfreistellung(taxable_before_exemption, &teilfreistellung_rate);
 
-        // Calculate German taxes
-        let (abgeltungssteuer, soli, church_tax, total_tax) = if taxable_amount <= dec!(0) {
-            (dec!(0), dec!(0), dec!(0), dec!(0))
-        } else {
-            let rates = &statement.tax_rates;
-            let abgelt = taxable_amount * rates.abgeltungssteuer;
-            let soli = abgelt * rates.solidaritaetszuschlag;
-            let church = abgelt * rates.kirchensteuer;
-            (abgelt, soli, church, abgelt + soli + church)
-        };
+        // §32d(1) EStG flat tax (losses floor to zero). Foreign withholding on capital gains is
+        // rare, so the creditable foreign tax q = 0 here.
+        let taxes: AbgeltungsteuerBreakdown =
+            statement.tax_rates.compute_taxes(taxable_amount, dec!(0));
+        let abgeltungssteuer = taxes.abgeltungssteuer;
+        let soli = taxes.solidaritaetszuschlag;
+        let church_tax = taxes.kirchensteuer;
+        let total_tax = taxes.total;
 
         let entry = CapitalGainEntry {
             transaction_date: trade.conclusion_time.date,
@@ -418,18 +416,22 @@ fn process_dividends(
         // Apply Teilfreistellung
         let taxable_amount = apply_teilfreistellung(gross_amount_eur, &teilfreistellung_rate);
 
-        // Calculate German taxes
-        let rates = &statement.tax_rates;
-        let abgeltungssteuer = taxable_amount * rates.abgeltungssteuer;
-        let soli = abgeltungssteuer * rates.solidaritaetszuschlag;
-        let church_tax = abgeltungssteuer * rates.kirchensteuer;
-        let total_tax = abgeltungssteuer + soli + church_tax;
-
-        // Foreign tax credit (limited to German tax rate)
-        let max_credit = taxable_amount * dec!(0.15); // 15% typical DTA limit
-        let foreign_tax_credit = foreign_withholding_tax.min(max_credit);
-
-        let net_tax = (total_tax - foreign_tax_credit).max(dec!(0));
+        // Creditable foreign withholding (§32d(5)) is folded into the §32d(1) formula, so the
+        // per-entry net tax equals the total: the credit is already inside, not subtracted after.
+        let foreign_tax_credit = creditable_foreign_tax(
+            foreign_withholding_tax,
+            gross_amount_eur,
+            taxable_amount,
+            &teilfreistellung_rate,
+        );
+        let taxes = statement
+            .tax_rates
+            .compute_taxes(taxable_amount, foreign_tax_credit);
+        let abgeltungssteuer = taxes.abgeltungssteuer;
+        let soli = taxes.solidaritaetszuschlag;
+        let church_tax = taxes.kirchensteuer;
+        let total_tax = taxes.total;
+        let net_tax = taxes.total;
 
         // Get quantity from holdings (approximate)
         let quantity = dec!(0); // Dividend records don't always include quantity
@@ -469,6 +471,29 @@ fn apply_teilfreistellung(amount: Decimal, rate: &TeilfreistellungRate) -> Decim
     amount * rate.taxable_portion()
 }
 
+/// Creditable foreign withholding tax on a dividend item under §32d(5) EStG.
+///
+/// Capped at the treaty rate (15% of the GROSS distribution) and the statutory cap (25% of the
+/// taxable amount). Fund distributions carry a Teilfreistellung classification; under InvStG 2018
+/// the investor cannot credit fund-level foreign withholding, so `q = 0` for them (the withheld
+/// amount is still reported informationally by the caller).
+fn creditable_foreign_tax(
+    withholding_paid: Decimal,
+    gross_amount: Decimal,
+    taxable_amount: Decimal,
+    teilfreistellung: &TeilfreistellungRate,
+) -> Decimal {
+    if *teilfreistellung != TeilfreistellungRate::None {
+        return dec!(0);
+    }
+    let treaty_cap = gross_amount * dec!(0.15);
+    let statutory_cap = taxable_amount * dec!(0.25);
+    withholding_paid
+        .min(treaty_cap)
+        .min(statutory_cap)
+        .max(dec!(0))
+}
+
 /// Process interest income and create interest entries.
 fn process_interest(
     statement: &mut GermanTaxStatement,
@@ -492,14 +517,14 @@ fn process_interest(
         // Interest doesn't have Teilfreistellung
         let taxable_amount = gross_amount_eur;
 
-        // Calculate German taxes
-        let rates = &statement.tax_rates;
-        let abgeltungssteuer = taxable_amount * rates.abgeltungssteuer;
-        let soli = abgeltungssteuer * rates.solidaritaetszuschlag;
-        let church_tax = abgeltungssteuer * rates.kirchensteuer;
-        let total_tax = abgeltungssteuer + soli + church_tax;
+        // §32d(1) EStG flat tax. Interest in the supported statements carries no foreign
+        // withholding, so the creditable foreign tax q = 0.
+        let taxes = statement.tax_rates.compute_taxes(taxable_amount, dec!(0));
+        let abgeltungssteuer = taxes.abgeltungssteuer;
+        let soli = taxes.solidaritaetszuschlag;
+        let church_tax = taxes.kirchensteuer;
+        let total_tax = taxes.total;
 
-        // No foreign tax credit for interest (typically)
         let foreign_withholding_tax = dec!(0);
         let foreign_tax_credit = dec!(0);
         let net_tax = total_tax;
@@ -571,20 +596,13 @@ fn process_fx_gains(
 
         has_income = true;
 
-        // FX gains don't have Teilfreistellung
+        // FX gains don't have Teilfreistellung; §32d(1) flat tax with q = 0 (losses floor to zero).
         let taxable_amount = gross_amount_eur;
-
-        // Calculate German taxes (only on gains, not losses)
-        let (abgeltungssteuer, soli, church_tax, total_tax) = if taxable_amount > dec!(0) {
-            let rates = &statement.tax_rates;
-            let abgelt = taxable_amount * rates.abgeltungssteuer;
-            let soli = abgelt * rates.solidaritaetszuschlag;
-            let church = abgelt * rates.kirchensteuer;
-            (abgelt, soli, church, abgelt + soli + church)
-        } else {
-            // Losses - no tax (but tracked for offset calculation)
-            (dec!(0), dec!(0), dec!(0), dec!(0))
-        };
+        let taxes = statement.tax_rates.compute_taxes(taxable_amount, dec!(0));
+        let abgeltungssteuer = taxes.abgeltungssteuer;
+        let soli = taxes.solidaritaetszuschlag;
+        let church_tax = taxes.kirchensteuer;
+        let total_tax = taxes.total;
 
         let entry = FxGainEntry {
             transaction_date: fx_gain.date,
@@ -985,7 +1003,7 @@ mod tests {
     #[test]
     fn test_end_to_end_csv_generation() {
         // Create a German tax statement for 2024
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.08), dec!(0)); // 8% church tax
+        let mut statement = GermanTaxStatement::new(2024, dec!(0.08), dec!(0)).unwrap(); // 8% church tax
 
         // Add a capital gain entry (sold stock with profit)
         let capital_gain = CapitalGainEntry {
@@ -1122,7 +1140,7 @@ mod tests {
     /// Test that the statement correctly handles pre-2009 (Altbestand) holdings.
     #[test]
     fn test_pre_2009_altbestand_handling() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         // Pre-2009 holding should be tax-exempt
         let altbestand_gain = CapitalGainEntry {
@@ -1157,7 +1175,7 @@ mod tests {
     /// Test Teilfreistellung for ETFs.
     #[test]
     fn test_equity_etf_teilfreistellung() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         // Equity ETF dividend with 30% exemption
         let etf_dividend = DividendEntry {
@@ -1219,7 +1237,7 @@ mod tests {
         use std::time::Instant;
 
         let start = Instant::now();
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(5000)); // With church tax and loss CF
+        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(5000)).unwrap(); // With church tax and loss CF
 
         // Generate 500 capital gain entries (simulating 1000+ buy/sell transactions)
         for i in 0..500 {
@@ -1343,7 +1361,7 @@ mod tests {
     /// Accuracy test: Verify ±€0.01 precision across calculations per SC-002.
     #[test]
     fn test_accuracy_precision() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(0)).unwrap();
 
         // Test with precise decimal values that could cause floating point errors
         let gain = CapitalGainEntry {
@@ -1442,7 +1460,7 @@ mod tests {
     /// Test FX gains/losses processing (§20 EStG - capital income treatment).
     #[test]
     fn test_fx_gains_processing() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.08), dec!(0)); // 8% church tax
+        let mut statement = GermanTaxStatement::new(2024, dec!(0.08), dec!(0)).unwrap(); // 8% church tax
 
         // FX gain entry (profit from EUR/USD)
         let fx_gain = FxGainEntry {
@@ -1502,7 +1520,7 @@ mod tests {
     /// Test that FX losses can offset capital gains (general loss bucket).
     #[test]
     fn test_fx_loss_offset_capital_gains() {
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)); // No church tax
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap(); // No church tax
 
         // Capital gain entry
         let capital_gain = CapitalGainEntry {
@@ -1560,7 +1578,7 @@ mod tests {
     fn test_fee_entry_creation() {
         use super::super::statement::FeeEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         // Add a fee entry
         let fee = FeeEntry {
@@ -1601,7 +1619,7 @@ mod tests {
     fn test_stock_grant_entry_with_fmv() {
         use super::super::statement::StockGrantEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         // Stock grant with FMV (typical RSU vest)
         let grant = StockGrantEntry {
@@ -1635,7 +1653,7 @@ mod tests {
     fn test_stock_grant_entry_without_fmv() {
         use super::super::statement::StockGrantEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         // Stock grant without FMV (FMV was not available from broker)
         let grant = StockGrantEntry {
@@ -1660,7 +1678,7 @@ mod tests {
     fn test_cash_grant_entry_below_threshold() {
         use super::super::statement::CashGrantEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         // Cash grant below threshold
         let grant = CashGrantEntry {
@@ -1685,7 +1703,7 @@ mod tests {
     fn test_cash_grant_entry_above_threshold() {
         use super::super::statement::CashGrantEntry;
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         // Multiple cash grants exceeding threshold
         let grant1 = CashGrantEntry {
@@ -1726,7 +1744,7 @@ mod tests {
     fn test_corporate_action_spinoff() {
         use super::super::statement::{CorporateActionEntry, CorporateActionType};
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         let spinoff = CorporateActionEntry {
             date: Date::from_ymd_opt(2024, 7, 1).unwrap(),
@@ -1750,7 +1768,7 @@ mod tests {
     fn test_corporate_action_liquidation() {
         use super::super::statement::{CorporateActionEntry, CorporateActionType};
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         let liquidation = CorporateActionEntry {
             date: Date::from_ymd_opt(2024, 8, 15).unwrap(),
@@ -1778,7 +1796,7 @@ mod tests {
     fn test_corporate_action_delisting() {
         use super::super::statement::{CorporateActionEntry, CorporateActionType};
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0));
+        let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0)).unwrap();
 
         let delisting = CorporateActionEntry {
             date: Date::from_ymd_opt(2024, 9, 1).unwrap(),
@@ -1814,7 +1832,7 @@ mod tests {
             CashGrantEntry, CorporateActionEntry, CorporateActionType, FeeEntry, StockGrantEntry,
         };
 
-        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(0)); // 9% church tax
+        let mut statement = GermanTaxStatement::new(2024, dec!(0.09), dec!(0)).unwrap(); // 9% church tax
 
         // Add capital gain
         let capital_gain = CapitalGainEntry {

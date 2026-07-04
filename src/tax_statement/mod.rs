@@ -169,8 +169,9 @@ fn generate_german_tax_statement(
 
     broker_statement.check_period_against_tax_year(year)?;
 
-    // Get German tax configuration
-    let church_tax_rate = config.taxes.church_tax_rate.unwrap_or(Decimal::ZERO);
+    // Get German tax configuration. church_tax_rate is accepted in the documented percent form
+    // (0, 8, 9) and normalized to a fraction here — used raw it would levy a ~900% church tax.
+    let church_tax_rate = config.taxes.german_church_tax_fraction()?;
     let loss_carryforward = config
         .taxes
         .loss_carryforward
@@ -179,7 +180,8 @@ fn generate_german_tax_statement(
         .sum::<Decimal>();
 
     // Create the German tax statement
-    let mut statement = germany::GermanTaxStatement::new(year, church_tax_rate, loss_carryforward);
+    let mut statement =
+        germany::GermanTaxStatement::new(year, church_tax_rate, loss_carryforward)?;
 
     // Connect to database for currency conversion using official ECB reference rates (required by
     // German tax authorities), not the Central Bank of Russia rates used for other jurisdictions.

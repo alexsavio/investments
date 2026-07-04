@@ -81,7 +81,7 @@ fn run_pipeline(fixture: &str, year: i32) -> GermanTaxStatement {
     let converter = converter();
     let tax_config = TaxConfig::default();
 
-    let mut german = GermanTaxStatement::new(year, dec!(0), dec!(0));
+    let mut german = GermanTaxStatement::new(year, dec!(0), dec!(0)).unwrap();
     process_broker_statement(&mut german, &statement, year, &converter, &tax_config).unwrap();
     german.calculate_totals();
     german

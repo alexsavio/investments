@@ -14,8 +14,8 @@ taxes:
   jurisdiction: germany
 
   # Optional: Church tax rate (Kirchensteuer)
-  # Set to your applicable rate: 8% (Bavaria, Baden-Württemberg) or 9% (other states)
-  # Default: 0 (no church tax)
+  # Set to your applicable rate: 8 (Bavaria, Baden-Württemberg) or 9 (other states)
+  # Accepted forms: 0, 8, 9 (percent) or 0.08 / 0.09 (fraction). Default: 0 (no church tax)
   church_tax_rate: 9
 
   # Optional: Loss carryforward from previous years (Verlustvortrag)
@@ -82,13 +82,19 @@ Since 2009, Germany applies a flat tax on investment income:
 
 ### Effective Tax Rates
 
-**Without Kirchensteuer:**
+Under §32d(1) EStG, church tax is deductible **inside** the flat-rate formula, so it does not
+simply stack on top of 25%. For taxable capital income `e` and church-tax fraction `k` (0, 0.08,
+or 0.09), with creditable foreign tax `q`:
 
-- 25% + (25% × 5.5%) = **26.375%**
+- `Abgeltungsteuer = max(0, e − 4·q) / (4 + k)`
+- `Solidaritätszuschlag = 5.5% × Abgeltungsteuer`
+- `Kirchensteuer = k × Abgeltungsteuer`
 
-**With Kirchensteuer (9%):**
-
-- 25% + (25% × 5.5%) + (25% × 9%) = **28.625%**
+| Church tax | Total tax on €1,000 (q = 0) | Effective rate |
+|------------|-----------------------------|----------------|
+| None (k = 0) | 263.75 | 26.375% |
+| 8% (k = 0.08) | 278.19 | ≈27.82% |
+| 9% (k = 0.09) | 279.95 | ≈27.99% |
 
 ## Teilfreistellung (Partial Exemption)
 

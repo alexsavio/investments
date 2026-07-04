@@ -15,4 +15,4 @@ mod rates;
 // Re-export types that are used by other modules
 pub use self::dividends::TeilfreistellungRate;
 pub use self::loss_carryforward::calculate_with_loss_carryforward;
-pub use self::rates::GermanTaxRates;
+pub use self::rates::{AbgeltungsteuerBreakdown, GermanTaxRates};

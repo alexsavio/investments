@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde::de::{Deserializer, Error};
 
 use crate::brokers::Broker;
-use crate::core::EmptyResult;
+use crate::core::{EmptyResult, GenericResult};
 use crate::currency;
 use crate::instruments::EtfClassification;
 use crate::localities::Jurisdiction;
@@ -51,6 +51,23 @@ impl TaxConfig {
     /// Get the ETF classification for a given ISIN, defaulting to None (no exemption)
     pub fn get_etf_classification(&self, isin: &str) -> EtfClassification {
         self.etf_classification.get(isin).copied().unwrap_or_default()
+    }
+
+    /// German church tax (Kirchensteuer) as a fraction of the Abgeltungsteuer.
+    ///
+    /// Accepts the documented percent form (0, 8, 9) as well as the fraction form (0.08, 0.09);
+    /// anything else is rejected. Used raw, the documented `church_tax_rate: 9` would be applied as
+    /// a factor of 9 (a ~900% church tax).
+    pub fn german_church_tax_fraction(&self) -> GenericResult<Decimal> {
+        let raw = self.church_tax_rate.unwrap_or(Decimal::ZERO);
+        Ok(match raw {
+            r if r == dec!(0) => dec!(0),
+            r if r == dec!(8) || r == dec!(0.08) => dec!(0.08),
+            r if r == dec!(9) || r == dec!(0.09) => dec!(0.09),
+            other => return Err!(
+                "Invalid church_tax_rate {other}: use 0, 8, or 9 (percent), or 0.08 / 0.09 (fraction)"
+            ),
+        })
     }
 }
 
@@ -128,5 +145,33 @@ mod tests {
         let tax = tax.parse().unwrap();
         let result = round_tax(tax, Jurisdiction::Russia.traits().tax_precision);
         assert_eq!(result, expected.parse().unwrap());
+    }
+
+    #[rstest(raw, expected,
+        case(None, "0"),
+        case(Some("0"), "0"),
+        case(Some("8"), "0.08"),
+        case(Some("9"), "0.09"),
+        case(Some("0.08"), "0.08"),
+        case(Some("0.09"), "0.09"),
+    )]
+    fn german_church_tax_fraction_normalizes(raw: Option<&str>, expected: &str) {
+        let config = TaxConfig {
+            church_tax_rate: raw.map(|r| r.parse().unwrap()),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.german_church_tax_fraction().unwrap(),
+            expected.parse().unwrap()
+        );
+    }
+
+    #[test]
+    fn german_church_tax_fraction_rejects_invalid() {
+        let config = TaxConfig {
+            church_tax_rate: Some(dec!(5)),
+            ..Default::default()
+        };
+        assert!(config.german_church_tax_fraction().is_err());
     }
 }
