@@ -4,6 +4,8 @@
 
 use std::io::Write;
 
+use rust_decimal::RoundingStrategy;
+
 use crate::core::GenericResult;
 use crate::formatting;
 use crate::types::Decimal;
@@ -501,8 +503,13 @@ impl GermanCsvFormatter {
         Ok(())
     }
 
+    /// Round a reported figure to two places, half away from zero (German tax-form practice for
+    /// per-line amounts). Each figure is rounded once from full precision; a one-cent gap between
+    /// rounded components and a rounded total is acceptable, unlike the silent truncation of `{:.2}`.
     fn format_decimal(value: Decimal) -> String {
-        format!("{:.2}", value)
+        let mut value = value.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero);
+        value.rescale(2);
+        value.to_string()
     }
 
     fn escape_csv(value: &str) -> String {
@@ -511,5 +518,21 @@ impl GermanCsvFormatter {
         } else {
             value.to_string()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GermanCsvFormatter;
+
+    /// Reported figures are rounded half-up to two places, not truncated: `{:.2}` on rust_decimal
+    /// truncates (0.518 → "0.51"), understating or overstating cents on the tax form.
+    #[test]
+    fn format_decimal_rounds_half_up_to_two_places() {
+        assert_eq!(GermanCsvFormatter::format_decimal(dec!(0.518)), "0.52");
+        assert_eq!(GermanCsvFormatter::format_decimal(dec!(0.015675)), "0.02");
+        assert_eq!(GermanCsvFormatter::format_decimal(dec!(1.5)), "1.50");
+        assert_eq!(GermanCsvFormatter::format_decimal(dec!(2)), "2.00");
+        assert_eq!(GermanCsvFormatter::format_decimal(dec!(-0.125)), "-0.13");
     }
 }
