@@ -42,62 +42,6 @@ fn convert_to_eur(
         })
 }
 
-/// Check if a symbol appears to be a derivative instrument.
-/// Derivatives have different tax treatment and are not supported.
-fn is_derivative(symbol: &str) -> bool {
-    let symbol_upper = symbol.to_uppercase();
-
-    // Common derivative patterns:
-    // - Options often have strike prices and expiry dates encoded
-    // - Options on US exchanges often end with digits (strike) and letters (month code)
-    // - Futures have month codes like F, G, H, J, K, M, N, Q, U, V, X, Z followed by year
-    // - Warrants often end with 'W' or contain 'WS', 'WT'
-
-    // Check for warrant patterns
-    if symbol_upper.ends_with('W')
-        || symbol_upper.contains("WS")
-        || symbol_upper.contains("WT")
-        || symbol_upper.contains("WARRANT")
-    {
-        return true;
-    }
-
-    // Check for option-like patterns (symbol followed by date codes)
-    // e.g., AAPL230120C00150000 (AAPL Jan 20 2023 Call $150)
-    if symbol.len() > 6 {
-        let chars: Vec<char> = symbol.chars().collect();
-        // If we have many digits after the ticker, might be an option
-        let digit_count = chars.iter().filter(|c| c.is_ascii_digit()).count();
-        if digit_count > 6 {
-            return true;
-        }
-    }
-
-    // Check for structured product / certificate indicators
-    if symbol_upper.contains("CERT")
-        || symbol_upper.contains("NOTE")
-        || symbol_upper.contains("STRUC")
-    {
-        return true;
-    }
-
-    false
-}
-
-/// Emit warning for derivative instrument and return true if it's a derivative.
-fn warn_if_derivative(symbol: &str) -> bool {
-    if is_derivative(symbol) {
-        warn!(
-            "Derivative instrument '{}' detected - skipping. German tax treatment for \
-             derivatives differs from stocks and requires specialized handling.",
-            symbol
-        );
-        true
-    } else {
-        false
-    }
-}
-
 /// Process broker statement and populate German tax statement entries.
 pub fn process_broker_statement(
     statement: &mut GermanTaxStatement,
@@ -174,11 +118,6 @@ fn process_trades(
         // Germany assigns the tax year by the obligatory transaction (conclusion) date, not the
         // settlement date.
         if trade.conclusion_time.date.year() != year {
-            continue;
-        }
-
-        // Skip derivatives with warning (FR-016)
-        if warn_if_derivative(&trade.symbol) {
             continue;
         }
 
@@ -376,11 +315,6 @@ fn process_dividends(
 
     for dividend in &broker_statement.dividends {
         if dividend.date.year() != year {
-            continue;
-        }
-
-        // Skip derivatives with warning (FR-016)
-        if warn_if_derivative(&dividend.issuer) {
             continue;
         }
 
@@ -1224,31 +1158,6 @@ mod tests {
         // Only 70 EUR taxable out of 100 EUR gross
         assert_eq!(statement.total_dividend_income, dec!(70.00));
         assert_eq!(statement.total_abgeltungssteuer, dec!(17.50));
-    }
-
-    /// Test derivative detection (FR-016).
-    #[test]
-    fn test_derivative_detection() {
-        // Regular stocks should NOT be detected as derivatives
-        assert!(!is_derivative("AAPL"));
-        assert!(!is_derivative("VTI"));
-        assert!(!is_derivative("MSFT"));
-        assert!(!is_derivative("BRK.B"));
-        assert!(!is_derivative("VWCE"));
-        assert!(!is_derivative("IE00BK5BQT80")); // ISIN
-
-        // Warrants should be detected
-        assert!(is_derivative("AAPLW")); // Warrant suffix
-        assert!(is_derivative("MSFTWS")); // WS pattern
-        assert!(is_derivative("TESTWARRANT")); // Contains WARRANT
-
-        // Options should be detected (long symbols with many digits)
-        assert!(is_derivative("AAPL230120C00150000")); // Call option
-        assert!(is_derivative("AAPL230120P00150000")); // Put option
-
-        // Structured products should be detected
-        assert!(is_derivative("TESTCERT")); // Certificate
-        assert!(is_derivative("TESTNOTE")); // Structured note
     }
 
     /// Performance test: Verify <10s for 1000 transaction statement per SC-001.

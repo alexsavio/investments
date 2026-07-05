@@ -110,6 +110,20 @@ fn fifo_cost_basis_consumes_lots() {
     assert_eq!(german.total_capital_losses, dec!(0));
 }
 
+/// A real stock whose ticker ends in 'W' (GLW, Corning) must appear in the tax report. The old
+/// symbol-pattern `is_derivative` check dropped any 'W'-ending or "WS"/"WT"/"NOTE"/"CERT" symbol,
+/// silently omitting real tickers. Asset-category filtering at the parser keeps the STK and drops
+/// the OPT row, so GLW's €450 gain (buy 100@$10, sell 100@$15, 0.9 EUR/USD) is reported.
+///
+/// Enabled by T8 (remove symbol-pattern derivative detection).
+#[test]
+fn real_ticker_ending_in_w_is_not_dropped() {
+    let german = run_pipeline("derivative", 2024);
+    assert_eq!(german.total_capital_gains, dec!(450));
+    assert_eq!(german.capital_gains.len(), 1);
+    assert_eq!(german.capital_gains[0].symbol, "GLW");
+}
+
 // The IB Flex parser's income-dedup and edge-row handling (T3) is verified next to the parser
 // itself in `broker_statement::ib::flex_query` (the `FlexQueryResponse` type is private to that
 // module), against the shared `income_edge` fixture in this module's `testdata/` directory.
