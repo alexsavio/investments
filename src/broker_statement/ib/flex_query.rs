@@ -628,15 +628,25 @@ fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: 
         return Ok(());
     }
 
-    // Skip non-stock entries and forex
-    if line.asset_category != "STK" || line.symbol.is_empty() {
-        return Ok(());
-    }
-
     // Only process BUY and SELL activities
     match line.activity_code.as_str() {
         "BUY" | "SELL" => {}
         _ => return Ok(()),
+    }
+
+    // Keep only stocks; warn on skipped derivative trade rows (FR-016).
+    if line.asset_category != "STK" {
+        if !line.symbol.is_empty() {
+            log::warn!(
+                "Skipping non-stock trade {} (assetCategory {}); German tax handling of \
+                 derivatives is out of scope.",
+                line.symbol, line.asset_category
+            );
+        }
+        return Ok(());
+    }
+    if line.symbol.is_empty() {
+        return Ok(());
     }
 
     let date = if line.date.is_empty() {
@@ -888,8 +898,14 @@ fn fx_is_margin_loan(balances: &CurrencyBalances, currencies: &[&str], descripti
 /// Ingest a stock trade. Returns `true` if a trade was recorded, `false` if the row was skipped as
 /// a non-stock instrument. Cancellation rows are filtered out by the caller before this is reached.
 fn parse_trade(statement: &mut PartialBrokerStatement, trade: &Trade) -> GenericResult<bool> {
-    // Skip non-stock trades (forex, options, etc.)
+    // Keep only stocks; warn on every skipped derivative/non-stock category (FR-016). Asset-category
+    // filtering here replaces the old symbol-pattern guess that dropped real tickers like GLW/WST.
     if trade.asset_category != "STK" {
+        log::warn!(
+            "Skipping non-stock instrument {} (assetCategory {}); German tax handling of \
+             derivatives is out of scope.",
+            trade.symbol, trade.asset_category
+        );
         return Ok(false);
     }
 
@@ -1198,5 +1214,42 @@ mod tests {
             !partial.fx_gains[0].is_margin_loan,
             "a positive-balance conversion is a taxable disposal, not a margin-loan repayment",
         );
+    }
+
+    fn trade_row(symbol: &str, asset_category: &str) -> Trade {
+        Trade {
+            currency: "USD".to_string(),
+            symbol: symbol.to_string(),
+            isin: String::new(),
+            description: symbol.to_string(),
+            asset_category: asset_category.to_string(),
+            date_time: "20240110;100000".to_string(),
+            settle_date: "20240112".to_string(),
+            quantity: dec!(1),
+            trade_price: dec!(10),
+            trade_money: dec!(-10),
+            commission: dec!(0),
+            buy_sell: "BUY".to_string(),
+            open_close_indicator: "O".to_string(),
+            trade_id: String::new(),
+            orig_trade_id: String::new(),
+        }
+    }
+
+    /// Instrument selection is by IB asset category, not by symbol pattern: a real stock whose
+    /// ticker ends in 'W' (GLW) is ingested, while an option (OPT) is excluded.
+    ///
+    /// Enabled by T8 (remove symbol-pattern derivative detection).
+    #[test]
+    fn parse_trade_keeps_stocks_and_excludes_derivatives() {
+        let mut statement = PartialBrokerStatement::new(&[Exchange::Us], false);
+
+        let stock = trade_row("GLW", "STK");
+        assert!(parse_trade(&mut statement, &stock).unwrap());
+        assert_eq!(statement.stock_buys.len(), 1);
+
+        let option = trade_row("AAPL  240119C00150000", "OPT");
+        assert!(!parse_trade(&mut statement, &option).unwrap());
+        assert_eq!(statement.stock_buys.len(), 1, "option must not be ingested");
     }
 }
