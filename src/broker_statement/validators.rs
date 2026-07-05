@@ -95,6 +95,13 @@ pub fn sort_and_validate_trades<T: StockTrade>(name: &str, trades: &mut [T]) -> 
 
     for trade in trades {
         let trade = trade.info();
+
+        if trade.execution_date < trade.conclusion_time.date {
+            return Err!("Got an unexpected execution date of {name} trade for {} at {}: {}",
+                trade.symbol, formatting::format_date(trade.conclusion_time),
+                formatting::format_date(trade.execution_date));
+        }
+
         if trade.out_of_order_execution {
             continue;
         }

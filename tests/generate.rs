@@ -56,6 +56,7 @@ fn generate_regression_tests() {
     t.add("Simulate sell with mixed currency", "simulate-sell tbank-mixed-currency-trade all EQMX all RSHA").config("other");
 
     // tax-statement
+    t.add("Close-end tax statement", "tax-statement close-end").config("other");
     t.add("IB complex tax statement", "tax-statement ib-complex").config("other");
     t.add("IB external exchanges tax statement", "tax-statement ib-external-exchanges").config("other");
     t.add("IB fractional shares split tax statement", "tax-statement ib-fractional-shares-split").config("other");
@@ -84,6 +85,7 @@ fn generate_regression_tests() {
     t.tax_statement("TBank complex full", 2020).config("other");
 
     // cash-flow
+    t.add("Close-end cash flow", "cash-flow close-end").config("other");
     t.add("IB margin RUB cash flow", "cash-flow ib-margin-rub").config("other");
     t.add("IB stock split cash flow", "cash-flow ib-stock-split").config("other");
     t.add("IB external exchanges cash flow", "cash-flow ib-external-exchanges").config("other");
@@ -125,7 +127,6 @@ fn generate_regression_tests() {
 
     // Personal accounts
 
-    // FIXME(konishchev): Test close-end fund
     let accounts = [
         ("BCS",       Some((2019, None, false))),
         ("Firstrade", Some((2020, Some(2022), true))),
@@ -138,6 +139,7 @@ fn generate_regression_tests() {
         ("Kate IIA",     None),
         ("Sber",         None),
         ("Sber IIA",     None),
+        ("SFN",          None),
         ("TBank IIA",    None),
         ("VTB",          None),
     ];

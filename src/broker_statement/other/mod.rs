@@ -140,7 +140,7 @@ mod tests {
     fn parse_real() {
         let config = Config::new("testdata/configs/main", None).unwrap();
 
-        let portfolio = config.get_portfolio("close-end").unwrap();
+        let portfolio = config.get_portfolio("sfn").unwrap();
         assert_eq!(portfolio.broker, Broker::Other);
 
         let statement = BrokerStatement::load(&config, portfolio, ReadingStrictness::all()).unwrap();
@@ -156,7 +156,7 @@ mod tests {
 
         assert!(statement.forex_trades.is_empty());
         assert!(!statement.stock_buys.is_empty());
-        assert!(statement.stock_sells.is_empty()); // FIXME(konishchev): Test
+        assert!(statement.stock_sells.is_empty());
         assert!(!statement.dividends.is_empty());
 
         assert!(!statement.open_positions.is_empty());

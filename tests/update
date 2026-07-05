@@ -27,7 +27,7 @@ rate-limited-investments() {
 INVESTMENTS_NOW=$(< testdata/time)
 export INVESTMENTS_NOW
 
-for portfolio in bcs bcs-iia firstrade ib investpalata kate kate-iia sber sber-iia tbank tbank-iia vtb; do
+for portfolio in bcs bcs-iia firstrade ib investpalata kate kate-iia sber sber-iia sfn tbank tbank-iia vtb; do
     case "$portfolio" in
         firstrade|ib) cash=10000;;
         *) cash=100000;;
