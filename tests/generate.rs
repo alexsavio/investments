@@ -125,6 +125,7 @@ fn generate_regression_tests() {
 
     // Personal accounts
 
+    // FIXME(konishchev): Test close-end fund
     let accounts = [
         ("BCS",       Some((2019, None, false))),
         ("Firstrade", Some((2020, Some(2022), true))),

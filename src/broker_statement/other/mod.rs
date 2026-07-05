@@ -138,9 +138,7 @@ mod tests {
 
     #[test]
     fn parse_real() {
-        // FIXME(konishchev): Prepare testdata
-        // let config = Config::new("testdata/configs/main", None).unwrap();
-        let config = Config::new(".", None).unwrap();
+        let config = Config::new("testdata/configs/main", None).unwrap();
 
         let portfolio = config.get_portfolio("close-end").unwrap();
         assert_eq!(portfolio.broker, Broker::Other);

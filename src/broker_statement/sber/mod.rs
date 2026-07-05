@@ -99,7 +99,7 @@ mod tests {
         assert!(!statement.stock_sells.is_empty());
         assert_eq!(statement.dividends.is_empty(), name != "sber");
 
-        assert_eq!(statement.open_positions.is_empty(), name == "sber");
+        assert!(!statement.open_positions.is_empty());
         assert!(!statement.instrument_info.is_empty());
     }
 }
