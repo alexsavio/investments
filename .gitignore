@@ -1,3 +1,5 @@
 /target
 /tests/retest/target
 /config.yaml
+# Generated German tax statement CSVs contain real personal trading data.
+/german-tax-*.csv

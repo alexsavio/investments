@@ -27,7 +27,9 @@ use crate::quotes::fcsapi::FcsApiConfig;
 use crate::quotes::finnhub::FinnhubConfig;
 use crate::quotes::twelvedata::TwelveDataConfig;
 use crate::taxes::remapping::TaxRemappingConfig;
-use crate::taxes::{self, TaxConfig, TaxExemption, TaxPaymentDay, TaxPaymentDaySpec, TaxRemapping};
+use crate::taxes::{
+    self, TaxConfig, TaxExemption, TaxJurisdiction, TaxPaymentDay, TaxPaymentDaySpec, TaxRemapping,
+};
 use crate::telemetry::TelemetryConfig;
 use crate::time;
 use crate::types::{Date, Decimal};
@@ -179,9 +181,10 @@ impl Config {
     }
 
     pub fn get_tax_country(&self) -> Country {
-        match self.taxes.jurisdiction.as_deref() {
-            Some("germany") | Some("Germany") => localities::germany(&self.taxes),
-            _ => localities::russia(&self.taxes), // Default to Russia for backwards compatibility
+        match self.taxes.jurisdiction {
+            Some(TaxJurisdiction::Germany) => localities::germany(&self.taxes),
+            // Default to Russia when the jurisdiction is omitted (backwards compatibility).
+            Some(TaxJurisdiction::Russia) | None => localities::russia(&self.taxes),
         }
     }
 

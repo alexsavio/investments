@@ -743,44 +743,42 @@ fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, lin
             statement.idle_cash_interest.push(IdleCashInterest::new(date, amount));
             log::debug!("Credit interest: {} on {}", amount, date);
         }
-        "FOREX" if !skip_forex => {
-            // Forex transaction - the amount field contains IB's realized FX P&L. This fallback
-            // path is only used when the richer FxTransactions section is absent.
-            //
-            // For German tax purposes (§20 Abs. 2 Nr. 7 EStG):
-            // - FX gains on interest-bearing currency accounts are taxable as capital income
-            // - FX gains/losses from margin loan repayments are NOT taxable
-            //   (Tilgung eines Fremdwährungskredits - debt repayment is not a taxable event)
-            if line.amount != Decimal::ZERO {
-                let currency_pair = if !line.symbol.is_empty() {
-                    line.symbol.clone()
-                } else {
-                    "FOREX".to_string()
-                };
-                let gain_amount = Cash::new(&line.currency, line.amount);
+        // Forex transaction - the amount field carries IB's realized FX P&L. This fallback path is
+        // only used when the richer FxTransactions section is absent.
+        //
+        // For German tax purposes (§20 Abs. 2 Nr. 7 EStG):
+        // - FX gains on interest-bearing currency accounts are taxable as capital income
+        // - FX gains/losses from margin loan repayments are NOT taxable
+        //   (Tilgung eines Fremdwährungskredits - debt repayment is not a taxable event)
+        "FOREX" if !skip_forex && line.amount != Decimal::ZERO => {
+            let currency_pair = if !line.symbol.is_empty() {
+                line.symbol.clone()
+            } else {
+                "FOREX".to_string()
+            };
+            let gain_amount = Cash::new(&line.currency, line.amount);
 
-                // Classify by the converted currency's balance sign, not by trade magnitude.
-                let mut currencies: Vec<&str> =
-                    line.symbol.split('.').filter(|c| c.len() == 3).collect();
-                if currencies.is_empty() {
-                    currencies.push(line.currency.as_str());
-                }
-                let is_margin_loan =
-                    fx_is_margin_loan(balances, &currencies, &line.activity_description);
+            // Classify by the converted currency's balance sign, not by trade magnitude.
+            let mut currencies: Vec<&str> =
+                line.symbol.split('.').filter(|c| c.len() == 3).collect();
+            if currencies.is_empty() {
+                currencies.push(line.currency.as_str());
+            }
+            let is_margin_loan =
+                fx_is_margin_loan(balances, &currencies, &line.activity_description);
 
-                statement.fx_gains.push(FxGain::new(
-                    date,
-                    gain_amount,
-                    currency_pair,
-                    line.activity_description.clone(),
-                    is_margin_loan,
-                ));
+            statement.fx_gains.push(FxGain::new(
+                date,
+                gain_amount,
+                currency_pair,
+                line.activity_description.clone(),
+                is_margin_loan,
+            ));
 
-                if is_margin_loan {
-                    log::debug!("FX margin loan (StmtFunds): {} on {} ({})", gain_amount, date, line.activity_description);
-                } else {
-                    log::debug!("FX taxable (StmtFunds): {} on {} ({})", gain_amount, date, line.activity_description);
-                }
+            if is_margin_loan {
+                log::debug!("FX margin loan (StmtFunds): {} on {} ({})", gain_amount, date, line.activity_description);
+            } else {
+                log::debug!("FX taxable (StmtFunds): {} on {} ({})", gain_amount, date, line.activity_description);
             }
         }
         _ => {}
@@ -1096,13 +1094,14 @@ fn parse_flex_date(date_str: &str) -> GenericResult<Date> {
 }
 
 fn parse_flex_datetime(datetime_str: &str) -> GenericResult<Date> {
-    // Format: YYYYMMDD;HHMMSS or YYYYMMDD
+    // Format: YYYYMMDD;HHMMSS or YYYYMMDD. Use get(..8) so a multi-byte UTF-8 payload errors
+    // instead of panicking on a byte slice that lands inside a character.
     let date_part = if let Some(idx) = datetime_str.find(';') {
         &datetime_str[..idx]
-    } else if datetime_str.len() >= 8 {
-        &datetime_str[..8]
     } else {
-        return Err!("Invalid datetime format: {}", datetime_str);
+        datetime_str
+            .get(..8)
+            .ok_or_else(|| format!("Invalid datetime format: {}", datetime_str))?
     };
 
     parse_flex_date(date_part)

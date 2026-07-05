@@ -27,14 +27,26 @@ pub use self::payment_day::{TaxPaymentDay, TaxPaymentDaySpec};
 pub use self::rates::{TaxRate, FixedTaxRate, ProgressiveTaxRate};
 pub use self::remapping::TaxRemapping;
 
+/// Tax jurisdiction selected in the config. Typed so a typo (e.g. `germny`) is a hard
+/// deserialization error rather than a silent fallback to Russia.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaxJurisdiction {
+    #[serde(alias = "Russia")]
+    Russia,
+    #[serde(alias = "Germany")]
+    Germany,
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaxConfig {
     #[serde(default)]
     pub income: BTreeMap<i32, Decimal>,
-    /// Jurisdiction for tax calculations (default: Russia, optional: Germany)
+    /// Jurisdiction for tax calculations (default: Russia when omitted; set to `germany` for the
+    /// German tax statement).
     #[serde(default)]
-    pub jurisdiction: Option<String>,
+    pub jurisdiction: Option<TaxJurisdiction>,
     /// Kirchensteuer (church tax) rate for Germany (8% or 9%), default 0
     #[serde(default)]
     pub church_tax_rate: Option<Decimal>,
@@ -248,5 +260,27 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(overridden.german_sparer_pauschbetrag(2024), dec!(0));
+    }
+
+    #[test]
+    fn jurisdiction_parses_known_values_and_rejects_typos() {
+        let parse = |yaml: &str| serde_yaml::from_str::<TaxConfig>(yaml).map(|c| c.jurisdiction);
+
+        assert_eq!(parse("{}").unwrap(), None);
+        assert_eq!(
+            parse("jurisdiction: germany").unwrap(),
+            Some(TaxJurisdiction::Germany)
+        );
+        // The capitalized form the old string match accepted still parses.
+        assert_eq!(
+            parse("jurisdiction: Germany").unwrap(),
+            Some(TaxJurisdiction::Germany)
+        );
+        assert_eq!(
+            parse("jurisdiction: russia").unwrap(),
+            Some(TaxJurisdiction::Russia)
+        );
+        // A typo is a hard error, not a silent fallback to Russia.
+        assert!(parse("jurisdiction: germny").is_err());
     }
 }
