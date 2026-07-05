@@ -41,7 +41,15 @@ impl RecordParser for WithholdingTaxParser {
             return Ok(());
         }
 
-        let issuer = parse_tax_description(description)?;
+        // The description regex is fully anchored; a real-world variation it does not match must not
+        // abort the whole statement. Warn and skip the row so the rest of the parse proceeds.
+        let issuer = match parse_tax_description(description) {
+            Ok(issuer) => issuer,
+            Err(e) => {
+                log::warn!("Skipping withholding tax row: {e}");
+                return Ok(());
+            }
+        };
         let actual_date = parser.tax_remapping.map(statement_date, description);
 
         // Tax amount is represented as a negative number.

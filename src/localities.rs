@@ -151,10 +151,11 @@ pub fn germany(_config: &TaxConfig) -> Country {
     let jurisdiction = Jurisdiction::Germany;
     let tax_precision = jurisdiction.traits().tax_precision;
 
-    // Germany has Abgeltungssteuer (flat capital gains tax) since 2009
-    // 25% Abgeltungssteuer + 5.5% Solidaritätszuschlag on top
-    // Effective rate: 25% + (25% * 5.5%) = 26.375%
-    // Church tax (8% or 9%) is configured per user, not included in base rate
+    // Approximation only. This flat 26.375% FixedTaxRate (25% Abgeltungssteuer + 5.5%
+    // Solidaritätszuschlag) is for the analysis/rebalancing views: it has no church tax, no
+    // Teilfreistellung, no loss pots, and no Sparer-Pauschbetrag. The real German tax math lives in
+    // the `tax_statement::germany` module — do not use this rate for the filing statement.
+    // Church tax (8% or 9%) is configured per user, not included in this base rate.
 
     let abgeltungssteuer_rate = dec!(0.25);
     let solidarity_surcharge = dec!(0.055); // 5.5% of Abgeltungssteuer

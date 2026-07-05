@@ -97,21 +97,21 @@ impl GermanCsvFormatter {
             Self::format_decimal(dec!(0)), // No foreign tax credit for capital gains
             Self::format_decimal(entry.total_tax),
             Self::format_decimal(entry.total_tax), // Net = total for capital gains
-            entry.notes.as_deref().unwrap_or("")
+            Self::escape_csv(entry.notes.as_deref().unwrap_or(""))
         )?;
         Ok(())
     }
 
     fn write_dividend_row<W: Write>(writer: &mut W, entry: &DividendEntry) -> GenericResult<()> {
+        // Dividend records carry no share quantity; leave that cell empty rather than a misleading 0.
         writeln!(
             writer,
-            "Dividend,{},{},{},{},{},{},,,,{},{},{},{},{},{},{},{},{},{},{}",
+            "Dividend,{},{},{},{},{},,,,,{},{},{},{},{},{},{},{},{},{},{}",
             formatting::format_date(entry.payment_date),
             formatting::format_date(entry.payment_date), // settle_date = payment_date for dividends
             Self::escape_csv(&entry.symbol),
             Self::escape_csv(&entry.isin),
             Self::escape_csv(&entry.description),
-            Self::format_decimal(entry.quantity),
             Self::format_decimal(entry.gross_amount_eur),
             Self::format_decimal(entry.teilfreistellung_rate.rate() * dec!(100)),
             Self::format_decimal(entry.taxable_amount),
@@ -122,7 +122,7 @@ impl GermanCsvFormatter {
             Self::format_decimal(entry.foreign_tax_credit),
             Self::format_decimal(entry.total_tax),
             Self::format_decimal(entry.net_tax),
-            entry.notes.as_deref().unwrap_or("")
+            Self::escape_csv(entry.notes.as_deref().unwrap_or(""))
         )?;
         Ok(())
     }
@@ -130,7 +130,7 @@ impl GermanCsvFormatter {
     fn write_interest_row<W: Write>(writer: &mut W, entry: &InterestEntry) -> GenericResult<()> {
         writeln!(
             writer,
-            "Interest,{},{},CASH,N/A,{},,,,,{},0.00,{},{},{},{},{},{},{},{},{}",
+            "Interest,{},{},CASH,,{},,,,,{},0.00,{},{},{},{},{},{},{},{},{}",
             formatting::format_date(entry.payment_date),
             formatting::format_date(entry.payment_date),
             Self::escape_csv(&entry.description),
@@ -143,7 +143,7 @@ impl GermanCsvFormatter {
             Self::format_decimal(entry.foreign_tax_credit),
             Self::format_decimal(entry.total_tax),
             Self::format_decimal(entry.net_tax),
-            entry.notes.as_deref().unwrap_or("")
+            Self::escape_csv(entry.notes.as_deref().unwrap_or(""))
         )?;
         Ok(())
     }
@@ -151,7 +151,7 @@ impl GermanCsvFormatter {
     fn write_fx_gain_row<W: Write>(writer: &mut W, entry: &FxGainEntry) -> GenericResult<()> {
         writeln!(
             writer,
-            "FX Gain/Loss,{},{},{},N/A,{},,,,,{},0.00,{},{},{},{},{},{},{},{},{}",
+            "FX Gain/Loss,{},{},{},,{},,,,,{},0.00,{},{},{},{},{},{},{},{},{}",
             formatting::format_date(entry.transaction_date),
             formatting::format_date(entry.transaction_date),
             Self::escape_csv(&entry.currency_pair),
@@ -165,7 +165,7 @@ impl GermanCsvFormatter {
             Self::format_decimal(dec!(0)), // No foreign tax credit for FX
             Self::format_decimal(entry.total_tax),
             Self::format_decimal(entry.total_tax), // Net = total for FX
-            entry.notes.as_deref().unwrap_or("")
+            Self::escape_csv(entry.notes.as_deref().unwrap_or(""))
         )?;
         Ok(())
     }
@@ -175,16 +175,18 @@ impl GermanCsvFormatter {
         // so the fee is reported but the taxable-amount column stays zero (no deduction).
         writeln!(
             writer,
-            "Fee/Deduction,{},{},N/A,N/A,{},,,,,{},0.00,{},0.00,0.00,0.00,0.00,0.00,0.00,0.00,{}",
+            "Fee/Deduction,{},{},,,{},,,,,{},0.00,{},0.00,0.00,0.00,0.00,0.00,0.00,0.00,{}",
             formatting::format_date(entry.date),
             formatting::format_date(entry.date),
             Self::escape_csv(&entry.description),
             Self::format_decimal(entry.amount_eur), // informational fee amount
             Self::format_decimal(dec!(0)),          // not deductible (§20(9) EStG)
-            entry
-                .notes
-                .as_deref()
-                .unwrap_or("Informational — not deductible under §20(9) EStG")
+            Self::escape_csv(
+                entry
+                    .notes
+                    .as_deref()
+                    .unwrap_or("Informational — not deductible under §20(9) EStG")
+            )
         )?;
         Ok(())
     }
@@ -197,17 +199,19 @@ impl GermanCsvFormatter {
         // They are reported separately for manual declaration as employment income
         writeln!(
             writer,
-            "Stock Grant (Employment Income),{},{},{},{},RSU/Stock Grant,{},,,,,N/A,{},0.00,N/A,N/A,N/A,0.00,N/A,N/A,{}",
+            "Stock Grant (Employment Income),{},{},{},{},RSU/Stock Grant,{},,,,,,{},0.00,,,,0.00,,,{}",
             formatting::format_date(entry.vest_date),
             formatting::format_date(entry.vest_date),
             Self::escape_csv(&entry.symbol),
             Self::escape_csv(&entry.isin),
             Self::format_decimal(entry.quantity),
             Self::format_decimal(entry.total_fmv_eur),
-            entry
-                .notes
-                .as_deref()
-                .unwrap_or("Geldwerter Vorteil - declare as employment income (Anlage N)")
+            Self::escape_csv(
+                entry
+                    .notes
+                    .as_deref()
+                    .unwrap_or("Geldwerter Vorteil - declare as employment income (Anlage N)")
+            )
         )?;
         Ok(())
     }
@@ -217,16 +221,18 @@ impl GermanCsvFormatter {
         // They are reported separately for manual declaration
         writeln!(
             writer,
-            "Cash Grant (Other Income),{},{},N/A,N/A,{},,,,,{},N/A,{},0.00,N/A,N/A,N/A,0.00,N/A,N/A,{}",
+            "Cash Grant (Other Income),{},{},,,{},,,,,{},,{},0.00,,,,0.00,,,{}",
             formatting::format_date(entry.date),
             formatting::format_date(entry.date),
             Self::escape_csv(&entry.description),
             Self::format_decimal(entry.amount_eur),
             Self::format_decimal(entry.amount_eur),
-            entry
-                .notes
-                .as_deref()
-                .unwrap_or("Sonstige Einkünfte §22 EStG - taxable if >€256/year")
+            Self::escape_csv(
+                entry
+                    .notes
+                    .as_deref()
+                    .unwrap_or("Sonstige Einkünfte §22 EStG - taxable if >€256/year")
+            )
         )?;
         Ok(())
     }
@@ -239,10 +245,10 @@ impl GermanCsvFormatter {
         let tax_impact = entry
             .tax_impact_eur
             .map(Self::format_decimal)
-            .unwrap_or_else(|| "N/A".to_string());
+            .unwrap_or_default();
         writeln!(
             writer,
-            "Corporate Action,{},{},{},N/A,{} - {},,,,,{},N/A,{},0.00,0.00,0.00,0.00,0.00,0.00,0.00,{}",
+            "Corporate Action,{},{},{},,{} - {},,,,,{},,{},0.00,0.00,0.00,0.00,0.00,0.00,0.00,{}",
             formatting::format_date(entry.date),
             formatting::format_date(entry.date),
             Self::escape_csv(&entry.symbol),
@@ -250,7 +256,7 @@ impl GermanCsvFormatter {
             Self::escape_csv(&entry.description),
             tax_impact,
             tax_impact,
-            entry.notes.as_deref().unwrap_or("")
+            Self::escape_csv(entry.notes.as_deref().unwrap_or(""))
         )?;
         Ok(())
     }
@@ -268,6 +274,8 @@ impl GermanCsvFormatter {
             writer,
             "# carryforward, and the Sparer-Pauschbetrag — NOT the sum of the per-row tax columns."
         )?;
+        // The summary/KAP block is a separate section with its own 3-column shape.
+        writeln!(writer, "summary_key,label,value_eur")?;
         writeln!(
             writer,
             "SUMMARY_TOTAL_TAXABLE_INCOME,Total Taxable Income,{}",
@@ -523,7 +531,9 @@ impl GermanCsvFormatter {
 
 #[cfg(test)]
 mod tests {
-    use super::GermanCsvFormatter;
+    use super::*;
+    use crate::taxes::germany::TeilfreistellungRate;
+    use crate::types::Date;
 
     /// Reported figures are rounded half-up to two places, not truncated: `{:.2}` on rust_decimal
     /// truncates (0.518 → "0.51"), understating or overstating cents on the tax form.
@@ -534,5 +544,152 @@ mod tests {
         assert_eq!(GermanCsvFormatter::format_decimal(dec!(1.5)), "1.50");
         assert_eq!(GermanCsvFormatter::format_decimal(dec!(2)), "2.00");
         assert_eq!(GermanCsvFormatter::format_decimal(dec!(-0.125)), "-0.13");
+    }
+
+    const COLUMNS: usize = 21;
+
+    fn date() -> Date {
+        Date::from_ymd_opt(2024, 6, 15).unwrap()
+    }
+
+    fn render(write: impl FnOnce(&mut Vec<u8>) -> GenericResult<()>) -> String {
+        let mut buf = Vec::new();
+        write(&mut buf).unwrap();
+        String::from_utf8(buf).unwrap().trim_end().to_string()
+    }
+
+    /// Every transaction row carries the full 21-column shape and uses empty cells, never the
+    /// "N/A" placeholder, for inapplicable numeric fields.
+    #[test]
+    fn transaction_rows_are_21_columns_without_na() {
+        let rows = [
+            render(|w| {
+                GermanCsvFormatter::write_interest_row(
+                    w,
+                    &InterestEntry {
+                        payment_date: date(),
+                        description: "idle cash".to_string(),
+                        gross_amount_eur: dec!(25),
+                        foreign_withholding_tax: dec!(0),
+                        taxable_amount: dec!(25),
+                        abgeltungssteuer: dec!(6.25),
+                        solidaritaetszuschlag: dec!(0.34),
+                        kirchensteuer: dec!(0),
+                        foreign_tax_credit: dec!(0),
+                        total_tax: dec!(6.59),
+                        net_tax: dec!(6.59),
+                        notes: None,
+                    },
+                )
+            }),
+            render(|w| {
+                GermanCsvFormatter::write_fx_gain_row(
+                    w,
+                    &FxGainEntry {
+                        transaction_date: date(),
+                        currency_pair: "EUR.USD".to_string(),
+                        description: "conversion".to_string(),
+                        gross_amount_eur: dec!(10),
+                        taxable_amount: dec!(10),
+                        abgeltungssteuer: dec!(2.5),
+                        solidaritaetszuschlag: dec!(0.14),
+                        kirchensteuer: dec!(0),
+                        total_tax: dec!(2.64),
+                        notes: None,
+                    },
+                )
+            }),
+            render(|w| {
+                GermanCsvFormatter::write_fee_row(
+                    w,
+                    &FeeEntry {
+                        date: date(),
+                        description: "ADR fee".to_string(),
+                        amount_eur: dec!(2),
+                        notes: None,
+                    },
+                )
+            }),
+            render(|w| {
+                GermanCsvFormatter::write_stock_grant_row(
+                    w,
+                    &StockGrantEntry {
+                        vest_date: date(),
+                        symbol: "ACME".to_string(),
+                        isin: "US0000000001".to_string(),
+                        quantity: dec!(10),
+                        fmv_per_share_eur: dec!(5),
+                        total_fmv_eur: dec!(50),
+                        notes: None,
+                    },
+                )
+            }),
+            render(|w| {
+                GermanCsvFormatter::write_cash_grant_row(
+                    w,
+                    &CashGrantEntry {
+                        date: date(),
+                        description: "bonus".to_string(),
+                        amount_eur: dec!(100),
+                        notes: None,
+                    },
+                )
+            }),
+            render(|w| {
+                GermanCsvFormatter::write_corporate_action_row(
+                    w,
+                    &CorporateActionEntry {
+                        date: date(),
+                        action_type: super::super::statement::CorporateActionType::Spinoff,
+                        symbol: "ACME".to_string(),
+                        description: "spinoff".to_string(),
+                        tax_impact_eur: None,
+                        notes: None,
+                    },
+                )
+            }),
+        ];
+
+        for row in &rows {
+            assert_eq!(row.split(',').count(), COLUMNS, "wrong column count: {row}");
+            assert!(
+                !row.contains("N/A"),
+                "row still emits N/A placeholder: {row}"
+            );
+        }
+    }
+
+    /// A dividend record carries no share quantity, so the quantity cell is empty, not "0.00".
+    #[test]
+    fn dividend_quantity_cell_is_empty() {
+        let row = render(|w| {
+            GermanCsvFormatter::write_dividend_row(
+                w,
+                &DividendEntry {
+                    payment_date: date(),
+                    symbol: "ACME".to_string(),
+                    isin: "US0000000001".to_string(),
+                    description: "dividend".to_string(),
+                    quantity: dec!(0),
+                    gross_amount_eur: dec!(50),
+                    foreign_withholding_tax: dec!(0),
+                    teilfreistellung_rate: TeilfreistellungRate::None,
+                    taxable_amount: dec!(50),
+                    abgeltungssteuer: dec!(12.5),
+                    solidaritaetszuschlag: dec!(0.69),
+                    kirchensteuer: dec!(0),
+                    foreign_tax_credit: dec!(0),
+                    total_tax: dec!(13.19),
+                    net_tax: dec!(13.19),
+                    notes: None,
+                },
+            )
+        });
+        assert_eq!(row.split(',').count(), COLUMNS);
+        assert_eq!(
+            row.split(',').nth(6),
+            Some(""),
+            "quantity cell should be empty"
+        );
     }
 }
