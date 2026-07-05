@@ -17,6 +17,7 @@ mod bcs;
 mod firstrade;
 mod ib;
 mod open;
+mod other;
 mod sber;
 mod tbank;
 
@@ -36,7 +37,7 @@ use crate::exchanges::{Exchange, Exchanges, TradingMode};
 use crate::formatting;
 use crate::instruments::{InstrumentInternalIds, InstrumentInfo};
 use crate::quotes::{Quotes, QuoteQuery};
-use crate::taxes::{TaxRemapping, TaxExemption, long_term_ownership};
+use crate::taxes::{TaxExemption, long_term_ownership};
 use crate::time::{self, Date, DateOptTime, Period};
 use crate::types::{Decimal, TradeType};
 use crate::util;
@@ -55,6 +56,7 @@ pub use self::fees::Fee;
 pub use self::grants::{CashGrant, StockGrant, process_grants};
 pub use self::interest::IdleCashInterest;
 pub use self::merging::StatementsMergingStrategy;
+pub use self::other::config::Operation;
 pub use self::payments::Withholding;
 pub use self::reader::ReadingStrictness;
 pub use self::remapping::{SymbolRemappingRules, SymbolRenameType};
@@ -92,20 +94,27 @@ pub struct BrokerStatement {
 impl BrokerStatement {
     pub fn load(config: &Config, portfolio: &PortfolioConfig, strictness: ReadingStrictness) -> GenericResult<BrokerStatement> {
         let broker = portfolio.broker.get_info(config, portfolio.plan.as_deref())?;
-        let statement_dir_path = portfolio.statements.as_ref().ok_or(
-            "Broker statements path is not specified in the portfolio's config")?;
 
-        let statements = reader::read(broker.type_, statement_dir_path, portfolio.get_tax_remapping()?, strictness)?;
+        let (statements, generate_open_positions) = if portfolio.broker == Broker::Other {
+            let operations = portfolio.operations.as_ref().ok_or(
+                "Portfolio operations aren't specified in the config")?;
+
+            let statement = other::StatementParser::parse(operations, portfolio.currency()).map_err(|e| format!(
+                "Portfolio operations parsing error: {e}"))?;
+
+            (vec![statement], true)
+        } else {
+            let statement_dir_path = portfolio.statements.as_ref().ok_or(
+                "Broker statements path is not specified in the portfolio's config")?;
+
+            (reader::read(broker.type_, statement_dir_path, portfolio.get_tax_remapping()?, strictness)?, false)
+        };
 
         BrokerStatement::load_inner(
             broker, statements, &portfolio.symbol_remapping, &portfolio.instrument_internal_ids,
             &portfolio.instrument_names, &portfolio.tax_exemptions, &portfolio.corporate_actions,
-            false, strictness)
+            generate_open_positions, strictness)
     }
-
-        instrument_internal_ids: &InstrumentInternalIds, instrument_names: &HashMap<String, String>,
-        tax_remapping: TaxRemapping, tax_exemptions: &[TaxExemption], corporate_actions: &[CorporateAction],
-        strictness: ReadingStrictness,
 
     fn load_inner(
         broker: BrokerInfo, mut statements: Vec<PartialBrokerStatement>, symbol_remapping: &SymbolRemappingRules,

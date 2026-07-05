@@ -40,6 +40,7 @@ pub fn read(
         Broker::Bcs => bcs::StatementReader::new(),
         Broker::Firstrade => firstrade::StatementReader::new(),
         Broker::InteractiveBrokers => ib::StatementReader::new(tax_remapping.take().unwrap(), strictness),
+        Broker::Other => unreachable!(), // Reads statement from config - not from filesystem
         Broker::Open => open::StatementReader::new(),
         Broker::Sber => sber::StatementReader::new(),
         Broker::Tbank => tbank::StatementReader::new(),

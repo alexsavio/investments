@@ -11,7 +11,7 @@ use validator::Validate;
 
 use crate::analysis::backtesting::config::BacktestingConfig;
 use crate::analysis::performance::config::PerformanceMergingConfig;
-use crate::broker_statement::{CorporateAction, SymbolRemappingRules};
+use crate::broker_statement::{CorporateAction, Operation, SymbolRemappingRules};
 use crate::brokers::Broker;
 use crate::brokers::config::BrokersConfig;
 use crate::cash_flow::config::deserialize_cash_flows;
@@ -267,9 +267,10 @@ pub struct PortfolioConfig {
     pub broker: Broker,
     pub plan: Option<String>,
 
-    #[serde(deserialize_with = "deserialize_optional_path")]
+    #[serde(default, deserialize_with = "deserialize_optional_path")]
     pub statements: Option<PathBuf>,
-    #[serde(default)]
+    pub operations: Option<Vec<Operation>>,
+
     #[serde(default)]
     pub symbol_remapping: SymbolRemappingRules,
     #[serde(default, deserialize_with = "InstrumentInternalIds::deserialize")]
@@ -308,9 +309,11 @@ impl PortfolioConfig {
         self.currency.as_deref().unwrap_or_else(|| self.broker.jurisdiction().traits().currency)
     }
 
-    pub fn statements_path(&self) -> GenericResult<&Path> {
-        Ok(Path::new(self.statements.as_ref().ok_or(
-            "Broker statements path is not specified in the portfolio's config")?))
+    pub fn has_statement(&self) -> bool {
+        match self.broker {
+            Broker::Other => self.operations.is_some(),
+            _ => self.statements.is_some(),
+        }
     }
 
     pub fn get_stock_symbols(&self) -> HashSet<String> {
@@ -347,6 +350,12 @@ impl PortfolioConfig {
         match currency {
             "RUB" | "USD" => (),
             _ => return Err!("Unsupported portfolio currency: {currency}"),
+        }
+
+        if self.statements.is_some() && self.broker == Broker::Other {
+            return Err!("Statements path specification is not supported for broker {:?}", Broker::Other.id());
+        } else if self.operations.is_some() && self.broker != Broker::Other {
+            return Err!("Portfolio operations specification is only supported for broker {:?}", Broker::Other.id());
         }
 
         if

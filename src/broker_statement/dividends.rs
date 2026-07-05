@@ -21,7 +21,7 @@ pub struct Dividend {
     pub original_issuer: String,
 
     pub amount: Cash,
-    pub paid_tax: Cash,
+    pub paid_tax: Cash, // FIXME(konishchev): Rename to tax_withheld
     pub taxation_type: IssuerTaxationType,
     pub skip_from_cash_flow: bool,
 }

@@ -49,6 +49,13 @@ pub fn deserialize_date<'de, D>(deserializer: D) -> Result<Date, D::Error>
     parse_user_date(&date).map_err(D::Error::custom)
 }
 
+pub fn deserialize_optional_date<'de, D>(deserializer: D) -> Result<Option<Date>, D::Error>
+    where D: Deserializer<'de>
+{
+    let date: Option<String> = Deserialize::deserialize(deserializer)?;
+    date.as_deref().map(parse_user_date).transpose().map_err(D::Error::custom)
+}
+
 pub fn deserialize_date_opt_time<'de, D>(deserializer: D) -> Result<DateOptTime, D::Error>
     where D: Deserializer<'de>
 {

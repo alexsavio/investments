@@ -47,7 +47,7 @@ impl CorporateAction {
 
 #[derive(Deserialize, Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-#[serde(tag = "type", rename_all="kebab-case")]
+#[serde(tag = "type", rename_all = "kebab-case")]
 pub enum CorporateActionType {
     // See https://github.com/KonishchevDmitry/investments/issues/73 for details
     //
