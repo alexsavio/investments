@@ -229,6 +229,8 @@ Read Appendix A before starting this phase; every formula and worked example you
 
 ### T7. Replace the FX margin-loan magnitude heuristic
 
+**Status: ✅ Done** (commit `fd8ca9af`) — one balance-based classifier for both parse paths: a conversion is a non-taxable margin-loan repayment only when the converted currency carried a negative starting balance (from the CashReport `startingCash`); unknown balance fails open to taxable + a warning. Whole-conversion classification (pro-rata split noted as a simplification). Deleted `determine_fx_is_margin_loan` + `parse_forex_notional`.
+
 **Problem (HIGH)**: `determine_fx_is_margin_loan` (`flex_query.rs:760-781`) classifies any FX conversion with `|quantity| > 100` as a non-taxable margin-loan repayment; `processor.rs:559` then drops the gain from taxable income. Converting $5,000 of accumulated dividend cash to EUR at a profit → silently untaxed (§20 Abs. 2 EStG exposure). The threshold is also unit-confused (FX units, not EUR as the comments claim) and the StmtFunds fallback path (lines 666-668) uses a *different* heuristic.
 
 **Do**: a conversion repays a margin loan only if the **currency balance was negative** (borrowed). Track the running per-currency cash balance while parsing (the statement has ending balances and all cash flows; IB Flex also exposes `levelOfDetail`/balance fields — use what the fixture provides). Classification: the portion of a sold currency amount that closes a negative balance is margin-loan repayment; the rest is a taxable disposal. If balance tracking is genuinely impossible from the available sections, then **fail open for tax purposes**: classify everything as taxable and let a warning tell the user to review margin-related conversions — never silently exempt income on a size heuristic. Use one code path for both parse paths.
@@ -237,11 +239,15 @@ Read Appendix A before starting this phase; every formula and worked example you
 
 ### T8. Remove symbol-pattern derivative detection
 
+**Status: ✅ Done** (commit `e9a8c6d0`) — deleted `is_derivative`/`warn_if_derivative`; selection is by IB `assetCategory` at the parser (`parse_trade` keeps STK only, warns naming symbol + category on any skipped non-stock, FR-016). Same guard on the StmtFunds fallback. `test_derivative_detection` → parser-level test; new `derivative` fixture proves GLW (a 'W'-ending real ticker) is no longer dropped.
+
 **Problem (HIGH)**: `is_derivative` (`processor.rs:45-83`) drops any symbol ending in `W` or containing `WS`/`WT`/`NOTE`/`CERT` — real tickers (GLW Corning, WST West Pharmaceutical, …) silently vanish from the tax report (income omission). For the Flex path the check is redundant: IB provides `assetCategory` and `parse_trade` already keeps only `STK`.
 
 **Do**: delete `is_derivative`/`warn_if_derivative` and rely on asset-category filtering at the parser level. To preserve FR-016 (warn on skipped derivatives), emit the warning **in the parser** when a non-STK category (`OPT`, `FUT`, `WAR`, `CFD`, …) is skipped, naming the symbol and category. Update `test_derivative_detection` into a parser-level test (STK passes; OPT row warns and is excluded).
 
 ### T9. Explicit rounding at output
+
+**Status: ✅ Done** (commit `ced12337`) — `format_decimal` rounds once with `MidpointAwayFromZero` then `rescale(2)` (half-up, trailing zeros rendered) instead of the truncating `{:.2}`.
 
 **Problem (MEDIUM, empirically verified)**: `GermanCsvFormatter::format_decimal` uses `format!("{:.2}", value)`, which on `rust_decimal` **truncates** (verified: `0.518 → "0.51"`, `0.015675 → "0.01"`). The shipped sample CSV contains a row whose components don't sum (GOOG: 1.60 + 0.08 + 0.00 vs. total 1.69).
 
@@ -258,6 +264,8 @@ Round **once** per reported figure (components and totals each rounded from full
 **Tests**: `format_decimal(dec!(0.518)) == "0.51"`? No — `"0.52"`. Assert `"0.52"`, `"0.02"` for `0.015675`, `"1.50"` for `1.5`.
 
 ### T10. Cleanup batch (one commit, mechanical)
+
+**Status: ✅ Done** (commit `8d2fda8a`) — all 8 items: `TaxJurisdiction` serde enum (typo → hard error); CSV numeric `N/A` → empty, `notes` escaped, empty dividend quantity, summary block 3-column header + `contracts/csv-output.md`; UTF-8-safe `get(..8)` datetime slice; FOREX-arm `collapsible_match` fix; `/german-tax-*.csv` gitignored; withholding-regex miss → warn+skip; localities `germany` approximation comment. (Pre-existing nightly-clippy lints in untouched files — `broker_statement/mod.rs`, `rebalancing.rs`, `cbr`, `ecb`, `statistics.rs`, `xls/table.rs` — left as out-of-scope.)
 
 1. `jurisdiction` config: replace the `Option<String>` + `Some("germany") | Some("Germany")` match (`config.rs`, `get_tax_country`) with a serde enum `Jurisdiction { Russia, Germany }` (lowercase rename attr) so a typo is a config **error**, not a silent fallback to Russia.
 2. CSV structure (`csv_formatter.rs`): give summary/KAP rows the full 21-column shape (pad with empty fields) or move them to a clearly separated second block after a blank line with their own 3-column header; escape `notes` through `escape_csv`; replace `N/A` in numeric columns with empty fields. Update `contracts/csv-output.md` to match.
