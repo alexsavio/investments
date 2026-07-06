@@ -19,7 +19,7 @@ use crate::types::{Date, Decimal};
 use crate::util;
 
 pub use self::countries::CountryCode;
-use self::foreign_income::{Currency, Deduction, ForeignIncome, IncomeType, PaidTax};
+use self::foreign_income::{Currency, Deduction, ForeignIncome, IncomeType, TaxWithheld};
 
 const SUPPORTED_YEAR: i32 = 2025;
 
@@ -102,7 +102,7 @@ impl TaxStatement {
     pub fn add_dividend_income(
         &mut self, description: &str, date: Date,
         source_from: CountryCode, received_in: CountryCode, currency: &str, currency_rate: Decimal,
-        amount: Decimal, paid_tax: Decimal, local_amount: Decimal, local_paid_tax: Decimal,
+        amount: Decimal, tax_withheld: Decimal, local_amount: Decimal, local_tax_withheld: Decimal,
     ) -> EmptyResult {
         self.add_foreign_income(ForeignIncome {
             type_: IncomeType::Dividend,
@@ -118,7 +118,7 @@ impl TaxStatement {
             amount,
             local_amount,
 
-            paid_tax: Some(PaidTax::new(paid_tax, local_paid_tax)),
+            tax_withheld: Some(TaxWithheld::new(tax_withheld, local_tax_withheld)),
             deduction: None,
 
             controlled_foreign_company: None,
@@ -143,7 +143,7 @@ impl TaxStatement {
             amount,
             local_amount,
 
-            paid_tax: None,
+            tax_withheld: None,
             deduction: None,
 
             controlled_foreign_company: None,
@@ -169,7 +169,7 @@ impl TaxStatement {
             amount,
             local_amount,
 
-            paid_tax: None,
+            tax_withheld: None,
             // Please note that we should always specify this deduction amount - even if it's zero.
             // If it's not specified the income doesn't participate into settlement of losses.
             deduction: Some(Deduction {
@@ -270,7 +270,7 @@ mod tests {
 
         let date = date!(statement.year, 1, 1);
         let amount = dec!(100);
-        let paid_tax = dec!(10);
+        let tax_withheld = dec!(10);
         let purchase_local_cost = dec!(10);
 
         {
@@ -278,7 +278,7 @@ mod tests {
             let currency_rate = dec!(101.6797);
 
             let local_amount = amount * currency_rate;
-            let local_paid_tax = util::round(paid_tax * currency_rate, 2);
+            let local_tax_withheld = util::round(tax_withheld * currency_rate, 2);
 
             // 840 (Соединённые Штаты Америки) - Код страны источника выплаты
             // 840 (Соединённые Штаты Америки) - Код страны зачисления выплаты
@@ -292,7 +292,7 @@ mod tests {
             // 1010 - Дивиденды
             statement.add_dividend_income(
                 "Дивиденд", date, CountryCode::Usa, CountryCode::Russia,
-                currency, currency_rate, amount, paid_tax, local_amount, local_paid_tax).unwrap();
+                currency, currency_rate, amount, tax_withheld, local_amount, local_tax_withheld).unwrap();
         }
 
         struct CurrencyTestCase {

@@ -8,7 +8,7 @@ use crate::currency::converter::CurrencyConverter;
 use crate::formatting;
 use crate::instruments::{InstrumentId, IssuerTaxationType};
 use crate::localities::Country;
-use crate::taxes::{IncomeType, PaidTax, TaxCalculator, Tax};
+use crate::taxes::{IncomeType, Tax, TaxCalculator, TaxWithheld};
 use crate::time::Date;
 
 use super::cash_flows::{CashFlow, CashFlowType};
@@ -21,7 +21,7 @@ pub struct Dividend {
     pub original_issuer: String,
 
     pub amount: Cash,
-    pub paid_tax: Cash, // FIXME(konishchev): Rename to tax_withheld
+    pub tax_withheld: Cash,
     pub taxation_type: IssuerTaxationType,
     pub skip_from_cash_flow: bool,
 }
@@ -32,15 +32,15 @@ impl Dividend {
 
         Ok(match self.taxation_type {
             IssuerTaxationType::Manual{..} => {
-                let paid_tax = converter.convert_to_cash_rounding(self.date, self.paid_tax, country.currency)?;
-                calculator.tax_income(IncomeType::Dividends, self.date.year(), amount, Some(PaidTax {
-                    amount: paid_tax,
+                let tax_withheld = converter.convert_to_cash_rounding(self.date, self.tax_withheld, country.currency)?;
+                calculator.tax_income(IncomeType::Dividends, self.date.year(), amount, Some(TaxWithheld {
+                    amount: tax_withheld,
                     credit_rate_limit: country.tax_credit_rate_limit,
                 }))
             },
             IssuerTaxationType::TaxAgent{..} => {
-                calculator.tax_agent_income(IncomeType::Dividends, self.date.year(), amount, self.paid_tax).map_err(|e| format!(
-                    "{}: {}", self.description(), e))?
+                calculator.tax_agent_income(IncomeType::Dividends, self.date.year(), amount, self.tax_withheld).map_err(|e| format!(
+                    "{}: {e}", self.description()))?
             },
         })
     }
@@ -76,15 +76,15 @@ pub fn process_dividend_accruals(
     let mut cash_flows = Vec::new();
 
     let (amount, dividend_transactions) = accruals.get_result().map_err(|e| format!(
-        "Failed to process {} dividend from {}: {}",
-        issuer, formatting::format_date(dividend.date), e
+        "Failed to process {issuer} dividend at {}: {e}",
+        formatting::format_date(dividend.date),
     ))?;
 
     let tax_id = TaxId::new(dividend.date, dividend.issuer.clone());
-    let (paid_tax, tax_transactions) = taxes.remove(&tax_id).map_or_else(|| Ok((None, Vec::new())), |tax_accruals| {
+    let (tax_withheld, tax_transactions) = taxes.remove(&tax_id).map_or_else(|| Ok((None, Vec::new())), |tax_accruals| {
         tax_accruals.get_result().map_err(|e| format!(
-            "Failed to process {} tax from {}: {}",
-            tax_id.issuer, formatting::format_date(tax_id.date), e))
+            "Failed to process {} tax withholding at {}: {e}",
+            tax_id.issuer, formatting::format_date(tax_id.date)))
     })?;
 
     if cash_flow_details {
@@ -118,14 +118,14 @@ pub fn process_dividend_accruals(
             original_issuer: issuer.to_owned(),
 
             amount: amount,
-            paid_tax: paid_tax.unwrap_or_else(|| Cash::zero(amount.currency)),
+            tax_withheld: tax_withheld.unwrap_or_else(|| Cash::zero(amount.currency)),
             taxation_type: taxation_type,
             skip_from_cash_flow: cash_flow_details,
         }),
         None => {
-            if paid_tax.is_some() {
-                return Err!("Got paid tax for reversed {} dividend from {}",
-                            issuer, formatting::format_date(dividend.date));
+            if tax_withheld.is_some() {
+                return Err!("Got withheld tax for reversed {issuer} dividend at {}",
+                            formatting::format_date(dividend.date));
             }
             None
         },

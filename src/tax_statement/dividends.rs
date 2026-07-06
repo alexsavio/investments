@@ -42,8 +42,8 @@ pub fn process_income(
         total_foreign_amount: MultiCurrencyCashAccount::new(),
         total_amount: Cash::zero(country.currency),
 
-        total_foreign_paid_tax: MultiCurrencyCashAccount::new(),
-        total_paid_tax: Cash::zero(country.currency),
+        total_foreign_tax_withheld: MultiCurrencyCashAccount::new(),
+        total_tax_withheld: Cash::zero(country.currency),
         total_tax_deduction: Cash::zero(country.currency),
         total_tax_to_pay: Cash::zero(country.currency),
 
@@ -79,10 +79,10 @@ struct Row {
 
     #[column(name="Налог")]
     tax: Cash,
-    #[column(name="Уплачено")]
-    foreign_paid_tax: Cash,
-    #[column(name="Уплачено (руб)")]
-    paid_tax: Cash,
+    #[column(name="Удержано")]
+    foreign_tax_withheld: Cash,
+    #[column(name="Удержано (руб)")]
+    tax_withheld: Cash,
     #[column(name="К зачету")]
     tax_deduction: Cash,
     #[column(name="К доплате")]
@@ -113,8 +113,8 @@ struct Processor<'a> {
     total_foreign_amount: MultiCurrencyCashAccount,
     total_amount: Cash,
 
-    total_foreign_paid_tax: MultiCurrencyCashAccount,
-    total_paid_tax: Cash,
+    total_foreign_tax_withheld: MultiCurrencyCashAccount,
+    total_tax_withheld: Cash,
     total_tax_deduction: Cash,
     total_tax_to_pay: Cash,
 
@@ -157,16 +157,16 @@ impl Processor<'_> {
             dividend.date, foreign_amount, self.country.currency)?;
         self.total_amount += amount;
 
-        let foreign_paid_tax = dividend.paid_tax.round();
-        self.total_foreign_paid_tax.deposit(foreign_paid_tax);
-        self.same_currency &= foreign_paid_tax.currency == self.country.currency;
+        let foreign_tax_withheld = dividend.tax_withheld.round();
+        self.total_foreign_tax_withheld.deposit(foreign_tax_withheld);
+        self.same_currency &= foreign_tax_withheld.currency == self.country.currency;
 
         let tax = dividend.tax(self.country, self.converter, self.tax_calculator)?;
-        self.total_paid_tax += tax.paid;
+        self.total_tax_withheld += tax.withheld;
         self.total_tax_deduction += tax.deduction;
         self.total_tax_to_pay += tax.to_pay;
 
-        let income = amount - tax.paid - tax.to_pay;
+        let income = amount - tax.withheld - tax.to_pay;
         self.total_income += income;
 
         self.has_income = true;
@@ -184,8 +184,8 @@ impl Processor<'_> {
             amount,
 
             tax: tax.expected,
-            foreign_paid_tax,
-            paid_tax: tax.paid,
+            foreign_tax_withheld,
+            tax_withheld: tax.withheld,
             tax_deduction: tax.deduction,
             tax_to_pay: tax.to_pay,
             income,
@@ -195,8 +195,8 @@ impl Processor<'_> {
             IssuerTaxationType::Manual {ref country_code} => {
                 self.add_income(
                     dividend, &issuer, country_code.as_deref(),
-                    foreign_amount, precise_currency_rate, foreign_paid_tax,
-                    amount, tax.paid,
+                    foreign_amount, precise_currency_rate, foreign_tax_withheld,
+                    amount, tax.withheld,
                 )?;
             },
             IssuerTaxationType::TaxAgent {auto_detected, ..} => {
@@ -211,8 +211,8 @@ impl Processor<'_> {
 
     fn add_income(
         &mut self, dividend: &Dividend, issuer: &str, income_country: Option<&str>,
-        foreign_amount: Cash, precise_currency_rate: Decimal, foreign_paid_tax: Cash,
-        amount: Cash, paid_tax: Cash,
+        foreign_amount: Cash, precise_currency_rate: Decimal, foreign_tax_withheld: Cash,
+        amount: Cash, tax_withheld: Cash,
     ) -> EmptyResult {
         let broker = &self.broker_statement.broker;
 
@@ -247,10 +247,10 @@ impl Processor<'_> {
             }.traits().code
         };
 
-        if foreign_paid_tax.currency != foreign_amount.currency {
+        if foreign_tax_withheld.currency != foreign_amount.currency {
             return Err!(
                 "{}: Tax currency is different from dividend currency: {} vs {}",
-                dividend.description(), foreign_paid_tax.currency, foreign_amount.currency);
+                dividend.description(), foreign_tax_withheld.currency, foreign_amount.currency);
         }
 
         self.has_income_to_declare = true;
@@ -263,8 +263,8 @@ impl Processor<'_> {
             tax_statement.add_dividend_income(
                 &description, dividend.date, source_from, received_in,
                 foreign_amount.currency, precise_currency_rate,
-                foreign_amount.amount, foreign_paid_tax.amount,
-                amount.amount, paid_tax.amount
+                foreign_amount.amount, foreign_tax_withheld.amount,
+                amount.amount, tax_withheld.amount
             ).map_err(|e| format!(
                 "Unable to add {} to the tax statement: {}", dividend.description(), e
             ))?;
@@ -282,7 +282,7 @@ impl Processor<'_> {
         if self.same_currency {
             table.hide_currency_rate();
             table.hide_amount();
-            table.hide_paid_tax();
+            table.hide_tax_withheld();
         }
 
         let mut totals = table.add_empty_row();
@@ -290,8 +290,8 @@ impl Processor<'_> {
         totals.set_foreign_amount(self.total_foreign_amount);
         totals.set_amount(self.total_amount);
 
-        totals.set_foreign_paid_tax(self.total_foreign_paid_tax);
-        totals.set_paid_tax(self.total_paid_tax);
+        totals.set_foreign_tax_withheld(self.total_foreign_tax_withheld);
+        totals.set_tax_withheld(self.total_tax_withheld);
         totals.set_tax_deduction(self.total_tax_deduction);
         totals.set_tax_to_pay(self.total_tax_to_pay);
         totals.set_income(self.total_income);

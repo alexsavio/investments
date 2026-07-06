@@ -36,7 +36,7 @@ impl Broker {
             Broker::Firstrade => "firstrade",
             Broker::InteractiveBrokers => "interactive-brokers",
             Broker::Open => "open",
-            Broker::Other => "other", // FIXME(konishchev): Support it
+            Broker::Other => "other",
             Broker::Sber => "sber",
             Broker::Tbank => "tbank",
         }

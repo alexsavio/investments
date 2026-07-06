@@ -44,20 +44,20 @@ pub fn parse_dividend(
         return Err!("Got a dividend from {} in an unexpected currency: {}", issuer, income.currency)
     }
 
-    let (amount, paid_tax) = if non_res_tax_withheld {
+    let (amount, tax_withheld) = if non_res_tax_withheld {
         let amount = localities::deduce_us_dividend_amount(date, income);
-        let paid_tax = amount - income;
-        debug_assert_eq!(paid_tax.amount, tax_rate.tax(IncomeType::Dividends, amount.amount));
-        (amount, paid_tax)
+        let tax_withheld = amount - income;
+        debug_assert_eq!(tax_withheld.amount, tax_rate.tax(IncomeType::Dividends, amount.amount));
+        (amount, tax_withheld)
     } else {
         let amount = income;
-        let paid_tax = tax_rate.tax(IncomeType::Dividends, amount.amount);
-        (amount, Cash::new(amount.currency, paid_tax))
+        let tax_withheld = tax_rate.tax(IncomeType::Dividends, amount.amount);
+        (amount, Cash::new(amount.currency, tax_withheld))
     };
 
     let issuer_id = InstrumentId::Symbol(issuer.to_owned());
     parser.statement.dividend_accruals(date, issuer_id.clone(), true).add(date, amount);
-    parser.statement.tax_accruals(date, issuer_id, false).add(date, paid_tax);
+    parser.statement.tax_accruals(date, issuer_id, false).add(date, tax_withheld);
 
     Ok(())
 }

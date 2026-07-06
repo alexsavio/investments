@@ -308,7 +308,7 @@ mod tests {
         }
 
         assert!(!statement.dividends.is_empty());
-        assert!(statement.dividends.iter().any(|dividend| dividend.paid_tax.is_positive()));
+        assert!(statement.dividends.iter().any(|dividend| dividend.tax_withheld.is_positive()));
 
         assert!(!statement.open_positions.is_empty());
         assert!(!statement.instrument_info.is_empty());

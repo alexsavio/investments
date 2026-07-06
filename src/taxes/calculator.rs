@@ -8,7 +8,7 @@ use crate::types::Decimal;
 
 pub struct Tax {
     pub expected: Cash,
-    pub paid: Cash,
+    pub withheld: Cash,
     pub to_pay: Cash,
 
     // The amount by which the tax was reduced due to:
@@ -17,7 +17,7 @@ pub struct Tax {
     pub deduction: Cash,
 }
 
-pub struct PaidTax {
+pub struct TaxWithheld {
     pub amount: Cash,
     pub credit_rate_limit: Option<Decimal>,
 }
@@ -37,21 +37,21 @@ impl TaxCalculator {
 
     // Attention: Modifies calculator state. Must be called only for income that won't be decreased later via deductions
     // or looses balancing.
-    pub fn tax_income(&mut self, income_type: IncomeType, year: i32, income: Cash, paid_tax: Option<PaidTax>) -> Tax {
-        calculate(self.country.jurisdiction, self.year(year), income_type, income, paid_tax)
+    pub fn tax_income(&mut self, income_type: IncomeType, year: i32, income: Cash, tax_withheld: Option<TaxWithheld>) -> Tax {
+        calculate(self.country.jurisdiction, self.year(year), income_type, income, tax_withheld)
     }
 
     // Intended for dividends, tax for which was withheld by tax agent.
-    pub fn tax_agent_income(&mut self, income_type: IncomeType, year: i32, income: Cash, mut paid_tax: Cash) -> GenericResult<Tax> {
-        if paid_tax.currency != self.country.currency {
-            return Err!("Got withheld tax in an unexpected currency: {}", paid_tax.currency)
+    pub fn tax_agent_income(&mut self, income_type: IncomeType, year: i32, income: Cash, mut tax_withheld: Cash) -> GenericResult<Tax> {
+        if tax_withheld.currency != self.country.currency {
+            return Err!("Got withheld tax in an unexpected currency: {}", tax_withheld.currency)
         }
 
-        let orig_paid_tax = paid_tax;
-        paid_tax.amount = taxes::round_tax(paid_tax.amount, self.country.jurisdiction.traits().tax_precision);
+        let orig_tax_withheld = tax_withheld;
+        tax_withheld.amount = taxes::round_tax(tax_withheld.amount, self.country.jurisdiction.traits().tax_precision);
 
-        if orig_paid_tax != paid_tax {
-            return Err!("Got an unexpected withheld tax: {} vs {}", orig_paid_tax, paid_tax);
+        if orig_tax_withheld != tax_withheld {
+            return Err!("Got an unexpected withheld tax: {orig_tax_withheld} vs {tax_withheld}");
         }
 
         // Please note the following:
@@ -64,21 +64,21 @@ impl TaxCalculator {
         //
         // 2. In case of progressive tax rates the withheld tax may be calculated using lower tax rate, as broker
         // doesn't know total client's income. We try to workaround the case: tax the income using lowest tax rate and
-        // if the result is equal to or less than the paid tax, assume that there is no special case here, so we can tax
-        // the dividend using our calculator which are aware of actual total tax base.
+        // if the result is equal to or less than the withheld tax, assume that there is no special case here, so we can
+        // tax the dividend using our calculator which are aware of actual total tax base.
 
-        let tax = self.tax_income(income_type, year, income, Some(PaidTax {
-            amount: paid_tax,
+        let tax = self.tax_income(income_type, year, income, Some(TaxWithheld {
+            amount: tax_withheld,
             credit_rate_limit: None,
         }));
 
         // This call increases total tax base which we should do in both cases
         let lowest_tax = Cash::new(income.currency, self.country.tax_agent_rate(year).tax(income_type, income.amount));
-        if paid_tax < lowest_tax || paid_tax > tax.expected {
+        if tax_withheld < lowest_tax || tax_withheld > tax.expected {
             return Ok(Tax {
-                expected: paid_tax,
-                paid: paid_tax,
-                deduction: paid_tax,
+                expected: tax_withheld,
+                withheld: tax_withheld,
+                deduction: tax_withheld,
                 to_pay: Cash::zero(self.country.currency),
             });
         }
@@ -97,13 +97,13 @@ impl TaxCalculator {
         let full = calculate(country, &mut dry_run_calc, income_type, income, None);
         let real = calculate(country, calc, income_type, taxable_income, None);
 
-        assert!(real.paid.is_zero());
+        assert!(real.withheld.is_zero());
         assert_eq!(real.to_pay, real.expected);
         assert!(real.expected <= full.expected);
 
         Tax {
             expected: full.expected,
-            paid: real.paid,
+            withheld: real.withheld,
             deduction: full.expected - real.to_pay,
             to_pay: real.to_pay,
         }
@@ -120,13 +120,13 @@ impl TaxCalculator {
         let full = calculate(country, &mut full_calc, income_type, income, None);
         let real = calculate(country, &mut real_calc, income_type, taxable_income, None);
 
-        assert!(real.paid.is_zero());
+        assert!(real.withheld.is_zero());
         assert_eq!(real.to_pay, real.expected);
         assert!(real.expected <= full.expected);
 
         Tax {
             expected: full.expected,
-            paid: real.paid,
+            withheld: real.withheld,
             deduction: full.expected - real.to_pay,
             to_pay: real.to_pay,
         }
@@ -139,25 +139,25 @@ impl TaxCalculator {
 
 fn calculate(
     jurisdiction: Jurisdiction, calc: &mut Box<dyn TaxRate>,
-    income_type: IncomeType, income: Cash, paid_tax: Option<PaidTax>,
+    income_type: IncomeType, income: Cash, tax_withheld: Option<TaxWithheld>,
 ) -> Tax {
     let country = jurisdiction.traits();
 
     assert_eq!(income.currency, country.currency);
     let expected = calc.tax(income_type, income.amount);
 
-    let (paid, to_pay) = if let Some(paid_tax) = paid_tax {
-        assert!(!paid_tax.amount.is_negative());
-        assert_eq!(paid_tax.amount.currency, country.currency);
+    let (withheld, to_pay) = if let Some(tax_withheld) = tax_withheld {
+        assert!(!tax_withheld.amount.is_negative());
+        assert_eq!(tax_withheld.amount.currency, country.currency);
 
-        let mut credited_tax = paid_tax.amount.amount;
-        if let Some(credit_rate_limit) = paid_tax.credit_rate_limit {
+        let mut credited_tax = tax_withheld.amount.amount;
+        if let Some(credit_rate_limit) = tax_withheld.credit_rate_limit {
             let credited_tax_limit = std::cmp::max(dec!(0), income.amount * credit_rate_limit);
             credited_tax = std::cmp::min(credited_tax, credited_tax_limit);
         }
 
         (
-            paid_tax.amount.amount,
+            tax_withheld.amount.amount,
             std::cmp::max(dec!(0), expected - taxes::round_tax(credited_tax, country.tax_precision))
         )
     } else {
@@ -166,7 +166,7 @@ fn calculate(
 
     Tax {
         expected: Cash::new(country.currency, expected),
-        paid: Cash::new(country.currency, paid),
+        withheld: Cash::new(country.currency, withheld),
         deduction: Cash::new(country.currency, expected - to_pay),
         to_pay: Cash::new(country.currency, to_pay),
     }

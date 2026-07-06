@@ -62,21 +62,21 @@ impl CashFlow {
             },
 
             "Зачисление дивидендов" => {
-                let (issuer_id, paid_tax) = parse_dividend_description(&self.description).ok_or_else(|| format!(
+                let (issuer_id, tax_withheld) = parse_dividend_description(&self.description).ok_or_else(|| format!(
                     "Unsupported dividend description: {:?}", self.description))?;
 
                 let mut amount = util::validate_named_cash(
                     "dividend amount", currency, amount,
                     DecimalRestrictions::StrictlyPositive)?;
 
-                if let Some(paid_tax) = paid_tax {
-                    if paid_tax.currency != amount.currency {
+                if let Some(tax_withheld) = tax_withheld {
+                    if tax_withheld.currency != amount.currency {
                         return Err!(
-                            "Got paid tax for {} dividend ({}) in an unexpected currency: {} vs {}",
-                            issuer_id, formatting::format_date(date), paid_tax.currency, amount.currency);
+                            "Got withheld tax for {issuer_id} dividend ({}) in an unexpected currency: {} vs {}",
+                            formatting::format_date(date), tax_withheld.currency, amount.currency);
                     }
-                    amount += paid_tax;
-                    statement.tax_accruals(date, issuer_id.clone(), true).add(date, paid_tax);
+                    amount += tax_withheld;
+                    statement.tax_accruals(date, issuer_id.clone(), true).add(date, tax_withheld);
                 }
 
                 statement.dividend_accruals(date, issuer_id, true).add(date, amount);
@@ -96,7 +96,7 @@ fn parse_dividend_description(description: &str) -> Option<(InstrumentId, Option
         static ref ORDINARY_DIVIDEND_REGEX: Regex = Regex::new(&format!(concat!(
             r"^Начисление дивидендов: количество {quantity}, ",
             r"ставка {amount} (?P<currency>{currency}), ",
-            r"удержан налог эмитентом (?P<paid_tax>{amount}), ",
+            r"удержан налог эмитентом (?P<tax_withheld>{amount}), ",
             r"{issuer_type}, {issuer_name}, (?P<isin>{isin}), дата среза {date}$",
         ), quantity=r"\d+", amount=AMOUNT_REGEX, currency=r"[A-Z]{3}",
            issuer_type=r"[^,]+", issuer_name=r"[^,]+(?:, [^,]+)?", isin=ISIN_REGEX,
@@ -112,17 +112,17 @@ fn parse_dividend_description(description: &str) -> Option<(InstrumentId, Option
     if let Some(captures) = ORDINARY_DIVIDEND_REGEX.captures(description) {
         let currency = captures.name("currency").unwrap().as_str();
 
-        let (isin, paid_tax) = match (
+        let (isin, tax_withheld) = match (
             parse_isin(captures.name("isin").unwrap().as_str()),
-            Decimal::from_str(captures.name("paid_tax").unwrap().as_str()),
+            Decimal::from_str(captures.name("tax_withheld").unwrap().as_str()),
         ) {
-            (Ok(isin), Ok(paid_tax)) => (isin, paid_tax),
+            (Ok(isin), Ok(tax_withheld)) => (isin, tax_withheld),
             _ => return None,
         };
 
         Some((
             InstrumentId::Isin(isin),
-            Some(Cash::new(currency, paid_tax)),
+            Some(Cash::new(currency, tax_withheld)),
         ))
     } else if let Some(captures) = DEPOSITARY_RECEIPT_REGEX.captures(description) {
         let issuer = captures.name("issuer").unwrap().as_str();
@@ -138,7 +138,7 @@ mod tests {
     use super::*;
 
     #[allow(clippy::useless_concat)]
-    #[rstest(description, issuer_id, paid_tax,
+    #[rstest(description, issuer_id, tax_withheld,
         case(concat!(
             "Начисление дивидендов: количество 1, ставка 0.42 USD, удержан налог эмитентом 0.04, ",
             "АО, The Coca-Cola Company, US1912161007, дата среза 15.06.2021"
@@ -158,7 +158,7 @@ mod tests {
             "комиссия платежного агента <0.20> долларов",
         ), InstrumentId::InternalId(s!("BRITISH AMERN TOB PLC-ADR")), None),
     )]
-    fn dividend_description_parsing(description: &str, issuer_id: InstrumentId, paid_tax: Option<Cash>) {
-        assert_eq!(parse_dividend_description(description), Some((issuer_id, paid_tax)));
+    fn dividend_description_parsing(description: &str, issuer_id: InstrumentId, tax_withheld: Option<Cash>) {
+        assert_eq!(parse_dividend_description(description), Some((issuer_id, tax_withheld)));
     }
 }

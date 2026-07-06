@@ -31,7 +31,7 @@ pub struct ForeignIncome {
     pub local_amount: Decimal,
 
     #[serde(flatten, serialize_with = "serialize_with_default")]
-    pub paid_tax: Option<PaidTax>,
+    pub tax_withheld: Option<TaxWithheld>,
     #[serde(flatten, serialize_with = "serialize_with_default")]
     pub deduction: Option<Deduction>,
 
@@ -108,9 +108,9 @@ impl Currency {
 }
 
 #[derive(Debug, Default, Serialize)]
-pub struct PaidTax {
+pub struct TaxWithheld {
     #[serde(rename = "TaxRate")]
-    pub tax_rate: u8,
+    pub rate: u8,
 
     #[serde(rename = "TaxCurrencySum", serialize_with = "serialize_decimal")]
     pub amount: Decimal,
@@ -119,10 +119,10 @@ pub struct PaidTax {
     pub local_amount: Decimal,
 }
 
-impl PaidTax {
-    pub fn new(amount: Decimal, local_amount: Decimal) -> PaidTax {
-        PaidTax {
-            tax_rate: 0, // Don't know what to do with it – it's always zero
+impl TaxWithheld {
+    pub fn new(amount: Decimal, local_amount: Decimal) -> TaxWithheld {
+        TaxWithheld {
+            rate: 0, // Don't know what to do with it – it's always zero
             amount,
             local_amount,
         }
@@ -147,5 +147,5 @@ pub struct ControlledForeignCompany {
     number: &'static str,
 
     #[serde(rename = "TaxKIKHoldRF", serialize_with = "serialize_decimal")]
-    paid_tax: Decimal,
+    tax_withheld: Decimal,
 }

@@ -147,8 +147,8 @@ impl CashFlowMapper {
             issuer: issuer.clone(),
         }));
 
-        if !dividend.paid_tax.is_zero() {
-            self.cash_flow(statement, &CashFlowDetails::new(date, -dividend.paid_tax, CashFlowType::Tax {
+        if !dividend.tax_withheld.is_zero() {
+            self.cash_flow(statement, &CashFlowDetails::new(date, -dividend.tax_withheld, CashFlowType::Tax {
                 date: dividend.date,
                 issuer: issuer.clone(),
             }));

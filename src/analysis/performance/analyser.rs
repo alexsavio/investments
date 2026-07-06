@@ -373,14 +373,14 @@ impl <'a> PortfolioPerformanceAnalyser<'a> {
 
         for dividend in &statement.dividends {
             let income = self.converter.convert_to(dividend.date, dividend.amount, self.currency)?;
-            let paid_tax = self.converter.convert_to(dividend.date, dividend.paid_tax, self.currency)?;
+            let tax_withheld = self.converter.convert_to(dividend.date, dividend.tax_withheld, self.currency)?;
 
             self.get_deposit_view(&dividend.issuer).transaction(dividend.date.into(), -income);
             self.income_structure.dividends += income;
 
             if tax_aware {
-                self.get_deposit_view(&dividend.issuer).transaction(dividend.date.into(), paid_tax);
-                self.income_structure.dividend_taxes += paid_tax;
+                self.get_deposit_view(&dividend.issuer).transaction(dividend.date.into(), tax_withheld);
+                self.income_structure.dividend_taxes += tax_withheld;
             }
 
             if tax_aware {

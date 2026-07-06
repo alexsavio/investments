@@ -16,10 +16,10 @@ pub struct Country {
     tax_rates: Rc<BTreeMap<i32, Box<dyn TaxRate>>>,
     tax_agent_rates: Rc<BTreeMap<i32, Box<dyn TaxRate>>>,
 
-    // When foreign broker withholds tax from dividends, Russian investors can credit this witheld tax due to the
+    // When foreign broker withholds tax from dividends, Russian investors can credit this withheld tax due to the
     // agreement on avoidance of double taxation.
     //
-    // Until 2024 foreign witheld tax was limited by 10%, but starting from mid 2024 it may be up to 30%. Though
+    // Until 2024 foreign withheld tax was limited by 10%, but starting from mid 2024 it may be up to 30%. Though
     // theoretically it's possible to credit it (https://sergeynaumov.com/offset-of-tax-on-dividends/), there is a
     // problem with crediting anything more than 13% (up to effective progressive tax rate) because of the current tax
     // calculation scheme in Russia:
