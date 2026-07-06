@@ -10,7 +10,7 @@ use crate::core::GenericResult;
 #[cfg(test)] use crate::currency::Cash;
 use crate::exchanges::Exchange;
 use crate::formats::xls::{self, XlsTableRow, SheetReader, SheetParser, TableReader, SkipCell};
-use crate::http;
+use crate::network::http;
 use crate::types::Decimal;
 use crate::util::{self, DecimalRestrictions};
 

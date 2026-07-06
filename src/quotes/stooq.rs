@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::exchanges::Exchange;
-use crate::http;
+use crate::network::http;
 use crate::time::{Date, Period};
 use crate::util::{self, DecimalRestrictions};
 

@@ -12,7 +12,7 @@ use reqwest::blocking::{Client, Response};
 
 use crate::core::{EmptyResult, GenericResult};
 use crate::formats::xls::{self, XlsTableRow, SheetReader, SheetParser, TableReader, RawRowType, Cell, SkipCell};
-use crate::http;
+use crate::network::http;
 use crate::time::{self, Date};
 use crate::types::Decimal;
 

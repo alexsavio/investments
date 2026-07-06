@@ -8,7 +8,7 @@ use serde::Deserialize;
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::forex;
-use crate::http;
+use crate::network::http;
 use crate::time;
 use crate::util::{self, DecimalRestrictions};
 use crate::types::Decimal;

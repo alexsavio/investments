@@ -15,7 +15,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use tonic::{Status, Code};
 use tonic::service::interceptor::InterceptedService;
-use tonic::transport::{Channel, ClientTlsConfig};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 
 use api::{
     InstrumentsRequest, InstrumentStatus, RealExchange, GetLastPricesRequest, GetCandlesRequest, CandleInterval,
@@ -28,6 +28,7 @@ use crate::core::{GenericResult, EmptyResult};
 use crate::currency::Cash;
 use crate::exchanges::Exchange;
 use crate::{forex, formatting};
+use crate::network::certificates;
 use crate::proto;
 use crate::time::{self, Date, TzDateTime, SystemTime, TimeZone, Period};
 use crate::types::Decimal;
@@ -82,11 +83,15 @@ impl Tbank {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap();
 
+        let tls_config = ClientTlsConfig::new()
+            .with_native_roots()
+            .ca_certificate(Certificate::from_pem(certificates::RUSSIAN_TRUSTED_ROOT_CA));
+
         let channel = runtime.block_on(async {
-            Channel::from_static("https://sandbox-invest-public-api.tinkoff.ru")
+            Channel::from_static("https://sandbox-invest-public-api.tbank.ru")
                 .connect_timeout(CONNECT_TIMEOUT)
                 .timeout(REQUEST_TIMEOUT)
-                .tls_config(ClientTlsConfig::new().with_native_roots())
+                .tls_config(tls_config)
                 .map(|endpoint| endpoint.connect_lazy())
         }).map_err(|e| format!("T-Bank client: {e}"))?;
 

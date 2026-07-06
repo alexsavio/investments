@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::exchanges::Exchange;
-use crate::http;
+use crate::network::http;
 use crate::rate_limiter::RateLimiter;
 use crate::util::{self, DecimalRestrictions};
 use crate::types::Decimal;
