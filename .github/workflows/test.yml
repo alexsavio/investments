@@ -43,6 +43,7 @@ jobs:
         --skip broker_statement::ib::confirmation::tests::parse_real
         --skip broker_statement::ib::tests::parse_real
         --skip broker_statement::open::tests::parse_real
+        --skip broker_statement::other::tests::parse_real
         --skip broker_statement::sber::tests::parse_real
         --skip broker_statement::tbank::tests::parse_real
         --skip broker_statement::tbank::foreign_income::tests::parse_real
