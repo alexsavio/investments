@@ -758,12 +758,14 @@ fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, lin
             };
             let gain_amount = Cash::new(&line.currency, line.amount);
 
-            // Classify by the converted currency's balance sign, not by trade magnitude.
+            // Classify by the converted currency's balance sign, not by trade magnitude. The line's
+            // own currency is the account base (the P&L is the "Net Amount in Base"); a negative
+            // base balance is an ordinary home-currency margin loan, not a Fremdwährungskredit, so
+            // drop the base leg and let only a borrowed FOREIGN currency exempt the disposal. With
+            // no foreign leg left, fx_is_margin_loan fails open to taxable.
             let mut currencies: Vec<&str> =
                 line.symbol.split('.').filter(|c| c.len() == 3).collect();
-            if currencies.is_empty() {
-                currencies.push(line.currency.as_str());
-            }
+            currencies.retain(|c| *c != line.currency);
             let is_margin_loan =
                 fx_is_margin_loan(balances, &currencies, &line.activity_description);
 
@@ -1081,8 +1083,9 @@ fn parse_stock_grant(statement: &mut PartialBrokerStatement, grant: &StockGrantA
 }
 
 fn parse_flex_date(date_str: &str) -> GenericResult<Date> {
-    // Format: YYYYMMDD
-    if date_str.len() != 8 {
+    // Format: YYYYMMDD. Require 8 ASCII digits so the byte slices below can never split a
+    // multi-byte UTF-8 sequence and panic on malformed input.
+    if date_str.len() != 8 || !date_str.bytes().all(|b| b.is_ascii_digit()) {
         return Err!("Invalid date format: {}", date_str);
     }
 
@@ -1110,6 +1113,18 @@ fn parse_flex_datetime(datetime_str: &str) -> GenericResult<Date> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A malformed date whose bytes total 8 but split a multi-byte UTF-8 character must error, not
+    /// panic on a byte slice landing inside that character.
+    #[test]
+    fn parse_flex_date_rejects_multibyte_without_panicking() {
+        assert!(parse_flex_date("202¼315").is_err());
+        assert!(parse_flex_date("2025031").is_err());
+        assert_eq!(
+            parse_flex_date("20250315").unwrap(),
+            Date::from_ymd_opt(2025, 3, 15).unwrap()
+        );
+    }
 
     /// The parser must not ingest the same income twice when both StmtFunds and CashTransactions
     /// are present (the docs tell users to enable both), must treat a negative dividend as a
@@ -1212,6 +1227,54 @@ mod tests {
         assert!(
             !partial.fx_gains[0].is_margin_loan,
             "a positive-balance conversion is a taxable disposal, not a margin-loan repayment",
+        );
+    }
+
+    /// Build a statement whose only FX event is a StmtFunds FOREX row (no FxTransactions section,
+    /// so the fallback path runs). `line.currency` = EUR is the account base; the pair is EUR.USD.
+    fn stmtfunds_forex_fixture(eur_start: &str, usd_start: &str) -> PartialBrokerStatement {
+        let data = format!(
+            r#"<FlexQueryResponse queryName="german-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20240101" toDate="20241231">
+      <CashReport>
+        <CashReportCurrency currency="EUR" startingCash="{eur_start}" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
+        <CashReportCurrency currency="USD" startingCash="{usd_start}" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <StmtFunds>
+        <StatementOfFundsLine currency="EUR" date="20240601" activityCode="FOREX" activityDescription="Net Amount in Base from Forex Trade: 5000.00 EUR.USD" symbol="EUR.USD" amount="50" levelOfDetail="BaseCurrency"/>
+      </StmtFunds>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>"#
+        );
+        FlexQueryResponse::parse(data.as_bytes()).unwrap()
+    }
+
+    /// StmtFunds fallback: a negative *base* (EUR) balance is an ordinary home-currency margin
+    /// loan, NOT a Fremdwährungskredit. The USD disposal must stay taxable — only a borrowed
+    /// FOREIGN currency exempts the conversion.
+    ///
+    /// Enabled by T7 (balance-based FX classification), fixed to exclude the base leg.
+    #[test]
+    fn stmtfunds_forex_negative_base_balance_is_still_taxable() {
+        let partial = stmtfunds_forex_fixture("-1000", "1000");
+        assert_eq!(partial.fx_gains.len(), 1);
+        assert!(
+            !partial.fx_gains[0].is_margin_loan,
+            "a borrowed base currency must not exempt a foreign-currency disposal",
+        );
+    }
+
+    /// StmtFunds fallback: a borrowed FOREIGN currency (negative USD) is a genuine
+    /// Fremdwährungskredit repayment — non-taxable.
+    #[test]
+    fn stmtfunds_forex_negative_foreign_balance_is_margin_loan() {
+        let partial = stmtfunds_forex_fixture("1000", "-1000");
+        assert_eq!(partial.fx_gains.len(), 1);
+        assert!(
+            partial.fx_gains[0].is_margin_loan,
+            "converting to repay a borrowed foreign currency is a margin-loan repayment",
         );
     }
 
