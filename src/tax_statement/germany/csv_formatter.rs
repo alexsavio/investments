@@ -439,17 +439,17 @@ impl GermanCsvFormatter {
         let groups = [
             (
                 "AKTIENFONDS",
-                "Aktienfonds (equity, 30% Teilfreistellung)",
+                "Aktienfonds (equity 30% Teilfreistellung)",
                 &statement.kap_inv_equity,
             ),
             (
                 "MISCHFONDS",
-                "Mischfonds (mixed, 15% Teilfreistellung)",
+                "Mischfonds (mixed 15% Teilfreistellung)",
                 &statement.kap_inv_mixed,
             ),
             (
                 "SONSTIGE",
-                "Sonstige Fonds (bond/other, 0% Teilfreistellung)",
+                "Sonstige Fonds (bond/other 0% Teilfreistellung)",
                 &statement.kap_inv_other,
             ),
         ];
@@ -691,5 +691,32 @@ mod tests {
             Some(""),
             "quantity cell should be empty"
         );
+    }
+
+    /// KAP-INV rows live in the summary block, whose header declares 3 columns
+    /// (`summary_key,label,value_eur`). The group labels must not carry their own commas or each
+    /// row splits into 4+ fields, breaking any comma-delimited import of the block.
+    #[test]
+    fn kap_inv_rows_are_three_columns() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.kap_inv_equity.distributions = dec!(700);
+        statement.kap_inv_mixed.sale_gains = dec!(120.5);
+        statement.kap_inv_other.sale_losses = dec!(40);
+
+        let output = render(|w| GermanCsvFormatter::write_kap_inv_section(w, &statement));
+        let kap_rows: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("KAP_INV_"))
+            .collect();
+
+        assert_eq!(kap_rows.len(), 9, "three groups × three figures");
+        for row in kap_rows {
+            assert_eq!(
+                row.split(',').count(),
+                3,
+                "KAP-INV row must stay within the summary block's 3 columns: {row}"
+            );
+        }
     }
 }
