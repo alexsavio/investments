@@ -46,7 +46,13 @@ impl RecordParser for WithholdingTaxParser {
         let issuer = match parse_tax_description(description) {
             Ok(issuer) => issuer,
             Err(e) => {
-                log::warn!("Skipping withholding tax row: {e}");
+                // Skipping the row drops its foreign withholding tax, which understates the
+                // creditable foreign tax and overstates German tax due. Name the amount and the
+                // consequence so the credit can be added manually instead of vanishing silently.
+                let amount = record.get_value("Amount").unwrap_or("?");
+                log::warn!(
+                    "Skipping an unrecognized withholding-tax row ({e}); its {currency} {amount} \
+                     foreign tax will not be credited — review the statement and add it manually.");
                 return Ok(());
             }
         };
