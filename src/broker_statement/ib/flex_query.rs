@@ -1140,8 +1140,24 @@ mod tests {
         let partial = FlexQueryResponse::parse(&data).unwrap();
 
         // The single credit-interest event appears in both StmtFunds (CINT) and CashTransactions
-        // (Broker Interest Received). Dividends/withholding share this code path.
+        // (Broker Interest Received). With the StmtFunds section actually parsed, this assertion is
+        // load-bearing: the CINT line is ingested unless the per-type dedup skip suppresses it.
         assert_eq!(partial.idle_cash_interest.len(), 1, "interest double-counted");
+
+        // The MSFT dividend also appears in both sections and shares the dedup code path. Assert the
+        // net amount (not just the key count) so a double-count — which would sum to 20 USD under
+        // the same DividendId — is caught.
+        let msft_dividend = partial
+            .dividend_accruals
+            .iter()
+            .find(|(id, _)| id.issuer == InstrumentId::Symbol("MSFT".to_string()))
+            .map(|(_, accruals)| accruals.clone().get_result().unwrap().0)
+            .expect("MSFT dividend accrual missing");
+        assert_eq!(
+            msft_dividend,
+            Some(Cash::new("USD", dec!(10))),
+            "MSFT dividend double-counted across StmtFunds and CashTransactions",
+        );
 
         // The BASE_SUMMARY aggregate row must not become a phantom currency balance.
         assert!(

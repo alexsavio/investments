@@ -9,11 +9,11 @@
         <Trade currency="USD" symbol="TSLA" isin="US88160R1014" description="TESLA INC" assetCategory="STK" dateTime="20240520;100000" settleDate="20240522" quantity="10" tradePrice="100" tradeMoney="-1000" ibCommission="0" buySell="BUY" openCloseIndicator="O" tradeID="1"/>
         <Trade currency="USD" symbol="TSLA" isin="US88160R1014" description="TESLA INC" assetCategory="STK" dateTime="20240520;100000" settleDate="20240522" quantity="-10" tradePrice="100" tradeMoney="1000" ibCommission="0" buySell="BUY (Ca.)" openCloseIndicator="O" tradeID="2" origTradeID="1"/>
       </Trades>
-      <StatementOfFunds>
+      <StmtFunds>
         <StatementOfFundsLine currency="USD" date="20240701" activityCode="CINT" activityDescription="USD CREDIT INT" amount="5" levelOfDetail="BaseCurrency"/>
         <StatementOfFundsLine currency="USD" date="20240815" activityCode="DIV" activityDescription="MSFT CASH DIVIDEND" symbol="MSFT" isin="US5949181045" amount="10" levelOfDetail="BaseCurrency"/>
         <StatementOfFundsLine currency="USD" date="20240815" activityCode="FRTAX" activityDescription="MSFT WITHHOLDING" symbol="MSFT" isin="US5949181045" amount="-1.5" levelOfDetail="BaseCurrency"/>
-      </StatementOfFunds>
+      </StmtFunds>
       <CashTransactions>
         <CashTransaction currency="USD" description="USD CREDIT INT" dateTime="20240701;235959" amount="5" type="Broker Interest Received"/>
         <CashTransaction currency="USD" symbol="MSFT" isin="US5949181045" description="MSFT CASH DIVIDEND" dateTime="20240815;235959" amount="10" type="Dividends"/>
