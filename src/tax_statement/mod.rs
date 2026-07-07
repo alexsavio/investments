@@ -205,7 +205,7 @@ fn generate_german_tax_statement(
             .map_err(|e| format!("Failed to create output file {path:?}: {e}"))?;
         let mut writer = BufWriter::new(file);
 
-        germany::GermanCsvFormatter::write(&statement, &mut writer)?;
+        germany::CsvFormatter::write(&statement, &mut writer)?;
 
         println!(
             "{}",

@@ -16,9 +16,9 @@ use super::statement::{
 };
 
 /// CSV formatter for German tax statements.
-pub struct GermanCsvFormatter;
+pub struct CsvFormatter;
 
-impl GermanCsvFormatter {
+impl CsvFormatter {
     /// Write the complete tax statement to CSV format.
     pub fn write<W: Write>(statement: &GermanTaxStatement, writer: &mut W) -> GenericResult<()> {
         // Write header row
@@ -538,11 +538,11 @@ mod tests {
     /// truncates (0.518 → "0.51"), understating or overstating cents on the tax form.
     #[test]
     fn format_decimal_rounds_half_up_to_two_places() {
-        assert_eq!(GermanCsvFormatter::format_decimal(dec!(0.518)), "0.52");
-        assert_eq!(GermanCsvFormatter::format_decimal(dec!(0.015675)), "0.02");
-        assert_eq!(GermanCsvFormatter::format_decimal(dec!(1.5)), "1.50");
-        assert_eq!(GermanCsvFormatter::format_decimal(dec!(2)), "2.00");
-        assert_eq!(GermanCsvFormatter::format_decimal(dec!(-0.125)), "-0.13");
+        assert_eq!(CsvFormatter::format_decimal(dec!(0.518)), "0.52");
+        assert_eq!(CsvFormatter::format_decimal(dec!(0.015675)), "0.02");
+        assert_eq!(CsvFormatter::format_decimal(dec!(1.5)), "1.50");
+        assert_eq!(CsvFormatter::format_decimal(dec!(2)), "2.00");
+        assert_eq!(CsvFormatter::format_decimal(dec!(-0.125)), "-0.13");
     }
 
     const COLUMNS: usize = 21;
@@ -563,7 +563,7 @@ mod tests {
     fn transaction_rows_are_21_columns_without_na() {
         let rows = [
             render(|w| {
-                GermanCsvFormatter::write_interest_row(
+                CsvFormatter::write_interest_row(
                     w,
                     &InterestEntry {
                         payment_date: date(),
@@ -582,7 +582,7 @@ mod tests {
                 )
             }),
             render(|w| {
-                GermanCsvFormatter::write_fx_gain_row(
+                CsvFormatter::write_fx_gain_row(
                     w,
                     &FxGainEntry {
                         transaction_date: date(),
@@ -599,7 +599,7 @@ mod tests {
                 )
             }),
             render(|w| {
-                GermanCsvFormatter::write_fee_row(
+                CsvFormatter::write_fee_row(
                     w,
                     &FeeEntry {
                         date: date(),
@@ -610,7 +610,7 @@ mod tests {
                 )
             }),
             render(|w| {
-                GermanCsvFormatter::write_stock_grant_row(
+                CsvFormatter::write_stock_grant_row(
                     w,
                     &StockGrantEntry {
                         vest_date: date(),
@@ -624,7 +624,7 @@ mod tests {
                 )
             }),
             render(|w| {
-                GermanCsvFormatter::write_cash_grant_row(
+                CsvFormatter::write_cash_grant_row(
                     w,
                     &CashGrantEntry {
                         date: date(),
@@ -635,7 +635,7 @@ mod tests {
                 )
             }),
             render(|w| {
-                GermanCsvFormatter::write_corporate_action_row(
+                CsvFormatter::write_corporate_action_row(
                     w,
                     &CorporateActionEntry {
                         date: date(),
@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn dividend_quantity_cell_is_empty() {
         let row = render(|w| {
-            GermanCsvFormatter::write_dividend_row(
+            CsvFormatter::write_dividend_row(
                 w,
                 &DividendEntry {
                     payment_date: date(),
@@ -698,7 +698,7 @@ mod tests {
     /// double-counts or misses figures.
     #[test]
     fn gross_value_lands_in_the_named_column() {
-        let header = render(|w| GermanCsvFormatter::write_header(w));
+        let header = render(|w| CsvFormatter::write_header(w));
         let columns: Vec<String> = header.split(',').map(str::to_string).collect();
         let cell = |row: &str, name: &str| -> String {
             let idx = columns
@@ -709,7 +709,7 @@ mod tests {
         };
 
         let capital_gain = render(|w| {
-            GermanCsvFormatter::write_capital_gain_row(
+            CsvFormatter::write_capital_gain_row(
                 w,
                 &CapitalGainEntry {
                     transaction_date: date(),
@@ -738,7 +738,7 @@ mod tests {
         assert_eq!(cell(&capital_gain, "gross_amount_eur"), "");
 
         let dividend = render(|w| {
-            GermanCsvFormatter::write_dividend_row(
+            CsvFormatter::write_dividend_row(
                 w,
                 &DividendEntry {
                     payment_date: date(),
@@ -764,7 +764,7 @@ mod tests {
         assert_eq!(cell(&dividend, "gross_gain_loss_eur"), "");
 
         let interest = render(|w| {
-            GermanCsvFormatter::write_interest_row(
+            CsvFormatter::write_interest_row(
                 w,
                 &InterestEntry {
                     payment_date: date(),
@@ -786,7 +786,7 @@ mod tests {
         assert_eq!(cell(&interest, "gross_gain_loss_eur"), "");
 
         let fx = render(|w| {
-            GermanCsvFormatter::write_fx_gain_row(
+            CsvFormatter::write_fx_gain_row(
                 w,
                 &FxGainEntry {
                     transaction_date: date(),
@@ -812,7 +812,7 @@ mod tests {
     #[test]
     fn corporate_action_cell_is_escaped_as_a_unit() {
         let row = render(|w| {
-            GermanCsvFormatter::write_corporate_action_row(
+            CsvFormatter::write_corporate_action_row(
                 w,
                 &CorporateActionEntry {
                     date: date(),
@@ -843,7 +843,7 @@ mod tests {
         statement.kap_inv_mixed.sale_gains = dec!(120.5);
         statement.kap_inv_other.sale_losses = dec!(40);
 
-        let output = render(|w| GermanCsvFormatter::write_kap_inv_section(w, &statement));
+        let output = render(|w| CsvFormatter::write_kap_inv_section(w, &statement));
         let kap_rows: Vec<&str> = output
             .lines()
             .filter(|line| line.starts_with("KAP_INV_"))

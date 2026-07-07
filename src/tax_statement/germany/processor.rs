@@ -914,7 +914,7 @@ fn process_corporate_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tax_statement::germany::{GermanCsvFormatter, GermanTaxStatement};
+    use crate::tax_statement::germany::{CsvFormatter, GermanTaxStatement};
     use crate::taxes::germany::TeilfreistellungRate;
 
     #[test]
@@ -1055,7 +1055,7 @@ mod tests {
 
         // Generate CSV output
         let mut csv_output = Vec::new();
-        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv_string = String::from_utf8(csv_output).unwrap();
 
         // Verify CSV structure
@@ -1259,8 +1259,7 @@ mod tests {
 
         // Generate CSV output
         let mut csv_output = Vec::new();
-        super::super::csv_formatter::GermanCsvFormatter::write(&statement, &mut csv_output)
-            .unwrap();
+        super::super::csv_formatter::CsvFormatter::write(&statement, &mut csv_output).unwrap();
 
         let elapsed = start.elapsed();
 
@@ -1442,7 +1441,7 @@ mod tests {
 
         // Generate CSV output and verify FX rows exist
         let mut csv_output = Vec::new();
-        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv_string = String::from_utf8(csv_output).unwrap();
 
         // Check FX gain/loss rows exist
@@ -1544,7 +1543,7 @@ mod tests {
 
         // Generate CSV and verify fee rows exist
         let mut csv_output = Vec::new();
-        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv_string = String::from_utf8(csv_output).unwrap();
 
         assert!(csv_string.contains("Fee/Deduction"));
@@ -1579,7 +1578,7 @@ mod tests {
 
         // Verify the grant appears in CSV
         let mut csv_output = Vec::new();
-        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv_string = String::from_utf8(csv_output).unwrap();
 
         assert!(csv_string.contains("STOCK_GRANT"));
@@ -1674,7 +1673,7 @@ mod tests {
 
         // Verify CSV contains warning section
         let mut csv_output = Vec::new();
-        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv_string = String::from_utf8(csv_output).unwrap();
 
         assert!(csv_string.contains("CASH_GRANT"));
@@ -1763,7 +1762,7 @@ mod tests {
 
         // Verify CSV contains corporate action
         let mut csv_output = Vec::new();
-        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv_string = String::from_utf8(csv_output).unwrap();
 
         assert!(csv_string.contains("Corporate Action"));
@@ -1886,7 +1885,7 @@ mod tests {
 
         // Generate CSV and verify all sections exist
         let mut csv_output = Vec::new();
-        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv_string = String::from_utf8(csv_output).unwrap();
 
         // Check for all row types (human-readable names in CSV)
@@ -2161,7 +2160,7 @@ mod tests {
         statement.calculate_totals();
 
         let mut csv_output = Vec::new();
-        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv_string = String::from_utf8(csv_output).unwrap();
         assert!(csv_string.contains("Vorabpauschale"));
         assert!(csv_string.contains("IE00BK5BQT80"));
@@ -2176,7 +2175,7 @@ mod tests {
         statement.calculate_totals();
 
         let mut csv_output = Vec::new();
-        GermanCsvFormatter::write(&statement, &mut csv_output).unwrap();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv_string = String::from_utf8(csv_output).unwrap();
         assert!(!csv_string.contains("Vorabpauschale"));
     }
