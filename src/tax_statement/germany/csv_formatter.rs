@@ -78,7 +78,7 @@ impl GermanCsvFormatter {
     ) -> GenericResult<()> {
         writeln!(
             writer,
-            "Capital Gain,{},{},{},{},{},{},{},{},{},,{},{},{},{},{},{},{},{},{},{}",
+            "Capital Gain,{},{},{},{},{},{},{},{},,{},{},{},{},{},{},{},{},{},{},{}",
             formatting::format_date(entry.transaction_date),
             formatting::format_date(entry.settle_date),
             Self::escape_csv(&entry.symbol),
@@ -106,7 +106,7 @@ impl GermanCsvFormatter {
         // Dividend records carry no share quantity; leave that cell empty rather than a misleading 0.
         writeln!(
             writer,
-            "Dividend,{},{},{},{},{},,,,,{},{},{},{},{},{},{},{},{},{},{}",
+            "Dividend,{},{},{},{},{},,,,{},,{},{},{},{},{},{},{},{},{},{}",
             formatting::format_date(entry.payment_date),
             formatting::format_date(entry.payment_date), // settle_date = payment_date for dividends
             Self::escape_csv(&entry.symbol),
@@ -130,7 +130,7 @@ impl GermanCsvFormatter {
     fn write_interest_row<W: Write>(writer: &mut W, entry: &InterestEntry) -> GenericResult<()> {
         writeln!(
             writer,
-            "Interest,{},{},CASH,,{},,,,,{},0.00,{},{},{},{},{},{},{},{},{}",
+            "Interest,{},{},CASH,,{},,,,{},,0.00,{},{},{},{},{},{},{},{},{}",
             formatting::format_date(entry.payment_date),
             formatting::format_date(entry.payment_date),
             Self::escape_csv(&entry.description),
@@ -151,7 +151,7 @@ impl GermanCsvFormatter {
     fn write_fx_gain_row<W: Write>(writer: &mut W, entry: &FxGainEntry) -> GenericResult<()> {
         writeln!(
             writer,
-            "FX Gain/Loss,{},{},{},,{},,,,,{},0.00,{},{},{},{},{},{},{},{},{}",
+            "FX Gain/Loss,{},{},{},,{},,,,{},,0.00,{},{},{},{},{},{},{},{},{}",
             formatting::format_date(entry.transaction_date),
             formatting::format_date(entry.transaction_date),
             Self::escape_csv(&entry.currency_pair),
@@ -248,12 +248,11 @@ impl GermanCsvFormatter {
             .unwrap_or_default();
         writeln!(
             writer,
-            "Corporate Action,{},{},{},,{} - {},,,,,{},,{},0.00,0.00,0.00,0.00,0.00,0.00,0.00,{}",
+            "Corporate Action,{},{},{},,{},,,,,{},,{},0.00,0.00,0.00,0.00,0.00,0.00,0.00,{}",
             formatting::format_date(entry.date),
             formatting::format_date(entry.date),
             Self::escape_csv(&entry.symbol),
-            entry.action_type,
-            Self::escape_csv(&entry.description),
+            Self::escape_csv(&format!("{} - {}", entry.action_type, entry.description)),
             tax_impact,
             tax_impact,
             Self::escape_csv(entry.notes.as_deref().unwrap_or(""))
@@ -691,6 +690,146 @@ mod tests {
             Some(""),
             "quantity cell should be empty"
         );
+    }
+
+    /// The header carries two distinct gross columns: `gross_gain_loss_eur` (capital-gains/FX
+    /// before exemptions) and `gross_amount_eur` (dividend/interest gross). Each row type must
+    /// populate its own column and leave the other empty, or a consumer summing a named column
+    /// double-counts or misses figures.
+    #[test]
+    fn gross_value_lands_in_the_named_column() {
+        let header = render(|w| GermanCsvFormatter::write_header(w));
+        let columns: Vec<String> = header.split(',').map(str::to_string).collect();
+        let cell = |row: &str, name: &str| -> String {
+            let idx = columns
+                .iter()
+                .position(|c| c == name)
+                .expect("column present");
+            row.split(',').nth(idx).expect("cell present").to_string()
+        };
+
+        let capital_gain = render(|w| {
+            GermanCsvFormatter::write_capital_gain_row(
+                w,
+                &CapitalGainEntry {
+                    transaction_date: date(),
+                    settle_date: date(),
+                    symbol: "ACME".to_string(),
+                    isin: "US0000000001".to_string(),
+                    description: "sold 10 ACME".to_string(),
+                    quantity: dec!(10),
+                    cost_basis_eur: dec!(1000),
+                    proceeds_eur: dec!(1250),
+                    gross_gain_loss: dec!(250),
+                    teilfreistellung_rate: TeilfreistellungRate::None,
+                    is_stock: true,
+                    taxable_amount: dec!(250),
+                    foreign_tax: dec!(0),
+                    abgeltungssteuer: dec!(62.5),
+                    solidaritaetszuschlag: dec!(3.44),
+                    kirchensteuer: dec!(0),
+                    total_tax: dec!(65.94),
+                    pre_2009_holding: false,
+                    notes: None,
+                },
+            )
+        });
+        assert_eq!(cell(&capital_gain, "gross_gain_loss_eur"), "250.00");
+        assert_eq!(cell(&capital_gain, "gross_amount_eur"), "");
+
+        let dividend = render(|w| {
+            GermanCsvFormatter::write_dividend_row(
+                w,
+                &DividendEntry {
+                    payment_date: date(),
+                    symbol: "ACME".to_string(),
+                    isin: "US0000000001".to_string(),
+                    description: "dividend".to_string(),
+                    quantity: dec!(0),
+                    gross_amount_eur: dec!(50),
+                    foreign_withholding_tax: dec!(0),
+                    teilfreistellung_rate: TeilfreistellungRate::None,
+                    taxable_amount: dec!(50),
+                    abgeltungssteuer: dec!(12.5),
+                    solidaritaetszuschlag: dec!(0.69),
+                    kirchensteuer: dec!(0),
+                    foreign_tax_credit: dec!(0),
+                    total_tax: dec!(13.19),
+                    net_tax: dec!(13.19),
+                    notes: None,
+                },
+            )
+        });
+        assert_eq!(cell(&dividend, "gross_amount_eur"), "50.00");
+        assert_eq!(cell(&dividend, "gross_gain_loss_eur"), "");
+
+        let interest = render(|w| {
+            GermanCsvFormatter::write_interest_row(
+                w,
+                &InterestEntry {
+                    payment_date: date(),
+                    description: "idle cash".to_string(),
+                    gross_amount_eur: dec!(25),
+                    foreign_withholding_tax: dec!(0),
+                    taxable_amount: dec!(25),
+                    abgeltungssteuer: dec!(6.25),
+                    solidaritaetszuschlag: dec!(0.34),
+                    kirchensteuer: dec!(0),
+                    foreign_tax_credit: dec!(0),
+                    total_tax: dec!(6.59),
+                    net_tax: dec!(6.59),
+                    notes: None,
+                },
+            )
+        });
+        assert_eq!(cell(&interest, "gross_amount_eur"), "25.00");
+        assert_eq!(cell(&interest, "gross_gain_loss_eur"), "");
+
+        let fx = render(|w| {
+            GermanCsvFormatter::write_fx_gain_row(
+                w,
+                &FxGainEntry {
+                    transaction_date: date(),
+                    currency_pair: "EUR.USD".to_string(),
+                    description: "conversion".to_string(),
+                    gross_amount_eur: dec!(10),
+                    taxable_amount: dec!(10),
+                    abgeltungssteuer: dec!(2.5),
+                    solidaritaetszuschlag: dec!(0.14),
+                    kirchensteuer: dec!(0),
+                    total_tax: dec!(2.64),
+                    notes: None,
+                },
+            )
+        });
+        assert_eq!(cell(&fx, "gross_amount_eur"), "10.00");
+        assert_eq!(cell(&fx, "gross_gain_loss_eur"), "");
+    }
+
+    /// A corporate action whose type or description contains a comma must not break the row: the
+    /// combined `type - description` cell is escaped as a unit, so a quote-aware CSV parser still
+    /// reads 21 fields with the comma preserved inside the cell.
+    #[test]
+    fn corporate_action_cell_is_escaped_as_a_unit() {
+        let row = render(|w| {
+            GermanCsvFormatter::write_corporate_action_row(
+                w,
+                &CorporateActionEntry {
+                    date: date(),
+                    action_type: super::super::statement::CorporateActionType::Spinoff,
+                    symbol: "ACME".to_string(),
+                    description: "spinoff of ACME, Inc. sub-unit".to_string(),
+                    tax_impact_eur: None,
+                    notes: None,
+                },
+            )
+        });
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(row.as_bytes());
+        let record = reader.records().next().unwrap().unwrap();
+        assert_eq!(record.len(), COLUMNS, "escaped comma broke the field count");
+        assert_eq!(&record[5], "Spinoff - spinoff of ACME, Inc. sub-unit");
     }
 
     /// KAP-INV rows live in the summary block, whose header declares 3 columns
