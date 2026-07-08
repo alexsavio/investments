@@ -75,16 +75,24 @@ fn read_fixture(name: &str) -> BrokerStatement {
     .unwrap()
 }
 
-/// Run the full German tax pipeline over a fixture and return the finalized statement.
-fn run_pipeline(fixture: &str, year: i32) -> GermanTaxStatement {
+/// Run the full German tax pipeline over a fixture with an explicit tax config.
+fn run_pipeline_with_config(
+    fixture: &str,
+    year: i32,
+    tax_config: &TaxConfig,
+) -> GermanTaxStatement {
     let statement = read_fixture(fixture);
     let converter = converter();
-    let tax_config = TaxConfig::default();
 
     let mut german = GermanTaxStatement::new(year, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
-    process_broker_statement(&mut german, &statement, year, &converter, &tax_config).unwrap();
+    process_broker_statement(&mut german, &statement, year, &converter, tax_config).unwrap();
     german.calculate_totals();
     german
+}
+
+/// Run the full German tax pipeline over a fixture and return the finalized statement.
+fn run_pipeline(fixture: &str, year: i32) -> GermanTaxStatement {
+    run_pipeline_with_config(fixture, year, &TaxConfig::default())
 }
 
 /// Smoke test: the fixture parses through the real IB Flex reader and the two AAPL sells are
@@ -122,6 +130,92 @@ fn real_ticker_ending_in_w_is_not_dropped() {
     assert_eq!(german.total_capital_gains, dec!(450));
     assert_eq!(german.capital_gains.len(), 1);
     assert_eq!(german.capital_gains[0].symbol, "GLW");
+}
+
+/// Vorabpauschale (§18 InvStG) is computed for a fund held at year end, using config NAVs.
+///
+/// EUNL (IE00B4L5Y983, equity 30% Teilfreistellung), 100 units, NAV €80 → €92, Basiszins 2024
+/// 2.29%, no distributions: basisertrag = 8000 × 0.0229 × 0.7 = 128.24 (below the €1,200 value
+/// increase); taxable after Teilfreistellung = 128.24 × 0.70 = 89.768. Deemed received 2 Jan 2025,
+/// so it is not part of the 2024 taxable base.
+///
+/// Enabled by T11 (Vorabpauschale).
+#[test]
+fn vorabpauschale_computed_for_year_end_fund_holding() {
+    let mut tax_config = TaxConfig::default();
+    tax_config.etf_classification.insert(
+        "IE00B4L5Y983".to_string(),
+        crate::instruments::EtfClassification::Equity,
+    );
+    let mut by_year = std::collections::BTreeMap::new();
+    by_year.insert(
+        2024,
+        crate::taxes::FundNav {
+            jan1: dec!(80),
+            dec31: dec!(92),
+            acquired_month: None,
+        },
+    );
+    tax_config
+        .fund_nav
+        .insert("IE00B4L5Y983".to_string(), by_year);
+
+    let german = run_pipeline_with_config("vorabpauschale", 2024, &tax_config);
+
+    assert_eq!(german.vorabpauschale.len(), 1);
+    let vp = &german.vorabpauschale[0];
+    assert_eq!(vp.isin, "IE00B4L5Y983");
+    assert_eq!(vp.gross_vorabpauschale, dec!(128.24));
+    assert_eq!(vp.taxable_amount, dec!(89.768));
+    assert_eq!(vp.deemed_received, Date::from_ymd_opt(2025, 1, 2).unwrap());
+    assert_eq!(german.total_vorabpauschale_gross, dec!(128.24));
+    // Vorabpauschale is next-year income, so the 2024 taxable base stays zero.
+    assert_eq!(german.total_taxable_income, dec!(0));
+    assert!(german.vorabpauschale_missing_nav.is_empty());
+}
+
+/// §19 InvStG: accumulated Vorabpauschale reduces a fund's sale gain, in full and before
+/// Teilfreistellung, on a full disposal. EUNL fully sold in 2024 for a €2,000 gross gain with a
+/// €300 accumulated carryforward → taxable = (2000 − 300) × 0.70 = €1,190 (vs €1,400 without it).
+///
+/// Enabled by T11 (Vorabpauschale).
+#[test]
+fn vorabpauschale_carryforward_reduces_fund_sale_gain() {
+    let mut tax_config = TaxConfig::default();
+    tax_config.etf_classification.insert(
+        "IE00B4L5Y983".to_string(),
+        crate::instruments::EtfClassification::Equity,
+    );
+    tax_config
+        .vorabpauschale_carryforward
+        .insert("IE00B4L5Y983".to_string(), dec!(300));
+
+    let german = run_pipeline_with_config("vorabpauschale_sale", 2024, &tax_config);
+
+    assert_eq!(german.capital_gains.len(), 1);
+    let sale = &german.capital_gains[0];
+    assert!(!sale.is_stock);
+    assert_eq!(sale.gross_gain_loss, dec!(2000));
+    assert_eq!(sale.taxable_amount, dec!(1190));
+    assert!(sale.notes.as_deref().unwrap().contains("§19"));
+    // Nothing held at year end, so there is no Vorabpauschale to compute.
+    assert!(german.vorabpauschale.is_empty());
+}
+
+/// A year-end fund holding whose NAVs are not configured is flagged, not silently omitted.
+#[test]
+fn vorabpauschale_missing_nav_is_flagged() {
+    let mut tax_config = TaxConfig::default();
+    tax_config.etf_classification.insert(
+        "IE00B4L5Y983".to_string(),
+        crate::instruments::EtfClassification::Equity,
+    );
+    // No fund_nav entry configured for the held fund.
+
+    let german = run_pipeline_with_config("vorabpauschale", 2024, &tax_config);
+
+    assert!(german.vorabpauschale.is_empty());
+    assert_eq!(german.vorabpauschale_missing_nav, vec!["IE00B4L5Y983"]);
 }
 
 // The IB Flex parser's income-dedup and edge-row handling (T3) is verified next to the parser

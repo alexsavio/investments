@@ -38,6 +38,23 @@ pub enum TaxJurisdiction {
     Germany,
 }
 
+/// Year-boundary redemption prices (EUR per unit) for a fund, used to compute the Vorabpauschale
+/// (§18 InvStG). Supplied manually because a foreign broker's statement carries no German
+/// year-start / year-end NAVs. Values are EUR per unit; the tool multiplies by the year-end
+/// position quantity.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FundNav {
+    /// Rücknahmepreis per unit at the start of the calendar year (2 January).
+    pub jan1: Decimal,
+    /// Rücknahmepreis per unit at the end of the calendar year (31 December).
+    pub dec31: Decimal,
+    /// Month of acquisition (1–12) when the units were bought during this calendar year, driving
+    /// the Zwölftelung (§18 Abs. 2 InvStG). Omit for units held from the start of the year.
+    #[serde(default)]
+    pub acquired_month: Option<u32>,
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaxConfig {
@@ -70,6 +87,18 @@ pub struct TaxConfig {
     /// Maps ISIN -> classification (equity, mixed, bond)
     #[serde(default)]
     pub etf_classification: BTreeMap<String, EtfClassification>,
+    /// Basiszins per calendar year for the Vorabpauschale (§18 Abs. 4 InvStG), as a fraction
+    /// (e.g. `2025: 0.0253`). Overrides the statutory BMF values the tool ships for 2023–2025.
+    #[serde(default)]
+    pub basiszins: BTreeMap<i32, Decimal>,
+    /// Year-boundary NAVs for the Vorabpauschale (§18 InvStG), keyed by ISIN then calendar year.
+    #[serde(default)]
+    pub fund_nav: BTreeMap<String, BTreeMap<i32, FundNav>>,
+    /// Accumulated gross Vorabpauschale already taxed in prior years per fund (ISIN -> EUR). Reduces
+    /// the taxable gain when the units are sold (§19 Abs. 1 InvStG, deducted in full before
+    /// Teilfreistellung). The tool emits the updated total each year to carry forward.
+    #[serde(default)]
+    pub vorabpauschale_carryforward: BTreeMap<String, Decimal>,
 }
 
 impl TaxConfig {
@@ -122,6 +151,34 @@ impl TaxConfig {
                 dec!(801)
             }
         })
+    }
+
+    /// Basiszins (as a fraction) for the Vorabpauschale in `year`: the configured override, else the
+    /// statutory BMF value. Errors for years the tool ships no default for.
+    pub fn german_basiszins(&self, year: i32) -> GenericResult<Decimal> {
+        if let Some(&rate) = self.basiszins.get(&year) {
+            return Ok(rate);
+        }
+        Ok(match year {
+            2023 => dec!(0.0255),
+            2024 => dec!(0.0229),
+            2025 => dec!(0.0253),
+            _ => return Err!(
+                "No Basiszins known for {year}. The BMF publishes it each January; \
+                 set `taxes.basiszins.{year}` in the config"
+            ),
+        })
+    }
+
+    /// Year-boundary NAVs for a fund in `year`, if configured.
+    pub fn german_fund_nav(&self, isin: &str, year: i32) -> Option<&FundNav> {
+        self.fund_nav.get(isin).and_then(|by_year| by_year.get(&year))
+    }
+
+    /// Accumulated gross Vorabpauschale already taxed for a fund (EUR), reducing its taxable gain
+    /// at sale (§19 InvStG).
+    pub fn german_vorabpauschale_carryforward(&self, isin: &str) -> Decimal {
+        self.vorabpauschale_carryforward.get(isin).copied().unwrap_or(Decimal::ZERO)
     }
 }
 
@@ -260,6 +317,54 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(overridden.german_sparer_pauschbetrag(2024), dec!(0));
+    }
+
+    #[test]
+    fn german_basiszins_uses_defaults_and_overrides() {
+        let config = TaxConfig::default();
+        assert_eq!(config.german_basiszins(2023).unwrap(), dec!(0.0255));
+        assert_eq!(config.german_basiszins(2024).unwrap(), dec!(0.0229));
+        assert_eq!(config.german_basiszins(2025).unwrap(), dec!(0.0253));
+        // A year with no shipped default errors rather than guessing.
+        assert!(config.german_basiszins(2027).is_err());
+
+        let mut overridden = TaxConfig::default();
+        overridden.basiszins.insert(2027, dec!(0.0300));
+        assert_eq!(overridden.german_basiszins(2027).unwrap(), dec!(0.0300));
+        // A config override wins over the shipped default.
+        overridden.basiszins.insert(2025, dec!(0.0260));
+        assert_eq!(overridden.german_basiszins(2025).unwrap(), dec!(0.0260));
+    }
+
+    #[test]
+    fn german_fund_nav_parses_and_looks_up() {
+        let config: TaxConfig = serde_yaml::from_str(
+            "fund_nav:\n  \
+             IE00B4L5Y983:\n    \
+             2024:\n      jan1: '80.50'\n      dec31: '92.30'\n      acquired_month: 4\n",
+        )
+        .unwrap();
+
+        let nav = config.german_fund_nav("IE00B4L5Y983", 2024).unwrap();
+        assert_eq!(nav.jan1, dec!(80.50));
+        assert_eq!(nav.dec31, dec!(92.30));
+        assert_eq!(nav.acquired_month, Some(4));
+
+        assert!(config.german_fund_nav("IE00B4L5Y983", 2023).is_none());
+        assert!(config.german_fund_nav("UNKNOWN", 2024).is_none());
+    }
+
+    #[test]
+    fn german_vorabpauschale_carryforward_defaults_to_zero() {
+        let mut config = TaxConfig::default();
+        config
+            .vorabpauschale_carryforward
+            .insert("IE00B4L5Y983".to_string(), dec!(12.34));
+        assert_eq!(
+            config.german_vorabpauschale_carryforward("IE00B4L5Y983"),
+            dec!(12.34)
+        );
+        assert_eq!(config.german_vorabpauschale_carryforward("UNKNOWN"), dec!(0));
     }
 
     #[test]

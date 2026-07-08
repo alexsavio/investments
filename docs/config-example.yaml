@@ -215,6 +215,18 @@ portfolios:
 #    IE00B4L5Y983: equity           # iShares Core MSCI World UCITS ETF - 30% exemption
 #    IE00BDBRDM35: mixed            # iShares Core Global Aggregate Bond UCITS ETF - 15% exemption
 #    LU0274211480: bond             # Xtrackers II Eurozone Government Bond ETF - 0% exemption
+#  # Vorabpauschale (§18 InvStG): advance lump-sum taxation of funds held at year end. Year-boundary
+#  # NAVs are entered by hand — a foreign broker's statement carries no German redemption prices.
+#  basiszins:                       # Optional: BMF Basiszins per year (fraction). Ships 2023/24/25 defaults.
+#    2025: 0.0253                   # published each January; only needed to override a shipped default
+#  fund_nav:                        # Per-ISIN, per-year redemption price (EUR per unit) at 2 Jan and 31 Dec
+#    IE00B4L5Y983:
+#      2024:
+#        jan1: 80.50
+#        dec31: 92.30
+#        acquired_month: 4          # Optional: month bought this year (Zwölftelung); omit if held all year
+#  vorabpauschale_carryforward:     # Per-ISIN accumulated gross Vorabpauschale; reduces the sale gain (§19)
+#    IE00B4L5Y983: 128.24
 
 # Your individual broker + bank account configuration. For now specifies your bank commissions for transferring funds
 # from your bank account to your broker account. Will be taken into account during portfolio performance analysis.

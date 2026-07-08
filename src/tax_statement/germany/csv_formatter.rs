@@ -384,7 +384,7 @@ impl CsvFormatter {
 
         // Anlage KAP-INV: investment-fund income, reported GROSS (pre-Teilfreistellung).
         Self::write_kap_inv_section(writer, statement)?;
-        Self::write_vorabpauschale_warning(writer, statement)?;
+        Self::write_vorabpauschale(writer, statement)?;
 
         // Non-capital income (reported separately)
         if statement.total_stock_grant_income > dec!(0)
@@ -489,24 +489,74 @@ impl CsvFormatter {
         Ok(())
     }
 
-    fn write_vorabpauschale_warning<W: Write>(
+    fn write_vorabpauschale<W: Write>(
         writer: &mut W,
         statement: &GermanTaxStatement,
     ) -> GenericResult<()> {
-        let funds = statement.fund_identifiers();
-        if funds.is_empty() {
-            return Ok(());
+        if !statement.vorabpauschale.is_empty() {
+            let next_year = statement.year + 1;
+            writeln!(writer)?;
+            writeln!(
+                writer,
+                "# VORABPAUSCHALE (§18 InvStG) — advance lump-sum income of funds held at year end."
+            )?;
+            writeln!(
+                writer,
+                "# Deemed received on the first business day of {next_year}; declare it in the \
+                 {next_year} return (Anlage KAP-INV). Values in EUR."
+            )?;
+            for entry in &statement.vorabpauschale {
+                let who = if entry.isin.is_empty() {
+                    entry.symbol.clone()
+                } else {
+                    format!("{} ({})", entry.symbol, entry.isin)
+                };
+                writeln!(
+                    writer,
+                    "VORABPAUSCHALE_GROSS,{} — gross Vorabpauschale,{}",
+                    Self::escape_csv(&who),
+                    Self::format_decimal(entry.gross_vorabpauschale)
+                )?;
+                writeln!(
+                    writer,
+                    "VORABPAUSCHALE_TAXABLE,{} — taxable after Teilfreistellung,{}",
+                    Self::escape_csv(&entry.symbol),
+                    Self::format_decimal(entry.taxable_amount)
+                )?;
+                writeln!(
+                    writer,
+                    "VORABPAUSCHALE_TAX,{} — estimated tax (Abgelt.+Soli+KiSt),{}",
+                    Self::escape_csv(&entry.symbol),
+                    Self::format_decimal(entry.total_tax)
+                )?;
+                writeln!(
+                    writer,
+                    "VORABPAUSCHALE_CARRYFORWARD,{} — accumulated gross for next year's config,{}",
+                    Self::escape_csv(&entry.symbol),
+                    Self::format_decimal(entry.accumulated_after)
+                )?;
+            }
+            writeln!(
+                writer,
+                "VORABPAUSCHALE_TOTAL_TAX,Total estimated Vorabpauschale tax,{}",
+                Self::format_decimal(statement.total_vorabpauschale_tax)
+            )?;
         }
-        writeln!(writer)?;
-        writeln!(
-            writer,
-            "# WARNING: Vorabpauschale (§18 InvStG) is NOT computed. Accumulating funds owe a yearly"
-        )?;
-        writeln!(
-            writer,
-            "# advance lump-sum tax; review these fund holdings separately: {}",
-            funds.join(", ")
-        )?;
+
+        if !statement.vorabpauschale_missing_nav.is_empty() {
+            writeln!(writer)?;
+            writeln!(
+                writer,
+                "# WARNING: Vorabpauschale (§18 InvStG) NOT computed for year-end fund holdings without"
+            )?;
+            writeln!(
+                writer,
+                "# configured NAVs: {}. Set taxes.fund_nav.<ISIN>.{} (jan1/dec31) to include them.",
+                statement.vorabpauschale_missing_nav.join(", "),
+                statement.year
+            )?;
+        }
+
         Ok(())
     }
 

@@ -178,6 +178,38 @@ impl std::fmt::Display for CorporateActionType {
     }
 }
 
+/// Entry for a fund's Vorabpauschale (§18 InvStG) — the advance lump sum a fund held at year end is
+/// deemed to distribute.
+///
+/// The lump sum arises from holding the fund at the end of `arising_year` and is deemed received
+/// (and taxable) on `deemed_received`, the first business day of the following year. It is therefore
+/// income of that following year's return, not `arising_year`'s.
+#[derive(Debug, Clone)]
+pub struct VorabpauschaleEntry {
+    pub arising_year: i32,
+    pub deemed_received: Date,
+    pub symbol: String,
+    pub isin: String,
+    pub quantity: Decimal,
+    pub nav_jan1: Decimal,
+    pub nav_dec31: Decimal,
+    pub distributions: Decimal,
+    pub basiszins: Decimal,
+    pub teilfreistellung_rate: TeilfreistellungRate,
+    /// Gross Vorabpauschale (pre-Teilfreistellung); the figure that reduces the sale gain (§19).
+    pub gross_vorabpauschale: Decimal,
+    /// Taxable amount after Teilfreistellung.
+    pub taxable_amount: Decimal,
+    pub abgeltungssteuer: Decimal,
+    pub solidaritaetszuschlag: Decimal,
+    pub kirchensteuer: Decimal,
+    pub total_tax: Decimal,
+    /// Accumulated gross Vorabpauschale to carry into next year's config for this still-held fund
+    /// (prior carryforward + this year's gross).
+    pub accumulated_after: Decimal,
+    pub notes: Option<String>,
+}
+
 /// Complete German tax statement for a single tax year.
 #[derive(Debug)]
 pub struct GermanTaxStatement {
@@ -192,6 +224,11 @@ pub struct GermanTaxStatement {
     pub stock_grants: Vec<StockGrantEntry>,
     pub cash_grants: Vec<CashGrantEntry>,
     pub corporate_actions: Vec<CorporateActionEntry>,
+    pub vorabpauschale: Vec<VorabpauschaleEntry>,
+
+    /// Year-end fund holdings whose year-boundary NAVs are not configured, so their Vorabpauschale
+    /// could not be computed (ISIN, or symbol when the ISIN is absent).
+    pub vorabpauschale_missing_nav: Vec<String>,
 
     // Loss carryforward pots (§20(6) EStG). `prior` is the festgestellter Verlustvortrag brought
     // in from the previous year; `next` is what carries to the following year after this year's
@@ -215,6 +252,11 @@ pub struct GermanTaxStatement {
     pub total_fees: Decimal,
     pub total_stock_grant_income: Decimal, // Employment income, NOT Abgeltungssteuer
     pub total_cash_grant_income: Decimal,  // Other income, NOT Abgeltungssteuer
+    // Vorabpauschale (§18 InvStG). Deemed received the first business day of the following year, so
+    // it is that year's income and is NOT folded into this year's taxable base above.
+    pub total_vorabpauschale_gross: Decimal,
+    pub total_vorabpauschale_taxable: Decimal,
+    pub total_vorabpauschale_tax: Decimal,
     pub total_taxable_income: Decimal,
     pub total_foreign_tax: Decimal,
     pub total_abgeltungssteuer: Decimal,
@@ -283,6 +325,8 @@ impl GermanTaxStatement {
             stock_grants: Vec::new(),
             cash_grants: Vec::new(),
             corporate_actions: Vec::new(),
+            vorabpauschale: Vec::new(),
+            vorabpauschale_missing_nav: Vec::new(),
 
             loss_carryforward_stock_prior: loss_carryforward_stock,
             loss_carryforward_other_prior: loss_carryforward_other,
@@ -301,6 +345,9 @@ impl GermanTaxStatement {
             total_fees: dec!(0),
             total_stock_grant_income: dec!(0),
             total_cash_grant_income: dec!(0),
+            total_vorabpauschale_gross: dec!(0),
+            total_vorabpauschale_taxable: dec!(0),
+            total_vorabpauschale_tax: dec!(0),
             total_taxable_income: dec!(0),
             total_foreign_tax: dec!(0),
             total_abgeltungssteuer: dec!(0),
@@ -365,32 +412,9 @@ impl GermanTaxStatement {
         self.corporate_actions.push(entry);
     }
 
-    /// Distinct fund identifiers (ISIN, or symbol when the ISIN is absent) present in the statement.
-    ///
-    /// A "fund" is any capital-gain or dividend entry with a Teilfreistellung classification
-    /// (equity/mixed/bond) — the same test that routes income to Anlage KAP-INV. Used to warn that
-    /// Vorabpauschale (§18 InvStG) is not yet computed for these accumulating-fund holdings.
-    pub fn fund_identifiers(&self) -> Vec<String> {
-        let mut ids: Vec<String> = Vec::new();
-        let entries = self
-            .capital_gains
-            .iter()
-            .map(|e| (&e.isin, &e.symbol, e.teilfreistellung_rate))
-            .chain(
-                self.dividends
-                    .iter()
-                    .map(|e| (&e.isin, &e.symbol, e.teilfreistellung_rate)),
-            );
-        for (isin, symbol, rate) in entries {
-            if rate == TeilfreistellungRate::None {
-                continue;
-            }
-            let id = if isin.is_empty() { symbol } else { isin };
-            if !id.is_empty() && !ids.iter().any(|existing| existing == id) {
-                ids.push(id.clone());
-            }
-        }
-        ids
+    /// Add a Vorabpauschale entry.
+    pub fn add_vorabpauschale(&mut self, entry: VorabpauschaleEntry) {
+        self.vorabpauschale.push(entry);
     }
 
     /// Calculate all summary totals.
@@ -471,6 +495,17 @@ impl GermanTaxStatement {
         }
         for entry in &self.cash_grants {
             self.total_cash_grant_income += entry.amount_eur;
+        }
+
+        // Vorabpauschale is income of the following year (deemed received on its first business day),
+        // so it is summed for reporting but never added to this year's pots or taxable base.
+        self.total_vorabpauschale_gross = dec!(0);
+        self.total_vorabpauschale_taxable = dec!(0);
+        self.total_vorabpauschale_tax = dec!(0);
+        for entry in &self.vorabpauschale {
+            self.total_vorabpauschale_gross += entry.gross_vorabpauschale;
+            self.total_vorabpauschale_taxable += entry.taxable_amount;
+            self.total_vorabpauschale_tax += entry.total_tax;
         }
 
         // Offset within each pot and apply the prior-year carryforward; a net loss becomes next
