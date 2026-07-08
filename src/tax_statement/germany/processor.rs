@@ -3,6 +3,8 @@
 //! Processes broker statement data and populates the German tax statement
 //! with capital gains, dividends, interest entries, and FX gains/losses.
 
+use std::collections::{HashMap, HashSet};
+
 use chrono::Datelike;
 use log::{debug, warn};
 
@@ -13,13 +15,16 @@ use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
 use crate::taxes::TaxConfig;
+use crate::taxes::germany::vorabpauschale::{
+    first_business_day_of_year, full_months_before_acquisition, vorabpauschale,
+};
 use crate::taxes::germany::{AbgeltungsteuerBreakdown, TeilfreistellungRate};
 use crate::time::Date;
 use crate::types::Decimal;
 
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, CorporateActionType, DividendEntry,
-    FeeEntry, FxGainEntry, GermanTaxStatement, InterestEntry, StockGrantEntry,
+    FeeEntry, FxGainEntry, GermanTaxStatement, InterestEntry, StockGrantEntry, VorabpauschaleEntry,
 };
 
 /// Helper function to convert to EUR with context-specific error message.
@@ -86,16 +91,9 @@ pub fn process_broker_statement(
         has_corporate_actions,
     );
 
-    // Vorabpauschale (§18 InvStG) is not yet computed; warn loudly so fund income is not silently
-    // under-taxed. Needs year-boundary NAVs per fund (a new data dependency), tracked as T11.
-    let fund_ids = statement.fund_identifiers();
-    if !fund_ids.is_empty() {
-        warn!(
-            "Vorabpauschale (§18 InvStG advance lump-sum tax on accumulating funds) is NOT \
-             computed. Accumulating funds owe it yearly since 2023 — review it separately for: {}.",
-            fund_ids.join(", ")
-        );
-    }
+    // Vorabpauschale (§18 InvStG) for funds held at year end. Must run after process_dividends, which
+    // supplies the per-fund distributions this uses.
+    process_vorabpauschale(statement, broker_statement, year, tax_config)?;
 
     Ok((has_trades, has_dividends, has_interest, has_fx_gains))
 }
@@ -113,6 +111,16 @@ fn process_trades(
     // trade engine converts through the ECB rates supplied by the caller.
     let country = crate::localities::germany(tax_config);
     let pre_2009_cutoff = Date::from_ymd_opt(2009, 1, 1).unwrap();
+
+    // Funds still held at year end (used to detect full disposals for the §19 Vorabpauschale
+    // reduction) and the set of ISINs whose accumulated Vorabpauschale has already been applied.
+    let held_symbols: HashSet<&str> = broker_statement
+        .open_positions
+        .iter()
+        .filter(|(_, qty)| **qty > dec!(0))
+        .map(|(symbol, _)| symbol.as_str())
+        .collect();
+    let mut vp_consumed: HashSet<String> = HashSet::new();
 
     for trade in &broker_statement.stock_sells {
         // Germany assigns the tax year by the obligatory transaction (conclusion) date, not the
@@ -206,9 +214,49 @@ fn process_trades(
 
         // Altbestand (§52 Abs. 28 S. 11 EStG): shares acquired before 2009-01-01 are grandfathered
         // per lot, so their profit (gain or loss) is excluded before Teilfreistellung and tax.
-        let taxable_before_exemption = gross_gain_loss - pre_2009_profit;
+        let post_altbestand = gross_gain_loss - pre_2009_profit;
+
+        // §19 Abs. 1 InvStG: Vorabpauschale already taxed over the holding period reduces the fund's
+        // sale gain, in full and before Teilfreistellung. Applied only on a full disposal (the fund
+        // is no longer held at year end) and once per ISIN — the whole-position approximation avoids
+        // over-crediting a partial sale, which would understate tax. The user maintains the
+        // accumulated figure in `taxes.vorabpauschale_carryforward`.
+        let mut vp_reduction = dec!(0);
+        let mut vp_note: Option<String> = None;
+        if teilfreistellung_rate != TeilfreistellungRate::None && !isin.is_empty() {
+            let carryforward = tax_config.german_vorabpauschale_carryforward(&isin);
+            let fully_disposed = !held_symbols.contains(trade.symbol.as_str());
+            if carryforward > dec!(0) && fully_disposed && vp_consumed.insert(isin.clone()) {
+                vp_reduction = carryforward;
+                vp_note = Some(format!(
+                    "Sale gain reduced by €{carryforward} accumulated Vorabpauschale (§19 InvStG); \
+                     reset this fund's vorabpauschale_carryforward to 0"
+                ));
+            } else if carryforward > dec!(0) && !fully_disposed {
+                vp_note = Some(
+                    "Partial fund sale: accumulated Vorabpauschale not deducted here (still held at \
+                     year end); adjust the §19 reduction manually"
+                        .to_string(),
+                );
+            }
+        }
+
+        let taxable_before_exemption = post_altbestand - vp_reduction;
         let taxable_amount =
             apply_teilfreistellung(taxable_before_exemption, &teilfreistellung_rate);
+
+        let notes = {
+            let mut parts: Vec<String> = Vec::new();
+            if has_pre_2009_lot {
+                parts.push(
+                    "Altbestand (pre-2009) lots grandfathered — their profit excluded".to_string(),
+                );
+            }
+            if let Some(note) = vp_note {
+                parts.push(note);
+            }
+            (!parts.is_empty()).then(|| parts.join("; "))
+        };
 
         // §32d(1) EStG flat tax (losses floor to zero). Foreign withholding on capital gains is
         // rare, so the creditable foreign tax q = 0 here.
@@ -239,11 +287,7 @@ fn process_trades(
             kirchensteuer: church_tax,
             total_tax,
             pre_2009_holding: has_pre_2009_lot,
-            notes: if has_pre_2009_lot {
-                Some("Altbestand (pre-2009) lots grandfathered — their profit excluded".to_string())
-            } else {
-                None
-            },
+            notes,
         };
 
         debug!(
@@ -439,6 +483,114 @@ fn creditable_foreign_tax(
         .min(treaty_cap)
         .min(statutory_cap)
         .max(dec!(0))
+}
+
+/// Compute the Vorabpauschale (§18 InvStG) for every fund held at year end.
+///
+/// The advance lump sum for a fund held on 31 December is deemed received on the first business day
+/// of the following year (§18 Abs. 3), so it is that following year's income. Year-boundary NAVs
+/// come from config — a foreign broker's statement carries no German redemption prices — and a
+/// held fund without configured NAVs is warned about rather than silently omitted. Must run after
+/// `process_dividends`, which populates the per-fund distributions this consumes.
+fn process_vorabpauschale(
+    statement: &mut GermanTaxStatement,
+    broker_statement: &BrokerStatement,
+    year: i32,
+    tax_config: &TaxConfig,
+) -> GenericResult<()> {
+    let deemed_received = first_business_day_of_year(year + 1);
+
+    // Distributions received during the year per fund ISIN (already converted to EUR).
+    let mut distributions_by_isin: HashMap<String, Decimal> = HashMap::new();
+    for dividend in &statement.dividends {
+        if dividend.teilfreistellung_rate != TeilfreistellungRate::None && !dividend.isin.is_empty()
+        {
+            *distributions_by_isin
+                .entry(dividend.isin.clone())
+                .or_insert(dec!(0)) += dividend.gross_amount_eur;
+        }
+    }
+
+    // Deterministic iteration order over year-end holdings.
+    let mut positions: Vec<(&String, &Decimal)> = broker_statement.open_positions.iter().collect();
+    positions.sort_by(|a, b| a.0.cmp(b.0));
+
+    for (symbol, &quantity) in positions {
+        if quantity <= dec!(0) {
+            continue;
+        }
+
+        let isin = broker_statement
+            .instrument_info
+            .get(symbol)
+            .and_then(|info| info.isin.iter().next())
+            .map(|isin| isin.to_string())
+            .unwrap_or_default();
+
+        let rate = if isin.is_empty() {
+            TeilfreistellungRate::None
+        } else {
+            tax_config
+                .get_etf_classification(&isin)
+                .to_teilfreistellung_rate()
+        };
+        if rate == TeilfreistellungRate::None {
+            continue; // not a fund → no Vorabpauschale
+        }
+
+        let id = if isin.is_empty() {
+            symbol.clone()
+        } else {
+            isin.clone()
+        };
+        let Some(nav) = tax_config.german_fund_nav(&isin, year) else {
+            statement.vorabpauschale_missing_nav.push(id);
+            continue;
+        };
+
+        let basiszins = tax_config.german_basiszins(year)?;
+        let distributions = distributions_by_isin.get(&isin).copied().unwrap_or(dec!(0));
+        let nav_jan1 = nav.jan1 * quantity;
+        let nav_dec31 = nav.dec31 * quantity;
+        let months_before = full_months_before_acquisition(nav.acquired_month);
+
+        let gross = vorabpauschale(nav_jan1, nav_dec31, distributions, basiszins, months_before);
+        let taxable = apply_teilfreistellung(gross, &rate);
+        let taxes = statement.tax_rates.compute_taxes(taxable, dec!(0));
+        let accumulated_after = tax_config.german_vorabpauschale_carryforward(&isin) + gross;
+
+        statement.add_vorabpauschale(VorabpauschaleEntry {
+            arising_year: year,
+            deemed_received,
+            symbol: symbol.clone(),
+            isin,
+            quantity,
+            nav_jan1,
+            nav_dec31,
+            distributions,
+            basiszins,
+            teilfreistellung_rate: rate,
+            gross_vorabpauschale: gross,
+            taxable_amount: taxable,
+            abgeltungssteuer: taxes.abgeltungssteuer,
+            solidaritaetszuschlag: taxes.solidaritaetszuschlag,
+            kirchensteuer: taxes.kirchensteuer,
+            total_tax: taxes.total,
+            accumulated_after,
+            notes: None,
+        });
+    }
+
+    if !statement.vorabpauschale_missing_nav.is_empty() {
+        warn!(
+            "Vorabpauschale (§18 InvStG) could not be computed for year-end fund holdings without \
+             configured year-boundary NAVs: {}. Set `taxes.fund_nav.<ISIN>.{year}` (jan1/dec31) to \
+             include them.",
+            statement.vorabpauschale_missing_nav.join(", ")
+        );
+    }
+
+    Ok(())
 }
 
 /// Process interest income and create interest entries.
@@ -2113,70 +2265,103 @@ mod tests {
         assert_eq!(statement.kap_zeile_19, dec!(0));
     }
 
-    // --- T11 interim: Vorabpauschale-not-computed warning ---
+    // --- T11: Vorabpauschale (§18 InvStG) ---
 
-    fn fund_capital_entry_isin(isin: &str, rate: TeilfreistellungRate) -> CapitalGainEntry {
-        CapitalGainEntry {
+    fn vorabpauschale_entry(
+        isin: &str,
+        gross: Decimal,
+        rate: TeilfreistellungRate,
+    ) -> VorabpauschaleEntry {
+        let rates = crate::taxes::germany::GermanTaxRates::default();
+        let taxable = gross * rate.taxable_portion();
+        let taxes = rates.compute_taxes(taxable, dec!(0));
+        VorabpauschaleEntry {
+            arising_year: 2024,
+            deemed_received: Date::from_ymd_opt(2025, 1, 2).unwrap(),
+            symbol: "EUNL".to_string(),
             isin: isin.to_string(),
-            ..fund_capital_entry(dec!(100), rate)
+            quantity: dec!(100),
+            nav_jan1: dec!(8000),
+            nav_dec31: dec!(9200),
+            distributions: dec!(0),
+            basiszins: dec!(0.0229),
+            teilfreistellung_rate: rate,
+            gross_vorabpauschale: gross,
+            taxable_amount: taxable,
+            abgeltungssteuer: taxes.abgeltungssteuer,
+            solidaritaetszuschlag: taxes.solidaritaetszuschlag,
+            kirchensteuer: taxes.kirchensteuer,
+            total_tax: taxes.total,
+            accumulated_after: gross,
+            notes: None,
         }
     }
 
     #[test]
-    fn fund_identifiers_lists_distinct_funds_and_excludes_non_funds() {
+    fn vorabpauschale_totals_sum_entries_but_stay_out_of_the_pot() {
         let mut statement =
             GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
-        statement.add_capital_gain(fund_capital_entry_isin(
+        // €200 gross equity-fund Vorabpauschale: 30% Teilfreistellung → €140 taxable.
+        statement.add_vorabpauschale(vorabpauschale_entry(
             "IE00BK5BQT80",
+            dec!(200),
             TeilfreistellungRate::Equity,
         ));
-        // Same fund again (a second sale) must not duplicate.
-        statement.add_capital_gain(fund_capital_entry_isin(
-            "IE00BK5BQT80",
-            TeilfreistellungRate::Equity,
-        ));
-        statement.add_capital_gain(fund_capital_entry_isin(
-            "LU0274211480",
-            TeilfreistellungRate::Bond,
-        ));
-        // A direct share (no Teilfreistellung) is not a fund and must not appear.
         statement.add_capital_gain(stock_capital_entry(dec!(500)));
+        statement.calculate_totals();
 
-        let ids = statement.fund_identifiers();
-        assert_eq!(
-            ids,
-            vec!["IE00BK5BQT80".to_string(), "LU0274211480".to_string()]
-        );
+        assert_eq!(statement.total_vorabpauschale_gross, dec!(200));
+        assert_eq!(statement.total_vorabpauschale_taxable, dec!(140));
+        // Vorabpauschale is next-year income, so it must not enter this year's taxable base.
+        assert_eq!(statement.total_taxable_income, dec!(500));
     }
 
     #[test]
-    fn csv_warns_about_vorabpauschale_when_funds_present() {
+    fn csv_renders_vorabpauschale_section() {
         let mut statement =
             GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
-        statement.add_dividend(DividendEntry {
-            isin: "IE00BK5BQT80".to_string(),
-            ..fund_dividend_entry(dec!(500), TeilfreistellungRate::Equity)
-        });
+        statement.add_vorabpauschale(vorabpauschale_entry(
+            "IE00BK5BQT80",
+            dec!(200),
+            TeilfreistellungRate::Equity,
+        ));
         statement.calculate_totals();
 
         let mut csv_output = Vec::new();
         CsvFormatter::write(&statement, &mut csv_output).unwrap();
-        let csv_string = String::from_utf8(csv_output).unwrap();
-        assert!(csv_string.contains("Vorabpauschale"));
-        assert!(csv_string.contains("IE00BK5BQT80"));
+        let csv = String::from_utf8(csv_output).unwrap();
+        assert!(csv.contains("VORABPAUSCHALE_GROSS"));
+        assert!(csv.contains("IE00BK5BQT80"));
+        // Declared in the following year's return.
+        assert!(csv.contains("2025"));
     }
 
     #[test]
-    fn csv_omits_vorabpauschale_warning_without_funds() {
+    fn csv_warns_about_funds_missing_nav() {
         let mut statement =
             GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
-        statement.add_capital_gain(stock_capital_entry(dec!(500)));
-        statement.add_dividend(dividend_entry(dec!(100)));
+        statement
+            .vorabpauschale_missing_nav
+            .push("IE00BK5BQT80".to_string());
         statement.calculate_totals();
 
         let mut csv_output = Vec::new();
         CsvFormatter::write(&statement, &mut csv_output).unwrap();
-        let csv_string = String::from_utf8(csv_output).unwrap();
-        assert!(!csv_string.contains("Vorabpauschale"));
+        let csv = String::from_utf8(csv_output).unwrap();
+        assert!(csv.contains("NOT computed"));
+        assert!(csv.contains("IE00BK5BQT80"));
+    }
+
+    #[test]
+    fn csv_omits_vorabpauschale_without_funds() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_capital_gain(stock_capital_entry(dec!(500)));
+        statement.calculate_totals();
+
+        let mut csv_output = Vec::new();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv = String::from_utf8(csv_output).unwrap();
+        assert!(!csv.contains("VORABPAUSCHALE"));
     }
 }

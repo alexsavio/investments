@@ -11,6 +11,7 @@
 mod dividends;
 pub mod loss_carryforward;
 mod rates;
+pub mod vorabpauschale;
 
 // Re-export types that are used by other modules
 pub use self::dividends::TeilfreistellungRate;

@@ -138,11 +138,38 @@ the form for your filing year.
 taxable amount of 0, so it contributes nothing to Zeile 19/20 — the tax-free gain is not declared as
 income.
 
-**Vorabpauschale not included:** the advance lump-sum taxation of accumulating funds
-(Vorabpauschale, §18 InvStG) is **not yet computed** — it needs per-fund NAVs at the start and end
-of the year, a data source the tool does not yet consume. When any fund classification appears in
-the statement, the tool emits a warning (console log + a `# WARNING` block in the CSV) naming those
-holdings; review Vorabpauschale for them separately.
+## Vorabpauschale (§18 InvStG)
+
+Funds held at year end are taxed on an advance lump sum (Vorabpauschale) even without a distribution.
+For each fund held on 31 December the tool computes:
+
+```text
+basisertrag    = nav_jan1 × basiszins × 0.7
+vorabpauschale = max(0, min(basisertrag − distributions, max(0, nav_dec31 − nav_jan1)))
+```
+
+reduced by 1/12 per full month before the month of acquisition (Zwölftelung), then taxed after
+Teilfreistellung. The lump sum is deemed received on the **first business day of the following year**
+(§18 Abs. 3), so it is income of that year's return — it is reported in a dedicated CSV section with
+its deemed-receipt date and is **not** folded into the current year's taxable base.
+
+Because a foreign broker's statement carries no German year-boundary redemption prices, the NAVs are
+supplied by hand in config:
+
+- `taxes.basiszins.<year>` — the BMF Basiszins (fraction). The tool ships the statutory 2023 (2.55%),
+  2024 (2.29%), and 2025 (2.53%) values; set this only to override or add a year.
+- `taxes.fund_nav.<ISIN>.<year>` — `jan1` / `dec31` redemption price (EUR per unit) and an optional
+  `acquired_month` (1–12) for the Zwölftelung.
+- `taxes.vorabpauschale_carryforward.<ISIN>` — accumulated gross Vorabpauschale already taxed in
+  prior years. On a **full** fund disposal it reduces the sale gain in full and before Teilfreistellung
+  (§19 InvStG); the tool notes when to reset it. The CSV also prints the running accumulated figure
+  to carry into next year's config.
+
+A fund held at year end whose NAVs are not configured is reported in a `# WARNING` CSV block (and a
+console warning) rather than silently omitted.
+
+**Simplifications:** the whole position is valued at the year-end quantity with a single acquisition
+month, and the sale-gain reduction is applied per fund (not per FIFO lot) and only on a full disposal.
 
 ## Foreign Tax Credits
 
