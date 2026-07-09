@@ -95,6 +95,27 @@ pub fn process_broker_statement(
     // supplies the per-fund distributions this uses.
     process_vorabpauschale(statement, broker_statement, year, tax_config)?;
 
+    // Short positions get no automatic tax treatment; surface them for manual §20 EStG review.
+    statement.short_positions = broker_statement
+        .short_positions
+        .iter()
+        .map(|(symbol, &quantity)| (symbol.clone(), quantity))
+        .collect();
+    statement.short_positions.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if !statement.short_positions.is_empty() {
+        let listed = statement
+            .short_positions
+            .iter()
+            .map(|(symbol, quantity)| format!("{symbol}: {quantity}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        warn!(
+            "Short positions held at year end are not tax-computed and need manual §20 EStG review \
+             (Termin-/Stillhaltergeschäfte): {listed}.",
+        );
+    }
+
     Ok((has_trades, has_dividends, has_interest, has_fx_gains))
 }
 /// Process stock sales and create capital gain entries.

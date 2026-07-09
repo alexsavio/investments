@@ -87,6 +87,9 @@ pub struct BrokerStatement {
     pub stock_splits: StockSplitController,
 
     pub open_positions: HashMap<String, Decimal>,
+    /// Short (negative-quantity) positions, reported for information only — not fed into cost-basis
+    /// or tax calculation.
+    pub short_positions: HashMap<String, Decimal>,
     pub instrument_info: InstrumentInfo,
 }
 
@@ -266,6 +269,7 @@ impl BrokerStatement {
             stock_splits: StockSplitController::default(),
 
             open_positions: HashMap::new(),
+            short_positions: HashMap::new(),
             instrument_info: InstrumentInfo::new(),
         })
     }
@@ -524,6 +528,7 @@ impl BrokerStatement {
         self.corporate_actions.extend(statement.corporate_actions);
 
         self.open_positions = statement.open_positions;
+        self.short_positions = statement.short_positions;
         self.instrument_info.merge(statement.instrument_info);
 
         Ok(())

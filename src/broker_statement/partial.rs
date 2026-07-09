@@ -49,6 +49,9 @@ pub struct PartialBrokerStatement {
     // statement (current date).
     pub assets: NetAssets,
     pub open_positions: HashMap<String, Decimal>,
+    /// Short (negative-quantity) positions, kept separate from `open_positions` for informational
+    /// reporting only — they are not fed into cost-basis or tax calculation.
+    pub short_positions: HashMap<String, Decimal>,
     pub instrument_info: InstrumentInfo,
 }
 
@@ -91,6 +94,7 @@ impl PartialBrokerStatement {
                 other: None
             },
             open_positions: HashMap::new(),
+            short_positions: HashMap::new(),
             instrument_info: InstrumentInfo::new(),
         }
     }
@@ -125,6 +129,12 @@ impl PartialBrokerStatement {
         };
 
         Ok(())
+    }
+
+    /// Record a short (negative-quantity) position for informational reporting. Unlike open
+    /// positions these are not reconciled against trades or fed into tax calculation.
+    pub fn add_short_position(&mut self, symbol: &str, quantity: Decimal) {
+        self.short_positions.insert(symbol.to_owned(), quantity);
     }
 
     pub fn dividend_accruals(&mut self, date: Date, issuer: InstrumentId, strict: bool) -> &mut DividendAccruals {
