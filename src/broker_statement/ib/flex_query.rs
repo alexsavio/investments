@@ -579,13 +579,12 @@ impl FlexStatement {
                 if pos.symbol.is_empty() || pos.position == Decimal::ZERO {
                     continue;
                 }
-                // add_open_position enforces strictly-positive quantities; German tax handling of
-                // short positions is out of scope, so warn and skip rather than abort the statement.
+                // add_open_position enforces strictly-positive quantities. Short positions need
+                // manual §20 EStG treatment (Termingeschäfte/Stillhalter), which this tool does not
+                // compute, so record them separately for informational reporting instead of feeding
+                // them into the cost-basis reconciliation.
                 if pos.position < Decimal::ZERO {
-                    log::warn!(
-                        "Ignoring short position of {} {} (short positions are not handled).",
-                        pos.position, pos.symbol
-                    );
+                    statement.add_short_position(&pos.symbol, pos.position);
                     continue;
                 }
                 statement.add_open_position(&pos.symbol, pos.position)?;

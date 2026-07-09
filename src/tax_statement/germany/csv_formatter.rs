@@ -403,6 +403,7 @@ impl CsvFormatter {
         // Anlage KAP-INV: investment-fund income, reported GROSS (pre-Teilfreistellung).
         Self::write_kap_inv_section(writer, statement)?;
         Self::write_vorabpauschale(writer, statement)?;
+        Self::write_short_positions(writer, statement)?;
 
         // Non-capital income (reported separately)
         if statement.total_stock_grant_income > dec!(0)
@@ -596,6 +597,36 @@ impl CsvFormatter {
                 "# configured NAVs: {}. Set taxes.fund_nav.<ISIN>.{} (jan1/dec31) to include them.",
                 statement.vorabpauschale_missing_nav.join(", "),
                 statement.year
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn write_short_positions<W: Write>(
+        writer: &mut W,
+        statement: &GermanTaxStatement,
+    ) -> GenericResult<()> {
+        if statement.short_positions.is_empty() {
+            return Ok(());
+        }
+
+        writeln!(writer)?;
+        writeln!(
+            writer,
+            "# SHORT POSITIONS — MANUAL §20 EStG REVIEW REQUIRED. No tax is computed for these."
+        )?;
+        writeln!(
+            writer,
+            "# Short sales / open written options are Termin-/Stillhaltergeschäfte; classify and \
+             declare them by hand (Anlage KAP). Quantities are negative (units still open at year end)."
+        )?;
+        for (symbol, quantity) in &statement.short_positions {
+            writeln!(
+                writer,
+                "SHORT_POSITION,{} — open short quantity (manual review),{}",
+                Self::escape_csv(symbol),
+                Self::format_decimal(*quantity)
             )?;
         }
 
@@ -953,5 +984,35 @@ mod tests {
                 "KAP-INV row must stay within the summary block's 3 columns: {row}"
             );
         }
+    }
+
+    /// Short positions render one flagged row per holding under a manual-review banner, carrying the
+    /// signed quantity so the reader sees it is an open short, and no such section appears when there
+    /// are none.
+    #[test]
+    fn short_positions_render_a_manual_review_section() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.short_positions = vec![("TSLA".to_string(), dec!(-50))];
+
+        let output = render(|w| CsvFormatter::write_short_positions(w, &statement));
+        assert!(output.contains("MANUAL §20 EStG REVIEW REQUIRED"));
+        let rows: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("SHORT_POSITION,"))
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].ends_with("-50.00"),
+            "row must carry the signed quantity: {}",
+            rows[0]
+        );
+
+        let empty = GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        let empty_output = render(|w| CsvFormatter::write_short_positions(w, &empty));
+        assert!(
+            empty_output.is_empty(),
+            "no section without short positions"
+        );
     }
 }

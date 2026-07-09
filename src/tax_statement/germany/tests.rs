@@ -202,6 +202,30 @@ fn vorabpauschale_carryforward_reduces_fund_sale_gain() {
     assert!(german.vorabpauschale.is_empty());
 }
 
+/// Short positions get no tax computation: they are reported separately for manual §20 review and
+/// never enter the cost-basis reconciliation. The fixture holds a long EUNL position (reconciled
+/// against its buy) and a short −50 TSLA; only the short lands in `short_positions`.
+///
+/// Enabled by T12b (short-position reporting).
+#[test]
+fn short_positions_reported_for_manual_review() {
+    let german = run_pipeline("short_position", 2024);
+
+    assert_eq!(
+        german.short_positions,
+        vec![("TSLA".to_string(), dec!(-50))]
+    );
+    // The long fund holding is not misfiled as a short.
+    assert!(
+        !german
+            .short_positions
+            .iter()
+            .any(|(symbol, _)| symbol == "EUNL")
+    );
+    // No capital gain is fabricated from the open short.
+    assert!(german.capital_gains.is_empty());
+}
+
 /// A year-end fund holding whose NAVs are not configured is flagged, not silently omitted.
 #[test]
 fn vorabpauschale_missing_nav_is_flagged() {

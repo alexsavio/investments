@@ -178,6 +178,14 @@ console warning) rather than silently omitted.
 **Simplifications:** the whole position is valued at the year-end quantity with a single acquisition
 month, and the sale-gain reduction is applied per fund (not per FIFO lot) and only on a full disposal.
 
+## Short Positions
+
+Short (negative-quantity) holdings at year end — short stock, written options — are
+Termin-/Stillhaltergeschäfte whose §20 EStG treatment the tool does not compute. Rather than dropping
+them, it lists each one in a `# SHORT POSITIONS — MANUAL §20 EStG REVIEW REQUIRED` CSV block (and emits
+a console warning), carrying the signed quantity. Classify and declare these by hand on Anlage KAP. They
+are kept out of the cost-basis reconciliation, so they never affect the computed capital gains.
+
 ## Foreign Tax Credits
 
 For dividends from foreign sources, you may have already paid withholding tax in the source country. German tax law allows crediting foreign taxes against German tax liability, subject to limits.

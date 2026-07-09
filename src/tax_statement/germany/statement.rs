@@ -230,6 +230,11 @@ pub struct GermanTaxStatement {
     /// could not be computed (ISIN, or symbol when the ISIN is absent).
     pub vorabpauschale_missing_nav: Vec<String>,
 
+    /// Short (negative-quantity) positions held at the statement's end, reported for information
+    /// only. Their §20 EStG treatment (Termingeschäfte/Stillhaltergeschäfte) is not computed and
+    /// requires manual review. Each entry is `(symbol, quantity)` with a negative quantity.
+    pub short_positions: Vec<(String, Decimal)>,
+
     // Loss carryforward pots (§20(6) EStG). `prior` is the festgestellter Verlustvortrag brought
     // in from the previous year; `next` is what carries to the following year after this year's
     // offsetting. Share-sale losses live in their own pot and never offset the general pot.
@@ -327,6 +332,7 @@ impl GermanTaxStatement {
             corporate_actions: Vec::new(),
             vorabpauschale: Vec::new(),
             vorabpauschale_missing_nav: Vec::new(),
+            short_positions: Vec::new(),
 
             loss_carryforward_stock_prior: loss_carryforward_stock,
             loss_carryforward_other_prior: loss_carryforward_other,
