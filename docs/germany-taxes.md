@@ -126,13 +126,20 @@ investment fund:
   - `Zeile 23`: contained share-sale losses.
   - `Zeile 41`: creditable foreign withholding tax.
 - **Anlage KAP-INV** — investment-fund income (any Teilfreistellung classification, **including bond
-  funds**): reported per fund type (Aktienfonds / Mischfonds / sonstige) as **gross** distributions
-  and gross sale gains/losses. Enter these gross figures as-is; the Finanzamt applies the
-  Teilfreistellung itself. The tool still applies Teilfreistellung in its own tax *estimate*, but the
-  reported KAP-INV values stay pre-exemption.
+  funds**): reported per fund type (Aktienfonds / Mischfonds / sonstige) as **gross** distributions,
+  a net sale gain/loss, and the gross gain/loss split (informational). Enter the gross figures as-is;
+  the Finanzamt applies the Teilfreistellung itself. The tool still applies Teilfreistellung in its
+  own tax *estimate*, but the reported KAP-INV values stay pre-exemption. Each row carries its form
+  Zeile:
 
-Line numbers follow the 2024/2025 Anlage KAP; the forms shift between years, so re-check them against
-the form for your filing year.
+  | Fund type | Distributions | Vorabpauschale | Sale gain/loss |
+  |---|---|---|---|
+  | Aktienfonds (equity) | Zeile 4 | Zeile 9 | Zeile 14 |
+  | Mischfonds (mixed) | Zeile 5 | Zeile 10 | Zeile 17 |
+  | sonstige (bond/other) | Zeile 8 | Zeile 13 | Zeile 26 |
+
+Anlage KAP line numbers follow the 2024/2025 form; the KAP-INV Zeilen above have been stable since the
+2018 InvStG reform. Both shift between years, so re-check them against the form for your filing year.
 
 **Altbestand on KAP:** a pure pre-2009 (Altbestand) share sale has a positive gross gain but a
 taxable amount of 0, so it contributes nothing to Zeile 19/20 — the tax-free gain is not declared as

@@ -8,12 +8,30 @@ use rust_decimal::RoundingStrategy;
 
 use crate::core::GenericResult;
 use crate::formatting;
+use crate::taxes::germany::TeilfreistellungRate;
 use crate::types::Decimal;
 
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry,
     GermanTaxStatement, InterestEntry, StockGrantEntry,
 };
+
+/// Anlage KAP-INV line numbers for one fund type: (distributions, Vorabpauschale, sale gains/losses).
+///
+/// The tool classifies funds as equity / mixed / bond; on the form those map to Aktienfonds,
+/// Mischfonds, and sonstige Investmentfonds. The form structure has been stable since the 2018 InvStG
+/// reform, so these apply across recent filing years.
+// TODO(verify): the sonstige-Investmentfonds Veräußerung line (26) is inferred from the
+// three-lines-per-fund-type layout (Aktien 14, Misch 17, …) and the Altbestand line at 27; the
+// published form image confirmed lines through 25. Re-check against the current form.
+fn kap_inv_zeilen(rate: TeilfreistellungRate) -> Option<(u32, u32, u32)> {
+    match rate {
+        TeilfreistellungRate::Equity => Some((4, 9, 14)),
+        TeilfreistellungRate::Mixed => Some((5, 10, 17)),
+        TeilfreistellungRate::Bond => Some((8, 13, 26)),
+        TeilfreistellungRate::None => None,
+    }
+}
 
 /// CSV formatter for German tax statements.
 pub struct CsvFormatter;
@@ -439,16 +457,19 @@ impl CsvFormatter {
             (
                 "AKTIENFONDS",
                 "Aktienfonds (equity 30% Teilfreistellung)",
+                TeilfreistellungRate::Equity,
                 &statement.kap_inv_equity,
             ),
             (
                 "MISCHFONDS",
                 "Mischfonds (mixed 15% Teilfreistellung)",
+                TeilfreistellungRate::Mixed,
                 &statement.kap_inv_mixed,
             ),
             (
                 "SONSTIGE",
                 "Sonstige Fonds (bond/other 0% Teilfreistellung)",
+                TeilfreistellungRate::Bond,
                 &statement.kap_inv_other,
             ),
         ];
@@ -456,7 +477,7 @@ impl CsvFormatter {
         let is_empty = |g: &super::statement::KapInvGroup| {
             g.distributions == dec!(0) && g.sale_gains == dec!(0) && g.sale_losses == dec!(0)
         };
-        if groups.iter().all(|(_, _, g)| is_empty(g)) {
+        if groups.iter().all(|(_, _, _, g)| is_empty(g)) {
             return Ok(());
         }
 
@@ -466,23 +487,40 @@ impl CsvFormatter {
             "# ANLAGE KAP-INV - Investment fund income. Enter these GROSS values; the tax office"
         )?;
         writeln!(writer, "# applies the Teilfreistellung itself.")?;
-        for (key, label, group) in groups {
+        writeln!(
+            writer,
+            "# Zeilen follow the Anlage KAP-INV form (structure stable since the 2018 InvStG reform);"
+        )?;
+        writeln!(
+            writer,
+            "# re-check the line numbers against your filing year's form."
+        )?;
+        for (key, label, rate, group) in groups {
             if is_empty(group) {
                 continue;
             }
+            let (zeile_dist, _zeile_vap, zeile_sale) = kap_inv_zeilen(rate).unwrap_or((0, 0, 0));
             writeln!(
                 writer,
-                "KAP_INV_{key}_DISTRIBUTIONS,{label} — gross distributions,{}",
+                "KAP_INV_{key}_DISTRIBUTIONS,{label} — gross distributions (Zeile {zeile_dist}),{}",
                 Self::format_decimal(group.distributions)
+            )?;
+            // The form carries one net Gewinn/Verlust line per fund type; the gross split below is
+            // informational context.
+            let net_sale = group.sale_gains - group.sale_losses;
+            writeln!(
+                writer,
+                "KAP_INV_{key}_VERAEUSSERUNG,{label} — net sale gain/loss (Zeile {zeile_sale}),{}",
+                Self::format_decimal(net_sale)
             )?;
             writeln!(
                 writer,
-                "KAP_INV_{key}_SALE_GAINS,{label} — gross sale gains,{}",
+                "KAP_INV_{key}_SALE_GAINS,{label} — gross sale gains (informational),{}",
                 Self::format_decimal(group.sale_gains)
             )?;
             writeln!(
                 writer,
-                "KAP_INV_{key}_SALE_LOSSES,{label} — gross sale losses,{}",
+                "KAP_INV_{key}_SALE_LOSSES,{label} — gross sale losses (informational),{}",
                 Self::format_decimal(group.sale_losses)
             )?;
         }
@@ -503,7 +541,8 @@ impl CsvFormatter {
             writeln!(
                 writer,
                 "# Deemed received on the first business day of {next_year}; declare it in the \
-                 {next_year} return (Anlage KAP-INV). Values in EUR."
+                 {next_year} return (Anlage KAP-INV, Vorabpauschale Zeilen 9/10/13 by fund type). \
+                 Values in EUR."
             )?;
             for entry in &statement.vorabpauschale {
                 let who = if entry.isin.is_empty() {
@@ -511,9 +550,12 @@ impl CsvFormatter {
                 } else {
                     format!("{} ({})", entry.symbol, entry.isin)
                 };
+                let vap_zeile = kap_inv_zeilen(entry.teilfreistellung_rate)
+                    .map(|z| z.1)
+                    .unwrap_or(0);
                 writeln!(
                     writer,
-                    "VORABPAUSCHALE_GROSS,{} — gross Vorabpauschale,{}",
+                    "VORABPAUSCHALE_GROSS,{} — gross Vorabpauschale (KAP-INV Zeile {vap_zeile}),{}",
                     Self::escape_csv(&who),
                     Self::format_decimal(entry.gross_vorabpauschale)
                 )?;
@@ -899,7 +941,11 @@ mod tests {
             .filter(|line| line.starts_with("KAP_INV_"))
             .collect();
 
-        assert_eq!(kap_rows.len(), 9, "three groups × three figures");
+        assert_eq!(
+            kap_rows.len(),
+            12,
+            "three groups × four figures (distributions, net Veräußerung, gross gains, gross losses)"
+        );
         for row in kap_rows {
             assert_eq!(
                 row.split(',').count(),
