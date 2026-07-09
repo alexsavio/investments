@@ -270,6 +270,8 @@ SUMMARY,,,,,Net Tax Due,,,,,,,,,,,544.19,,
 
 5. **Broker Statements:** Ensure you have complete broker statements for the entire year and any previous years for accurate cost basis tracking.
 
+6. **One account per Flex Query:** A multi-account Flex Query (several `FlexStatement` elements in one file) is rejected with an explicit error rather than processed. Export one account per query. FIFO (§20(4) S.7) is *per depot*, and the trade engine keys lots by symbol only, so pooling accounts would match sells against the wrong depot's lots and misstate gains or Altbestand status. Run each account as its own import.
+
 ## Troubleshooting
 
 ### Missing Exchange Rates
