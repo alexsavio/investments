@@ -2265,6 +2265,22 @@ mod tests {
         assert_eq!(statement.kap_zeile_19, dec!(0));
     }
 
+    #[test]
+    fn csv_kap_inv_carries_form_zeilen() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_dividend(fund_dividend_entry(dec!(500), TeilfreistellungRate::Equity));
+        statement.add_capital_gain(fund_capital_entry(dec!(1000), TeilfreistellungRate::Mixed));
+        statement.calculate_totals();
+
+        let mut csv_output = Vec::new();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv = String::from_utf8(csv_output).unwrap();
+        // Aktienfonds distributions on Zeile 4, Mischfonds net Veräußerung on Zeile 17.
+        assert!(csv.contains("gross distributions (Zeile 4)"));
+        assert!(csv.contains("net sale gain/loss (Zeile 17)"));
+    }
+
     // --- T11: Vorabpauschale (§18 InvStG) ---
 
     fn vorabpauschale_entry(
@@ -2332,8 +2348,9 @@ mod tests {
         let csv = String::from_utf8(csv_output).unwrap();
         assert!(csv.contains("VORABPAUSCHALE_GROSS"));
         assert!(csv.contains("IE00BK5BQT80"));
-        // Declared in the following year's return.
+        // Declared in the following year's return, on the equity-fund Vorabpauschale line.
         assert!(csv.contains("2025"));
+        assert!(csv.contains("KAP-INV Zeile 9"));
     }
 
     #[test]
