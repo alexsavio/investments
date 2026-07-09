@@ -132,8 +132,10 @@ impl PartialBrokerStatement {
     }
 
     /// Record a short (negative-quantity) position for informational reporting. Unlike open
-    /// positions these are not reconciled against trades or fed into tax calculation.
+    /// positions these are not reconciled against trades or fed into tax calculation. The caller
+    /// owns the sign invariant: `quantity` is expected to be negative.
     pub fn add_short_position(&mut self, symbol: &str, quantity: Decimal) {
+        debug_assert!(quantity < Decimal::ZERO, "short position {symbol} must be negative");
         self.short_positions.insert(symbol.to_owned(), quantity);
     }
 

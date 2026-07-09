@@ -622,10 +622,11 @@ impl CsvFormatter {
              declare them by hand (Anlage KAP). Quantities are negative (units still open at year end)."
         )?;
         for (symbol, quantity) in &statement.short_positions {
+            let label = format!("{symbol} — open short quantity (manual review)");
             writeln!(
                 writer,
-                "SHORT_POSITION,{} — open short quantity (manual review),{}",
-                Self::escape_csv(symbol),
+                "SHORT_POSITION,{},{}",
+                Self::escape_csv(&label),
                 Self::format_decimal(*quantity)
             )?;
         }
@@ -1014,5 +1015,35 @@ mod tests {
             empty_output.is_empty(),
             "no section without short positions"
         );
+    }
+
+    /// A symbol containing a comma must not split the SHORT_POSITION row: the whole label cell is
+    /// escaped as a unit, so a quote-aware parser still reads exactly three fields.
+    #[test]
+    fn short_position_symbol_with_comma_stays_one_field() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.short_positions = vec![("AB,C".to_string(), dec!(-10))];
+
+        let output = render(|w| CsvFormatter::write_short_positions(w, &statement));
+        let row = output
+            .lines()
+            .find(|line| line.starts_with("SHORT_POSITION,"))
+            .expect("short-position row present");
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(row.as_bytes());
+        let record = reader.records().next().unwrap().unwrap();
+        assert_eq!(
+            record.len(),
+            3,
+            "comma in symbol broke the field count: {row}"
+        );
+        assert!(
+            record[1].contains("AB,C"),
+            "label must preserve the symbol: {}",
+            &record[1]
+        );
+        assert_eq!(&record[2], "-10.00");
     }
 }
