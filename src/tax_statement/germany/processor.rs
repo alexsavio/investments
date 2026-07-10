@@ -298,6 +298,7 @@ fn process_trades(
             cost_basis_eur,
             proceeds_eur: net_proceeds_eur,
             gross_gain_loss,
+            taxable_before_exemption,
             teilfreistellung_rate,
             // Direct shares (no fund classification) drive the §20(6) stock loss pot.
             is_stock: teilfreistellung_rate == TeilfreistellungRate::None,
@@ -1137,6 +1138,7 @@ mod tests {
             cost_basis_eur: dec!(1500.00),
             proceeds_eur: dec!(2000.00),
             gross_gain_loss: dec!(500.00),
+            taxable_before_exemption: dec!(500.00),
             teilfreistellung_rate: TeilfreistellungRate::None,
             is_stock: true,
             taxable_amount: dec!(500.00),
@@ -1161,6 +1163,7 @@ mod tests {
             cost_basis_eur: dec!(1800.00),
             proceeds_eur: dec!(1600.00),
             gross_gain_loss: dec!(-200.00),
+            taxable_before_exemption: dec!(-200.00),
             teilfreistellung_rate: TeilfreistellungRate::None,
             is_stock: true,
             taxable_amount: dec!(-200.00),
@@ -1277,6 +1280,8 @@ mod tests {
             cost_basis_eur: dec!(1000.00),
             proceeds_eur: dec!(5000.00),
             gross_gain_loss: dec!(4000.00),
+            // Pure Altbestand: all profit is pre-2009 excluded, so the pre-Teilfreistellung base is 0.
+            taxable_before_exemption: dec!(0),
             teilfreistellung_rate: TeilfreistellungRate::None,
             is_stock: true,
             // Post-T2 a pure Altbestand sale has its pre-2009 profit excluded, so the taxable
@@ -1361,6 +1366,7 @@ mod tests {
                 cost_basis_eur: dec!(1000.00) + Decimal::from(i * 10),
                 proceeds_eur: dec!(1200.00) + Decimal::from(i * 12),
                 gross_gain_loss: dec!(200.00) + Decimal::from(i * 2),
+                taxable_before_exemption: dec!(200.00) + Decimal::from(i * 2),
                 teilfreistellung_rate: if i % 3 == 0 {
                     TeilfreistellungRate::Equity
                 } else if i % 3 == 1 {
@@ -1479,6 +1485,7 @@ mod tests {
             cost_basis_eur: dec!(1111.11),
             proceeds_eur: dec!(2222.22),
             gross_gain_loss: dec!(1111.11),
+            taxable_before_exemption: dec!(1111.11),
             teilfreistellung_rate: TeilfreistellungRate::None,
             is_stock: true,
             taxable_amount: dec!(1111.11),
@@ -1641,6 +1648,7 @@ mod tests {
             cost_basis_eur: dec!(1000.00),
             proceeds_eur: dec!(1200.00),
             gross_gain_loss: dec!(200.00),
+            taxable_before_exemption: dec!(200.00),
             teilfreistellung_rate: TeilfreistellungRate::None,
             is_stock: true,
             taxable_amount: dec!(200.00),
@@ -1963,6 +1971,7 @@ mod tests {
             cost_basis_eur: dec!(3000.00),
             proceeds_eur: dec!(4000.00),
             gross_gain_loss: dec!(1000.00),
+            taxable_before_exemption: dec!(1000.00),
             teilfreistellung_rate: TeilfreistellungRate::None,
             is_stock: true,
             taxable_amount: dec!(1000.00),
@@ -2087,6 +2096,7 @@ mod tests {
             cost_basis_eur: dec!(0),
             proceeds_eur: taxable,
             gross_gain_loss: taxable,
+            taxable_before_exemption: taxable,
             teilfreistellung_rate: TeilfreistellungRate::None,
             is_stock: true,
             taxable_amount: taxable,

@@ -845,6 +845,7 @@ mod tests {
                     cost_basis_eur: dec!(1000),
                     proceeds_eur: dec!(1250),
                     gross_gain_loss: dec!(250),
+                    taxable_before_exemption: dec!(250),
                     teilfreistellung_rate: TeilfreistellungRate::None,
                     is_stock: true,
                     taxable_amount: dec!(250),
