@@ -198,6 +198,10 @@ fn vorabpauschale_carryforward_reduces_fund_sale_gain() {
     assert_eq!(sale.gross_gain_loss, dec!(2000));
     assert_eq!(sale.taxable_amount, dec!(1190));
     assert!(sale.notes.as_deref().unwrap().contains("§19"));
+    // The Anlage KAP-INV Veräußerung line must carry the §19-reduced gross (2000 − 300 = 1700),
+    // not the raw 2000 — otherwise the filed figure re-taxes the already-taxed Vorabpauschale.
+    assert_eq!(sale.taxable_before_exemption, dec!(1700));
+    assert_eq!(german.kap_inv_equity.sale_gains, dec!(1700));
     // Nothing held at year end, so there is no Vorabpauschale to compute.
     assert!(german.vorabpauschale.is_empty());
 }

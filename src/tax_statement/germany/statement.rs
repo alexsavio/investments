@@ -21,6 +21,10 @@ pub struct CapitalGainEntry {
     pub cost_basis_eur: Decimal,
     pub proceeds_eur: Decimal,
     pub gross_gain_loss: Decimal,
+    /// Gain/loss after the §19 InvStG Vorabpauschale reduction and the Altbestand exclusion, but
+    /// before Teilfreistellung. This is the value reported on Anlage KAP-INV (the Finanzamt applies
+    /// Teilfreistellung); for a non-fund entry with neither adjustment it equals `gross_gain_loss`.
+    pub taxable_before_exemption: Decimal,
     pub teilfreistellung_rate: TeilfreistellungRate,
     /// True for direct shares (Aktien) — no fund classification. Drives the §20(6) stock loss pot;
     /// fund/ETF units (any Teilfreistellung classification, incl. Bond) are false and use the
@@ -617,10 +621,12 @@ impl GermanTaxStatement {
                 TeilfreistellungRate::Bond => &mut other,
                 TeilfreistellungRate::None => continue,
             };
-            if entry.gross_gain_loss >= dec!(0) {
-                group.sale_gains += entry.gross_gain_loss;
+            // Report the §19-reduced, Altbestand-adjusted gross (pre-Teilfreistellung), so the filed
+            // KAP-INV figure matches the tool's own tax estimate and does not re-tax the Vorabpauschale.
+            if entry.taxable_before_exemption >= dec!(0) {
+                group.sale_gains += entry.taxable_before_exemption;
             } else {
-                group.sale_losses += -entry.gross_gain_loss;
+                group.sale_losses += -entry.taxable_before_exemption;
             }
         }
 
