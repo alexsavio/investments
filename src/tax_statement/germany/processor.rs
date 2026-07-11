@@ -133,13 +133,15 @@ fn process_trades(
     let country = crate::localities::germany(tax_config);
     let pre_2009_cutoff = Date::from_ymd_opt(2009, 1, 1).unwrap();
 
-    // Funds still held at year end (used to detect full disposals for the §19 Vorabpauschale
-    // reduction) and the set of ISINs whose accumulated Vorabpauschale has already been applied.
-    let held_symbols: HashSet<&str> = broker_statement
-        .open_positions
-        .iter()
-        .filter(|(_, qty)| **qty > dec!(0))
-        .map(|(symbol, _)| symbol.as_str())
+    // ISINs still held at the tax-year boundary (used to detect full disposals for the §19
+    // Vorabpauschale reduction), keyed by ISIN so the same fund under two symbols is not judged
+    // "fully disposed" while one leg is still open, and the set of ISINs whose accumulated
+    // Vorabpauschale has already been applied.
+    let held_isins: HashSet<String> = year_end_holdings(broker_statement, year)
+        .keys()
+        .filter_map(|symbol| broker_statement.instrument_info.get(symbol))
+        .filter_map(|info| info.isin.iter().next())
+        .map(|isin| isin.to_string())
         .collect();
     let mut vp_consumed: HashSet<String> = HashSet::new();
 
@@ -246,7 +248,7 @@ fn process_trades(
         let mut vp_note: Option<String> = None;
         if teilfreistellung_rate != TeilfreistellungRate::None && !isin.is_empty() {
             let carryforward = tax_config.german_vorabpauschale_carryforward(&isin);
-            let fully_disposed = !held_symbols.contains(trade.symbol.as_str());
+            let fully_disposed = !held_isins.contains(&isin);
             if carryforward > dec!(0) && fully_disposed && vp_consumed.insert(isin.clone()) {
                 vp_reduction = carryforward;
                 vp_note = Some(format!(
@@ -507,6 +509,34 @@ fn creditable_foreign_tax(
         .max(dec!(0))
 }
 
+/// Long holdings as of 31 December of `year`, recovered from the statement's end-of-period snapshot
+/// by undoing any trades executed after the tax year.
+///
+/// `open_positions` is the broker's snapshot at the statement's *last* date, which is only the
+/// year-end snapshot when the statement ends at the tax year. When it extends past (e.g. a
+/// multi-year statement used to file a prior year), this rewinds post-year-end buys/sells so
+/// Vorabpauschale quantities and §19 full-disposal detection are judged as of the year boundary.
+/// Splits or corporate actions occurring after the boundary are not re-derived — a rare edge the
+/// manual-NAV model already approximates.
+fn year_end_holdings(broker_statement: &BrokerStatement, year: i32) -> HashMap<String, Decimal> {
+    let year_end = Date::from_ymd_opt(year, 12, 31).expect("31 December is always a valid date");
+    let mut holdings = broker_statement.open_positions.clone();
+
+    for buy in &broker_statement.stock_buys {
+        if buy.conclusion_time.date > year_end {
+            *holdings.entry(buy.symbol.clone()).or_insert(dec!(0)) -= buy.quantity;
+        }
+    }
+    for sell in &broker_statement.stock_sells {
+        if sell.conclusion_time.date > year_end {
+            *holdings.entry(sell.symbol.clone()).or_insert(dec!(0)) += sell.quantity;
+        }
+    }
+
+    holdings.retain(|_, qty| *qty > dec!(0));
+    holdings
+}
+
 /// Compute the Vorabpauschale (§18 InvStG) for every fund held at year end.
 ///
 /// The advance lump sum for a fund held on 31 December is deemed received on the first business day
@@ -533,15 +563,13 @@ fn process_vorabpauschale(
         }
     }
 
-    // Deterministic iteration order over year-end holdings.
-    let mut positions: Vec<(&String, &Decimal)> = broker_statement.open_positions.iter().collect();
+    // Holdings as of 31 December of the tax year (not the statement's last-date snapshot), in a
+    // deterministic iteration order.
+    let holdings = year_end_holdings(broker_statement, year);
+    let mut positions: Vec<(&String, &Decimal)> = holdings.iter().collect();
     positions.sort_by(|a, b| a.0.cmp(b.0));
 
     for (symbol, &quantity) in positions {
-        if quantity <= dec!(0) {
-            continue;
-        }
-
         let isin = broker_statement
             .instrument_info
             .get(symbol)

@@ -1,0 +1,13 @@
+<FlexQueryResponse queryName="german-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20240101" toDate="20250630" period="Custom" whenGenerated="20250701;120000">
+      <CashReport>
+        <CashReportCurrency currency="EUR" endingCash="2000" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <Trades>
+        <Trade currency="EUR" symbol="EUNL" isin="IE00B4L5Y983" description="ISHARES CORE MSCI WORLD" assetCategory="STK" dateTime="20240102;100000" settleDate="20240104" quantity="100" tradePrice="80" tradeMoney="-8000" ibCommission="0" buySell="BUY" openCloseIndicator="O"/>
+        <Trade currency="EUR" symbol="EUNL" isin="IE00B4L5Y983" description="ISHARES CORE MSCI WORLD" assetCategory="STK" dateTime="20250301;100000" settleDate="20250303" quantity="-100" tradePrice="100" tradeMoney="10000" ibCommission="0" buySell="SELL" openCloseIndicator="C"/>
+      </Trades>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>
