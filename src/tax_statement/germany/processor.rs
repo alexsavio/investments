@@ -537,6 +537,24 @@ fn year_end_holdings(broker_statement: &BrokerStatement, year: i32) -> HashMap<S
     holdings
 }
 
+/// Month (1–12) in which a fund position was first acquired within `year`, taken from the trade
+/// history for the Zwölftelung when the config does not pin `acquired_month`. Returns `None` when
+/// the earliest buy predates the tax year (held from the year's start → no proration) or is absent.
+/// A position of mixed vintage is approximated by its earliest buy, per the year-end-snapshot model.
+fn derive_acquired_month(
+    broker_statement: &BrokerStatement,
+    symbol: &str,
+    year: i32,
+) -> Option<u32> {
+    let earliest = broker_statement
+        .stock_buys
+        .iter()
+        .filter(|buy| buy.symbol == symbol)
+        .map(|buy| buy.conclusion_time.date)
+        .min()?;
+    (earliest.year() == year).then(|| earliest.month())
+}
+
 /// Compute the Vorabpauschale (§18 InvStG) for every fund held at year end.
 ///
 /// The advance lump sum for a fund held on 31 December is deemed received on the first business day
@@ -611,7 +629,12 @@ fn process_vorabpauschale(
         let distributions = distributions_by_isin.get(&isin).copied().unwrap_or(dec!(0));
         let nav_jan1 = nav.jan1 * quantity;
         let nav_dec31 = nav.dec31 * quantity;
-        let months_before = full_months_before_acquisition(nav.acquired_month);
+        // Config pins the acquisition month when set; otherwise derive it from the trade history so a
+        // fund first bought mid-year is prorated (Zwölftelung) instead of silently assumed full-year.
+        let acquired_month = nav
+            .acquired_month
+            .or_else(|| derive_acquired_month(broker_statement, symbol, year));
+        let months_before = full_months_before_acquisition(acquired_month);
 
         let gross = vorabpauschale(nav_jan1, nav_dec31, distributions, basiszins, months_before);
         let taxable = apply_teilfreistellung(gross, &rate);
