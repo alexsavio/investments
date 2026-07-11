@@ -230,6 +230,41 @@ fn short_positions_reported_for_manual_review() {
     assert!(german.capital_gains.is_empty());
 }
 
+/// Vorabpauschale uses holdings as of 31 December of the tax year, not the statement's last-date
+/// snapshot. The statement runs into mid-2025; EUNL is held at end of 2024 but sold in March 2025,
+/// so it is absent from the end-of-statement open positions. The 2024 Vorabpauschale must still be
+/// computed on the 100 units held on 31 Dec 2024 (gross 128.24, as in the single-year case).
+///
+/// Enabled by T12/HIGH-2 (tax-year-end holdings reconstruction).
+#[test]
+fn vorabpauschale_uses_tax_year_end_holdings_not_statement_end() {
+    let mut tax_config = TaxConfig::default();
+    tax_config.etf_classification.insert(
+        "IE00B4L5Y983".to_string(),
+        crate::instruments::EtfClassification::Equity,
+    );
+    let mut by_year = std::collections::BTreeMap::new();
+    by_year.insert(
+        2024,
+        crate::taxes::FundNav {
+            jan1: dec!(80),
+            dec31: dec!(92),
+            acquired_month: None,
+        },
+    );
+    tax_config
+        .fund_nav
+        .insert("IE00B4L5Y983".to_string(), by_year);
+
+    let german = run_pipeline_with_config("vorabpauschale_post_year_end_sale", 2024, &tax_config);
+
+    assert_eq!(german.vorabpauschale.len(), 1);
+    assert_eq!(german.vorabpauschale[0].quantity, dec!(100));
+    assert_eq!(german.vorabpauschale[0].gross_vorabpauschale, dec!(128.24));
+    // The 2025 sale is not a 2024 capital gain.
+    assert!(german.capital_gains.is_empty());
+}
+
 /// A year-end fund holding whose NAVs are not configured is flagged, not silently omitted.
 #[test]
 fn vorabpauschale_missing_nav_is_flagged() {
