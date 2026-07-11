@@ -569,6 +569,12 @@ fn process_vorabpauschale(
     let mut positions: Vec<(&String, &Decimal)> = holdings.iter().collect();
     positions.sort_by(|a, b| a.0.cmp(b.0));
 
+    // The Basiszins is year-wide. If the tool ships no default and the user has not configured it,
+    // no Vorabpauschale can be computed — degrade gracefully (warn and skip) rather than aborting
+    // the whole report, mirroring the missing-NAV handling below.
+    let basiszins = tax_config.german_basiszins(year).ok();
+    let mut missing_basiszins = false;
+
     for (symbol, &quantity) in positions {
         let isin = broker_statement
             .instrument_info
@@ -598,7 +604,10 @@ fn process_vorabpauschale(
             continue;
         };
 
-        let basiszins = tax_config.german_basiszins(year)?;
+        let Some(basiszins) = basiszins else {
+            missing_basiszins = true;
+            continue;
+        };
         let distributions = distributions_by_isin.get(&isin).copied().unwrap_or(dec!(0));
         let nav_jan1 = nav.jan1 * quantity;
         let nav_dec31 = nav.dec31 * quantity;
@@ -629,6 +638,13 @@ fn process_vorabpauschale(
             accumulated_after,
             notes: None,
         });
+    }
+
+    if missing_basiszins {
+        warn!(
+            "Vorabpauschale (§18 InvStG) not computed for year-end fund holdings: no Basiszins known \
+             for {year}. The BMF publishes it each January; set `taxes.basiszins.{year}` in the config."
+        );
     }
 
     if !statement.vorabpauschale_missing_nav.is_empty() {
