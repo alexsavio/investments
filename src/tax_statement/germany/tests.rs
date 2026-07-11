@@ -281,6 +281,38 @@ fn vorabpauschale_missing_nav_is_flagged() {
     assert_eq!(german.vorabpauschale_missing_nav, vec!["IE00B4L5Y983"]);
 }
 
+/// A year with no shipped default and no configured Basiszins warns and skips the Vorabpauschale
+/// instead of aborting the whole report. NAV is configured for 2027, so this exercises the missing
+/// Basiszins path specifically (not the missing-NAV one).
+#[test]
+fn vorabpauschale_missing_basiszins_skips_without_aborting() {
+    let mut tax_config = TaxConfig::default();
+    tax_config.etf_classification.insert(
+        "IE00B4L5Y983".to_string(),
+        crate::instruments::EtfClassification::Equity,
+    );
+    let mut by_year = std::collections::BTreeMap::new();
+    by_year.insert(
+        2027,
+        crate::taxes::FundNav {
+            jan1: dec!(80),
+            dec31: dec!(92),
+            acquired_month: None,
+        },
+    );
+    tax_config
+        .fund_nav
+        .insert("IE00B4L5Y983".to_string(), by_year);
+    // No taxes.basiszins entry for 2027, and the tool ships no default beyond 2025.
+
+    // Must not panic: process_broker_statement returns Ok, so the rest of the report still generates.
+    let german = run_pipeline_with_config("vorabpauschale", 2027, &tax_config);
+
+    assert!(german.vorabpauschale.is_empty());
+    // The NAV is present, so this is a missing-Basiszins skip, not a missing-NAV one.
+    assert!(german.vorabpauschale_missing_nav.is_empty());
+}
+
 // The IB Flex parser's income-dedup and edge-row handling (T3) is verified next to the parser
 // itself in `broker_statement::ib::flex_query` (the `FlexQueryResponse` type is private to that
 // module), against the shared `income_edge` fixture in this module's `testdata/` directory.
