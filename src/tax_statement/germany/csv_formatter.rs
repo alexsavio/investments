@@ -545,6 +545,11 @@ impl CsvFormatter {
                  {next_year} return (Anlage KAP-INV, Vorabpauschale Zeilen 9/10/13 by fund type). \
                  Values in EUR."
             )?;
+            writeln!(
+                writer,
+                "# The estimated tax below is a gross figure at the full rate; it ignores next \
+                 year's Sparer-Pauschbetrag and any loss offset, so the actual liability may be lower."
+            )?;
             for entry in &statement.vorabpauschale {
                 let who = if entry.isin.is_empty() {
                     entry.symbol.clone()
@@ -556,26 +561,37 @@ impl CsvFormatter {
                     .unwrap_or(0);
                 writeln!(
                     writer,
-                    "VORABPAUSCHALE_GROSS,{} — gross Vorabpauschale (KAP-INV Zeile {vap_zeile}),{}",
-                    Self::escape_csv(&who),
+                    "VORABPAUSCHALE_GROSS,{},{}",
+                    Self::escape_csv(&format!(
+                        "{who} — gross Vorabpauschale (KAP-INV Zeile {vap_zeile})"
+                    )),
                     Self::format_decimal(entry.gross_vorabpauschale)
                 )?;
                 writeln!(
                     writer,
-                    "VORABPAUSCHALE_TAXABLE,{} — taxable after Teilfreistellung,{}",
-                    Self::escape_csv(&entry.symbol),
+                    "VORABPAUSCHALE_TAXABLE,{},{}",
+                    Self::escape_csv(&format!(
+                        "{} — taxable after Teilfreistellung",
+                        entry.symbol
+                    )),
                     Self::format_decimal(entry.taxable_amount)
                 )?;
                 writeln!(
                     writer,
-                    "VORABPAUSCHALE_TAX,{} — estimated tax (Abgelt.+Soli+KiSt),{}",
-                    Self::escape_csv(&entry.symbol),
+                    "VORABPAUSCHALE_TAX,{},{}",
+                    Self::escape_csv(&format!(
+                        "{} — estimated tax (Abgelt.+Soli+KiSt)",
+                        entry.symbol
+                    )),
                     Self::format_decimal(entry.total_tax)
                 )?;
                 writeln!(
                     writer,
-                    "VORABPAUSCHALE_CARRYFORWARD,{} — accumulated gross for next year's config,{}",
-                    Self::escape_csv(&entry.symbol),
+                    "VORABPAUSCHALE_CARRYFORWARD,{},{}",
+                    Self::escape_csv(&format!(
+                        "{} — accumulated gross for next year's config",
+                        entry.symbol
+                    )),
                     Self::format_decimal(entry.accumulated_after)
                 )?;
             }
@@ -1046,5 +1062,56 @@ mod tests {
             &record[1]
         );
         assert_eq!(&record[2], "-10.00");
+    }
+
+    /// A fund symbol containing a comma must not split a VORABPAUSCHALE_* row: the whole label cell
+    /// is escaped as a unit, so a quote-aware parser still reads exactly three fields.
+    #[test]
+    fn vorabpauschale_symbol_with_comma_stays_one_field() {
+        use super::super::statement::VorabpauschaleEntry;
+
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_vorabpauschale(VorabpauschaleEntry {
+            arising_year: 2024,
+            deemed_received: Date::from_ymd_opt(2025, 1, 2).unwrap(),
+            symbol: "AB,C".to_string(),
+            isin: "IE00B4L5Y983".to_string(),
+            quantity: dec!(100),
+            nav_jan1: dec!(8000),
+            nav_dec31: dec!(9200),
+            distributions: dec!(0),
+            basiszins: dec!(0.0229),
+            teilfreistellung_rate: TeilfreistellungRate::Equity,
+            gross_vorabpauschale: dec!(128.24),
+            taxable_amount: dec!(89.77),
+            abgeltungssteuer: dec!(0),
+            solidaritaetszuschlag: dec!(0),
+            kirchensteuer: dec!(0),
+            total_tax: dec!(0),
+            accumulated_after: dec!(128.24),
+            notes: None,
+        });
+
+        let output = render(|w| CsvFormatter::write_vorabpauschale(w, &statement));
+        let row = output
+            .lines()
+            .find(|line| line.starts_with("VORABPAUSCHALE_GROSS,"))
+            .expect("Vorabpauschale gross row present");
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(row.as_bytes());
+        let record = reader.records().next().unwrap().unwrap();
+        assert_eq!(
+            record.len(),
+            3,
+            "comma in symbol broke the field count: {row}"
+        );
+        assert!(
+            record[1].contains("AB,C"),
+            "label must preserve the symbol: {}",
+            &record[1]
+        );
+        assert_eq!(&record[2], "128.24");
     }
 }
