@@ -166,7 +166,8 @@ supplied by hand in config:
 - `taxes.basiszins.<year>` — the BMF Basiszins (fraction). The tool ships the statutory 2023 (2.55%),
   2024 (2.29%), and 2025 (2.53%) values; set this only to override or add a year.
 - `taxes.fund_nav.<ISIN>.<year>` — `jan1` / `dec31` redemption price (EUR per unit) and an optional
-  `acquired_month` (1–12) for the Zwölftelung.
+  `acquired_month` (1–12) for the Zwölftelung. When omitted, the acquisition month is derived from the
+  trade history (a fund first bought mid-year is prorated); set it only to override that.
 - `taxes.vorabpauschale_carryforward.<ISIN>` — accumulated gross Vorabpauschale already taxed in
   prior years. On a **full** fund disposal it reduces the sale gain in full and before Teilfreistellung
   (§19 InvStG); the tool notes when to reset it. The CSV also prints the running accumulated figure
@@ -175,8 +176,12 @@ supplied by hand in config:
 A fund held at year end whose NAVs are not configured is reported in a `# WARNING` CSV block (and a
 console warning) rather than silently omitted.
 
-**Simplifications:** the whole position is valued at the year-end quantity with a single acquisition
-month, and the sale-gain reduction is applied per fund (not per FIFO lot) and only on a full disposal.
+Holdings are taken as of 31 December of the tax year (reconstructed from the trade history when the
+statement extends past year-end), not the statement's last-date snapshot.
+
+**Simplifications:** a position of mixed vintage (partly held from the year's start, partly bought
+mid-year) is approximated by a single acquisition month, and the sale-gain reduction is applied per
+fund (not per FIFO lot) and only on a full disposal.
 
 ## Short Positions
 

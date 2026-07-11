@@ -265,6 +265,37 @@ fn vorabpauschale_uses_tax_year_end_holdings_not_statement_end() {
     assert!(german.capital_gains.is_empty());
 }
 
+/// When the config does not pin `acquired_month`, the Zwölftelung is derived from the trade history:
+/// EUNL bought 15 Apr 2024 (3 full months before the acquisition month) → 9/12 of the full-year
+/// figure. Full VP = 8000 × 0.0229 × 0.7 = 128.24; prorated = 128.24 × 9/12 = 96.18.
+///
+/// Enabled by T12/LOW-6 (derive acquisition month from trades).
+#[test]
+fn vorabpauschale_prorates_derived_midyear_acquisition() {
+    let mut tax_config = TaxConfig::default();
+    tax_config.etf_classification.insert(
+        "IE00B4L5Y983".to_string(),
+        crate::instruments::EtfClassification::Equity,
+    );
+    let mut by_year = std::collections::BTreeMap::new();
+    by_year.insert(
+        2024,
+        crate::taxes::FundNav {
+            jan1: dec!(80),
+            dec31: dec!(92),
+            acquired_month: None, // not pinned — derived from the 15 Apr 2024 buy
+        },
+    );
+    tax_config
+        .fund_nav
+        .insert("IE00B4L5Y983".to_string(), by_year);
+
+    let german = run_pipeline_with_config("vorabpauschale_midyear", 2024, &tax_config);
+
+    assert_eq!(german.vorabpauschale.len(), 1);
+    assert_eq!(german.vorabpauschale[0].gross_vorabpauschale, dec!(96.18));
+}
+
 /// A year-end fund holding whose NAVs are not configured is flagged, not silently omitted.
 #[test]
 fn vorabpauschale_missing_nav_is_flagged() {
