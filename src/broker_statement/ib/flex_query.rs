@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
 use crate::broker_statement::grants::StockGrant;
-use crate::broker_statement::interest::{IdleCashInterest, FxGain, ForeignCashFlow};
+use crate::broker_statement::interest::{IdleCashInterest, ForeignCashFlow};
 use crate::broker_statement::partial::PartialBrokerStatement;
 use crate::broker_statement::trades::{StockBuy, StockSell};
 use crate::broker_statement::{Fee, Withholding};
@@ -475,9 +475,6 @@ impl FlexStatement {
         // unless we can detect them from CashReport
         statement.set_has_starting_assets(false)?;
 
-        // Per-currency starting balances drive the FX margin-loan classification below.
-        let balances = CurrencyBalances::from_cash_report(self.cash_report.as_ref());
-
         // Parse cash balances from CashReport
         if let Some(ref cash_report) = self.cash_report {
             for currency_report in &cash_report.currencies {
@@ -553,8 +550,6 @@ impl FlexStatement {
         // in both would be double-counted. Suppress a StmtFunds income type only when the
         // CashTransactions section actually carries that same type (per-type, so a present-but-empty
         // — or fees-only — CashTransactions section never silently drops StmtFunds income).
-        // Likewise skip FOREX when the richer FxTransactions section exists.
-        let has_fx_transactions = self.fx_transactions.is_some();
         let cash_income = self
             .cash_transactions
             .as_ref()
@@ -562,13 +557,7 @@ impl FlexStatement {
             .unwrap_or_default();
         if let Some(ref stmtfunds) = self.statement_of_funds {
             for line in &stmtfunds.lines {
-                parse_statement_of_funds_dividend(
-                    &mut statement,
-                    line,
-                    has_fx_transactions,
-                    cash_income,
-                    &balances,
-                )?;
+                parse_statement_of_funds_dividend(&mut statement, line, cash_income)?;
             }
 
             // Capture the raw per-currency cash-flow ledger, replayed by the German FX FIFO to
@@ -601,14 +590,10 @@ impl FlexStatement {
             }
         }
 
-        // Parse FX transactions for realized FX P&L
-        // FxTransactions section has accurate realizedPL values (preferred over StmtFunds FOREX)
-        // Also extract functional currency for stock grant FMV conversion
+        // Extract the functional (base) currency from FX transactions for stock-grant FMV conversion.
         let mut functional_currency: Option<String> = None;
         if let Some(ref fx_transactions) = self.fx_transactions {
             for tx in &fx_transactions.transactions {
-                parse_fx_transaction(&mut statement, tx, &balances)?;
-                // Get the functional currency from FX transactions (they all should have the same one)
                 if functional_currency.is_none() && !tx.functional_currency.is_empty() {
                     functional_currency = Some(tx.functional_currency.clone());
                 }
@@ -696,11 +681,10 @@ fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: 
     Ok(())
 }
 
-/// Parse dividend, withholding tax, interest, and FX gain entries from Statement of Funds section.
+/// Parse dividend, withholding tax, and interest entries from the Statement of Funds section.
 /// `cash_income` records which income types the CashTransactions section already carries; those
-/// types are skipped here (that section is authoritative) so income is not counted twice. If
-/// `skip_forex` is true, FOREX entries are skipped because the FxTransactions section is available.
-fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, line: &StatementOfFundsLine, skip_forex: bool, cash_income: CashTxIncome, balances: &CurrencyBalances) -> EmptyResult {
+/// types are skipped here (that section is authoritative) so income is not counted twice.
+fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, line: &StatementOfFundsLine, cash_income: CashTxIncome) -> EmptyResult {
     // Only process from base currency lines to avoid duplicates
     // (entries appear in both Currency and BaseCurrency detail levels)
     if line.level_of_detail != "BaseCurrency" {
@@ -752,46 +736,6 @@ fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, lin
             statement.idle_cash_interest.push(IdleCashInterest::new(date, amount));
             log::debug!("Credit interest: {} on {}", amount, date);
         }
-        // Forex transaction - the amount field carries IB's realized FX P&L. This fallback path is
-        // only used when the richer FxTransactions section is absent.
-        //
-        // For German tax purposes (§20 Abs. 2 Nr. 7 EStG):
-        // - FX gains on interest-bearing currency accounts are taxable as capital income
-        // - FX gains/losses from margin loan repayments are NOT taxable
-        //   (Tilgung eines Fremdwährungskredits - debt repayment is not a taxable event)
-        "FOREX" if !skip_forex && line.amount != Decimal::ZERO => {
-            let currency_pair = if !line.symbol.is_empty() {
-                line.symbol.clone()
-            } else {
-                "FOREX".to_string()
-            };
-            let gain_amount = Cash::new(&line.currency, line.amount);
-
-            // Classify by the converted currency's balance sign, not by trade magnitude. The line's
-            // own currency is the account base (the P&L is the "Net Amount in Base"); a negative
-            // base balance is an ordinary home-currency margin loan, not a Fremdwährungskredit, so
-            // drop the base leg and let only a borrowed FOREIGN currency exempt the disposal. With
-            // no foreign leg left, fx_is_margin_loan fails open to taxable.
-            let mut currencies: Vec<&str> =
-                line.symbol.split('.').filter(|c| c.len() == 3).collect();
-            currencies.retain(|c| *c != line.currency);
-            let is_margin_loan =
-                fx_is_margin_loan(balances, &currencies, &line.activity_description);
-
-            statement.fx_gains.push(FxGain::new(
-                date,
-                gain_amount,
-                currency_pair,
-                line.activity_description.clone(),
-                is_margin_loan,
-            ));
-
-            if is_margin_loan {
-                log::debug!("FX margin loan (StmtFunds): {} on {} ({})", gain_amount, date, line.activity_description);
-            } else {
-                log::debug!("FX taxable (StmtFunds): {} on {} ({})", gain_amount, date, line.activity_description);
-            }
-        }
         _ => {}
     }
 
@@ -837,112 +781,6 @@ fn build_foreign_cash_flows(stmtfunds: &StatementOfFunds) -> GenericResult<Vec<F
         });
     }
     Ok(flows)
-}
-
-/// Parse FX transaction from FxTransactions section.
-/// This section provides accurate realized P&L values for FX gains/losses.
-///
-/// For German tax purposes (§20 Abs. 2 Nr. 7 EStG):
-/// - FX gains on interest-bearing currency accounts are taxable as capital income
-/// - FX gains/losses from margin loan repayments are NOT taxable
-///   (Tilgung eines Fremdwährungskredits - debt repayment is not a taxable event)
-///
-/// The FxTransactions section is preferred over StmtFunds FOREX entries because:
-/// 1. It has the actual realizedPL field (not just the position impact)
-/// 2. The description indicates what triggered the FX transaction (CASH vs STK)
-fn parse_fx_transaction(statement: &mut PartialBrokerStatement, tx: &FxTransactionEntry, balances: &CurrencyBalances) -> EmptyResult {
-    // Skip entries with zero realized P&L
-    if tx.realized_pl == Decimal::ZERO {
-        return Ok(());
-    }
-
-    let date = parse_flex_datetime(&tx.date_time)?;
-
-    // Build currency pair from functional currency and FX currency
-    let currency_pair = format!("{}.{}", tx.functional_currency, tx.fx_currency);
-
-    // The P&L is in functional currency (account's base currency, e.g., EUR or USD)
-    // Conversion to EUR for German tax purposes happens in the tax processor
-    let gain_amount = Cash::new(&tx.functional_currency, tx.realized_pl);
-
-    // A conversion of the foreign currency repays a margin loan only when that currency was
-    // borrowed (negative balance); otherwise it is a taxable disposal.
-    let is_margin_loan =
-        fx_is_margin_loan(balances, &[&tx.fx_currency], &tx.activity_description);
-
-    statement.fx_gains.push(FxGain::new(
-        date,
-        gain_amount,
-        currency_pair,
-        tx.activity_description.clone(),
-        is_margin_loan,
-    ));
-
-    if is_margin_loan {
-        log::debug!("FX margin loan (FxTransactions): {} on {} ({})", gain_amount, date, tx.activity_description);
-    } else {
-        log::debug!("FX taxable (FxTransactions): {} on {} ({})", gain_amount, date, tx.activity_description);
-    }
-
-    Ok(())
-}
-
-/// Per-currency cash balances seeded from the CashReport starting balances.
-///
-/// Used to classify FX conversions: only a conversion that repays a *borrowed* (negative-balance)
-/// currency is a non-taxable margin-loan repayment (Tilgung Fremdwährungskredit,
-/// BMF 19.05.2022 Rz. 131). This replaces the previous magnitude heuristic, which silently exempted
-/// any large conversion regardless of whether a loan existed.
-#[derive(Default)]
-struct CurrencyBalances {
-    starting: std::collections::HashMap<String, Decimal>,
-}
-
-impl CurrencyBalances {
-    fn from_cash_report(report: Option<&CashReport>) -> CurrencyBalances {
-        let mut starting = std::collections::HashMap::new();
-        if let Some(report) = report {
-            for row in &report.currencies {
-                // Skip the BASE_SUMMARY aggregate and any non-ISO placeholder currency.
-                if row.currency == "BASE_SUMMARY" || row.currency.len() != 3 {
-                    continue;
-                }
-                starting.insert(row.currency.clone(), row.starting_cash);
-            }
-        }
-        CurrencyBalances { starting }
-    }
-
-    /// `Some(true)` if the currency was carried as a loan (negative starting balance), `Some(false)`
-    /// if held non-negative, `None` if no balance is known for it.
-    fn borrowed(&self, currency: &str) -> Option<bool> {
-        self.starting.get(currency).map(|balance| *balance < Decimal::ZERO)
-    }
-}
-
-/// Classify an FX conversion as a non-taxable margin-loan repayment or a taxable currency disposal.
-///
-/// A conversion repays a margin loan only when the account carried a negative (borrowed) balance in
-/// one of the converted currencies. The whole conversion is classified by that balance sign — the
-/// pro-rata split of a partial repayment is a documented simplification. When no balance is known
-/// for any candidate currency we fail open: treat the conversion as taxable and warn, never exempt
-/// income on a size heuristic.
-fn fx_is_margin_loan(balances: &CurrencyBalances, currencies: &[&str], description: &str) -> bool {
-    let mut any_known = false;
-    for currency in currencies {
-        match balances.borrowed(currency) {
-            Some(true) => return true,
-            Some(false) => any_known = true,
-            None => {}
-        }
-    }
-    if !any_known {
-        log::warn!(
-            "No cash balance to classify FX conversion {description:?}; treating it as a taxable \
-             disposal — review any margin-loan-related conversions manually."
-        );
-    }
-    false
 }
 
 /// Ingest a stock trade. Returns `true` if a trade was recorded, `false` if the row was skipped as
@@ -1246,101 +1084,6 @@ mod tests {
         assert_eq!(
             parse_flex_datetime("20251023").unwrap(),
             Date::from_ymd_opt(2025, 10, 23).unwrap()
-        );
-    }
-
-    /// Build a minimal statement with one USD FX conversion and the given USD starting balance.
-    fn fx_margin_fixture(starting_usd_cash: &str) -> PartialBrokerStatement {
-        let data = format!(
-            r#"<FlexQueryResponse queryName="german-tax-test" type="AF">
-  <FlexStatements count="1">
-    <FlexStatement accountId="U0000001" fromDate="20240101" toDate="20241231">
-      <CashReport>
-        <CashReportCurrency currency="USD" startingCash="{starting_usd_cash}" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
-      </CashReport>
-      <FxTransactions>
-        <FxTransaction functionalCurrency="EUR" fxCurrency="USD" reportDate="20240601" dateTime="20240601;120000" activityDescription="CASH: 5000 EUR.USD" quantity="5000" realizedPL="123.45" code="C"/>
-      </FxTransactions>
-    </FlexStatement>
-  </FlexStatements>
-</FlexQueryResponse>"#
-        );
-        FlexQueryResponse::parse(data.as_bytes()).unwrap()
-    }
-
-    /// A conversion that repays a borrowed (negative-balance) currency is a non-taxable margin-loan
-    /// repayment (Tilgung Fremdwährungskredit), regardless of its size.
-    ///
-    /// Enabled by T7 (balance-based FX classification).
-    #[test]
-    fn fx_conversion_repaying_borrowed_currency_is_margin_loan() {
-        let partial = fx_margin_fixture("-5000");
-        assert_eq!(partial.fx_gains.len(), 1);
-        assert!(
-            partial.fx_gains[0].is_margin_loan,
-            "converting a borrowed (negative-balance) currency is a margin-loan repayment",
-        );
-    }
-
-    /// The same-size conversion with a positive balance is a taxable currency disposal — the old
-    /// magnitude heuristic wrongly exempted it because the quantity exceeded 100.
-    ///
-    /// Enabled by T7 (balance-based FX classification).
-    #[test]
-    fn fx_conversion_with_positive_balance_is_taxable() {
-        let partial = fx_margin_fixture("5000");
-        assert_eq!(partial.fx_gains.len(), 1);
-        assert!(
-            !partial.fx_gains[0].is_margin_loan,
-            "a positive-balance conversion is a taxable disposal, not a margin-loan repayment",
-        );
-    }
-
-    /// Build a statement whose only FX event is a StmtFunds FOREX row (no FxTransactions section,
-    /// so the fallback path runs). `line.currency` = EUR is the account base; the pair is EUR.USD.
-    fn stmtfunds_forex_fixture(eur_start: &str, usd_start: &str) -> PartialBrokerStatement {
-        let data = format!(
-            r#"<FlexQueryResponse queryName="german-tax-test" type="AF">
-  <FlexStatements count="1">
-    <FlexStatement accountId="U0000001" fromDate="20240101" toDate="20241231">
-      <CashReport>
-        <CashReportCurrency currency="EUR" startingCash="{eur_start}" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
-        <CashReportCurrency currency="USD" startingCash="{usd_start}" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
-      </CashReport>
-      <StmtFunds>
-        <StatementOfFundsLine currency="EUR" date="20240601" activityCode="FOREX" activityDescription="Net Amount in Base from Forex Trade: 5000.00 EUR.USD" symbol="EUR.USD" amount="50" levelOfDetail="BaseCurrency"/>
-      </StmtFunds>
-    </FlexStatement>
-  </FlexStatements>
-</FlexQueryResponse>"#
-        );
-        FlexQueryResponse::parse(data.as_bytes()).unwrap()
-    }
-
-    /// StmtFunds fallback: a negative *base* (EUR) balance is an ordinary home-currency margin
-    /// loan, NOT a Fremdwährungskredit. The USD disposal must stay taxable — only a borrowed
-    /// FOREIGN currency exempts the conversion.
-    ///
-    /// Enabled by T7 (balance-based FX classification), fixed to exclude the base leg.
-    #[test]
-    fn stmtfunds_forex_negative_base_balance_is_still_taxable() {
-        let partial = stmtfunds_forex_fixture("-1000", "1000");
-        assert_eq!(partial.fx_gains.len(), 1);
-        assert!(
-            !partial.fx_gains[0].is_margin_loan,
-            "a borrowed base currency must not exempt a foreign-currency disposal",
-        );
-    }
-
-    /// StmtFunds fallback: a borrowed FOREIGN currency (negative USD) is a genuine
-    /// Fremdwährungskredit repayment — non-taxable.
-    #[test]
-    fn stmtfunds_forex_negative_foreign_balance_is_margin_loan() {
-        let partial = stmtfunds_forex_fixture("1000", "-1000");
-        assert_eq!(partial.fx_gains.len(), 1);
-        assert!(
-            partial.fx_gains[0].is_margin_loan,
-            "converting to repay a borrowed foreign currency is a margin-loan repayment",
         );
     }
 
