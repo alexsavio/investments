@@ -5,10 +5,10 @@
 
 use serde::Deserialize;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::broker_statement::grants::StockGrant;
-use crate::broker_statement::interest::{IdleCashInterest, FxGain};
+use crate::broker_statement::interest::{IdleCashInterest, FxGain, ForeignCashFlow};
 use crate::broker_statement::partial::PartialBrokerStatement;
 use crate::broker_statement::trades::{StockBuy, StockSell};
 use crate::broker_statement::{Fee, Withholding};
@@ -161,6 +161,12 @@ pub struct StatementOfFundsLine {
 
     #[serde(rename = "@levelOfDetail", default)]
     pub level_of_detail: String,
+
+    #[serde(rename = "@balance", default)]
+    pub balance: Decimal,
+
+    #[serde(rename = "@transactionID", default)]
+    pub transaction_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -564,6 +570,10 @@ impl FlexStatement {
                     &balances,
                 )?;
             }
+
+            // Capture the raw per-currency cash-flow ledger, replayed by the German FX FIFO to
+            // compute Fremdwährungsgewinne (§20 EStG) instead of IB's net per-trade P&L.
+            statement.foreign_cash_flows = build_foreign_cash_flows(stmtfunds)?;
         }
 
         // Parse cash transactions (dividends, interest, etc.)
@@ -786,6 +796,47 @@ fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, lin
     }
 
     Ok(())
+}
+
+/// Build the per-currency cash-flow ledger from the Statement of Funds, in document order.
+///
+/// Only `levelOfDetail="Currency"` lines move a real currency balance; the `BaseCurrency` summary
+/// rows are IB's base-currency net view and are excluded. Each forex leg is paired with its EUR
+/// counter-leg (same `transactionID`) so the German FX FIFO can value real conversions at the
+/// actual execution rate rather than the ECB reference rate.
+fn build_foreign_cash_flows(stmtfunds: &StatementOfFunds) -> GenericResult<Vec<ForeignCashFlow>> {
+    let mut eur_legs: HashMap<&str, Decimal> = HashMap::new();
+    for line in &stmtfunds.lines {
+        if line.level_of_detail == "Currency"
+            && line.currency == "EUR"
+            && line.activity_code == "FOREX"
+            && !line.transaction_id.is_empty()
+        {
+            eur_legs.insert(line.transaction_id.as_str(), line.amount);
+        }
+    }
+
+    let mut flows = Vec::new();
+    for line in &stmtfunds.lines {
+        if line.level_of_detail != "Currency" || line.currency.len() != 3 || line.date.is_empty() {
+            continue;
+        }
+        let eur_execution = if line.activity_code == "FOREX" {
+            eur_legs.get(line.transaction_id.as_str()).copied()
+        } else {
+            None
+        };
+        flows.push(ForeignCashFlow {
+            currency: line.currency.clone(),
+            date: parse_flex_date(&line.date)?,
+            transaction_id: line.transaction_id.clone(),
+            activity_code: line.activity_code.clone(),
+            amount: line.amount,
+            balance: line.balance,
+            eur_execution,
+        });
+    }
+    Ok(flows)
 }
 
 /// Parse FX transaction from FxTransactions section.
@@ -1291,6 +1342,49 @@ mod tests {
             partial.fx_gains[0].is_margin_loan,
             "converting to repay a borrowed foreign currency is a margin-loan repayment",
         );
+    }
+
+    /// The Statement of Funds is replayed into a per-currency cash-flow ledger: `Currency`-level
+    /// rows are captured in document order, and a forex leg is paired with its EUR counter-leg
+    /// (same transactionID) so its actual execution value is available. `BaseCurrency` summary rows
+    /// are excluded.
+    #[test]
+    fn stmtfunds_builds_foreign_cash_ledger() {
+        let data = r#"<FlexQueryResponse queryName="german-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20250101" toDate="20251231">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
+        <CashReportCurrency currency="EUR" startingCash="0" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <StmtFunds>
+        <StatementOfFundsLine currency="USD" date="20251104" activityCode="BUY" symbol="STRC" amount="-4998.50" balance="-4998.50" levelOfDetail="Currency" transactionID="100"/>
+        <StatementOfFundsLine currency="USD" date="20251104" activityCode="FOREX" activityDescription="Trading Currency Leg from Forex Trade: -4353.72 EUR.USD" symbol="EUR.USD" amount="4996.94" balance="-1.56" levelOfDetail="Currency" transactionID="200"/>
+        <StatementOfFundsLine currency="EUR" date="20251104" activityCode="FOREX" activityDescription="Traded Currency Leg from Forex Trade" amount="-4353.72" balance="0" levelOfDetail="Currency" transactionID="200"/>
+        <StatementOfFundsLine currency="EUR" date="20251104" activityCode="FOREX" symbol="EUR.USD" amount="-50" balance="-50" levelOfDetail="BaseCurrency" transactionID="200"/>
+      </StmtFunds>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>"#;
+        let partial = FlexQueryResponse::parse(data.as_bytes()).unwrap();
+
+        // The BaseCurrency summary row is excluded; the three Currency-level rows are captured in order.
+        let flows = &partial.foreign_cash_flows;
+        assert_eq!(flows.len(), 3);
+
+        let usd: Vec<_> = flows.iter().filter(|f| f.currency == "USD").collect();
+        assert_eq!(usd.len(), 2);
+
+        // The buy is an outflow with no EUR execution leg (the FIFO values it at the ECB rate).
+        assert_eq!(usd[0].activity_code, "BUY");
+        assert_eq!(usd[0].amount, dec!(-4998.50));
+        assert_eq!(usd[0].balance, dec!(-4998.50));
+        assert_eq!(usd[0].eur_execution, None);
+
+        // The forex leg is paired with its EUR counter-leg (transactionID 200) → execution value.
+        assert_eq!(usd[1].activity_code, "FOREX");
+        assert_eq!(usd[1].amount, dec!(4996.94));
+        assert_eq!(usd[1].eur_execution, Some(dec!(-4353.72)));
     }
 
     fn trade_row(symbol: &str, asset_category: &str) -> Trade {
