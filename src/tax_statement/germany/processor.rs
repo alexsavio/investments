@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::Datelike;
 use log::{debug, warn};
+use rust_decimal::RoundingStrategy;
 
 use crate::broker_statement::{
     BrokerCorporateActionType, BrokerStatement, FifoDetails, StockSourceDetails,
@@ -22,6 +23,7 @@ use crate::taxes::germany::{AbgeltungsteuerBreakdown, TeilfreistellungRate};
 use crate::time::Date;
 use crate::types::Decimal;
 
+use super::fx_fifo::compute_fx_fifo;
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, CorporateActionType, DividendEntry,
     FeeEntry, FxGainEntry, GermanTaxStatement, InterestEntry, StockGrantEntry, VorabpauschaleEntry,
@@ -745,80 +747,84 @@ fn process_interest(
 
 /// Process FX gains/losses and create FX gain entries.
 ///
-/// For German tax purposes:
-/// - FX gains on interest-bearing currency accounts (like IBKR) fall under §20 EStG
-/// - They are taxed as capital income (Abgeltungsteuer)
-/// - Losses from interest-bearing accounts can be offset against other capital income
-/// - FX gains/losses from margin loan repayments are NOT taxable
-///   (Tilgung eines Fremdwährungskredits - debt repayment is not a taxable event)
+/// Foreign-currency cash is replayed through a per-currency signed-inventory FIFO (see
+/// [`compute_fx_fifo`]): a positive balance is an interest-bearing Fremdwährungsguthaben whose
+/// disposals are §20 EStG capital income (gains taxable, losses offsettable in the general pot); a
+/// negative balance is a Fremdwährungskredit whose repayment FX result is not taxable (Tilgung
+/// eines Fremdwährungskredits, BMF 19.05.2022 Rz. 131).
 fn process_fx_gains(
     statement: &mut GermanTaxStatement,
     broker_statement: &BrokerStatement,
     year: i32,
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
+    let results = compute_fx_fifo(&broker_statement.foreign_cash_flows, |date, currency| {
+        converter.currency_rate(date, currency, "EUR").map_err(|e| {
+            format!(
+                "Failed to convert {currency} to EUR on {date}. This may indicate missing ECB \
+                 exchange rates. Ensure your database has currency rates for this date. Error: {e}"
+            )
+            .into()
+        })
+    })?;
+
     let mut has_income = false;
     let mut non_taxable_margin_fx = dec!(0);
 
-    for fx_gain in &broker_statement.fx_gains {
-        if fx_gain.date.year() != year {
-            continue;
-        }
+    for result in &results {
+        non_taxable_margin_fx += result.non_taxable;
+        let currency_pair = format!("EUR.{}", result.currency);
 
-        // Convert amount to EUR with helpful error message
-        let context = format!(
-            "Processing FX gain/loss for {} on {}",
-            fx_gain.currency_pair, fx_gain.date
-        );
-        let gross_amount_eur = convert_to_eur(converter, fx_gain.date, fx_gain.amount, &context)?;
+        for realization in &result.taxable {
+            if realization.date.year() != year {
+                continue;
+            }
+            has_income = true;
 
-        // Skip margin loan FX (not taxable - Tilgung Fremdwährungskredit)
-        if fx_gain.is_margin_loan {
-            non_taxable_margin_fx += gross_amount_eur;
+            // Round each realized gain/loss to cents. FX has no Teilfreistellung; §32d(1) flat tax
+            // with q = 0 (a per-row loss floors its own tax to zero, but still offsets in the pot).
+            let gross_amount_eur = realization
+                .amount
+                .round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero);
+            let taxes = statement.tax_rates.compute_taxes(gross_amount_eur, dec!(0));
+
+            let entry = FxGainEntry {
+                transaction_date: realization.date,
+                currency_pair: currency_pair.clone(),
+                description: format!(
+                    "§20 Fremdwährungsgewinn — Verwendung ({})",
+                    realization.activity_code
+                ),
+                gross_amount_eur,
+                taxable_amount: gross_amount_eur,
+                abgeltungssteuer: taxes.abgeltungssteuer,
+                solidaritaetszuschlag: taxes.solidaritaetszuschlag,
+                kirchensteuer: taxes.kirchensteuer,
+                total_tax: taxes.total,
+                notes: if gross_amount_eur < dec!(0) {
+                    Some("FX loss - can offset other capital income (§20 EStG)".to_string())
+                } else {
+                    None
+                },
+            };
+
             debug!(
-                "FX margin loan (not taxable): {} - amount: €{:.2}",
-                fx_gain.currency_pair, gross_amount_eur
+                "FX §20: {} on {} - €{:.2}",
+                currency_pair, realization.date, gross_amount_eur
             );
-            continue;
+            statement.add_fx_gain(entry);
         }
 
-        has_income = true;
-
-        // FX gains don't have Teilfreistellung; §32d(1) flat tax with q = 0 (losses floor to zero).
-        let taxable_amount = gross_amount_eur;
-        let taxes = statement.tax_rates.compute_taxes(taxable_amount, dec!(0));
-        let abgeltungssteuer = taxes.abgeltungssteuer;
-        let soli = taxes.solidaritaetszuschlag;
-        let church_tax = taxes.kirchensteuer;
-        let total_tax = taxes.total;
-
-        let entry = FxGainEntry {
-            transaction_date: fx_gain.date,
-            currency_pair: fx_gain.currency_pair.clone(),
-            description: fx_gain.description.clone(),
-            gross_amount_eur,
-            taxable_amount,
-            abgeltungssteuer,
-            solidaritaetszuschlag: soli,
-            kirchensteuer: church_tax,
-            total_tax,
-            notes: if taxable_amount < dec!(0) {
-                Some("FX loss - can offset other capital income (§20 EStG)".to_string())
-            } else {
-                None
-            },
-        };
-
-        debug!(
-            "FX gain/loss: {} - amount: €{:.2}, tax: €{:.2}",
-            fx_gain.currency_pair, gross_amount_eur, total_tax
-        );
-
-        statement.add_fx_gain(entry);
+        if result.non_taxable != dec!(0) {
+            debug!(
+                "FX non-taxable (Tilgung Fremdwährungskredit) {}: €{:.2}",
+                result.currency, result.non_taxable
+            );
+        }
     }
 
-    // Store non-taxable margin FX total for reporting
-    statement.non_taxable_margin_fx = non_taxable_margin_fx;
+    statement.non_taxable_margin_fx =
+        non_taxable_margin_fx.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero);
 
     Ok(has_income)
 }
