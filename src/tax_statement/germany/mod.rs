@@ -3,6 +3,7 @@
 //! Generates comprehensive CSV tax reports for German tax residents with foreign brokerage accounts.
 
 mod csv_formatter;
+mod fx_fifo;
 mod processor;
 mod statement;
 
