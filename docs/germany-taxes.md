@@ -211,6 +211,32 @@ With the US-Germany tax treaty (15% withholding):
 - Foreign tax credit: min(€15, €22.42) = €15
 - Net German tax due: €22.42 - €15 = €7.42
 
+## Foreign Currency Gains (Fremdwährungsgewinne, §20 EStG)
+
+Holding a foreign currency and later spending it is a taxable event. When you receive USD (a
+dividend, sale proceeds, or a EUR→USD conversion) at one exchange rate and later use it (buy a
+security, pay a fee, convert back to EUR) at a different rate, the euro-value difference is a
+realized gain or loss.
+
+The program replays each currency's cash movements through a per-currency **signed-inventory
+FIFO**, in statement order, and splits the result into two books by the running balance:
+
+- **Positive balance — Fremdwährungsguthaben.** Because Interactive Brokers pays interest on cash
+  balances, the account is interest-bearing, so its gains and losses are §20 EStG capital income.
+  Gains raise `Zeile 19`; losses join the general pot in `Zeile 22`.
+- **Negative balance — Fremdwährungskredit.** Buying a security in USD without USD cash borrows
+  the currency. Repaying that loan is **not taxable** (Tilgung eines Fremdwährungskredits,
+  BMF 19.05.2022 Rz. 131). The program reports this amount separately as *nicht steuerbar* and
+  excludes it from the taxable base.
+
+Real currency exchanges are valued at the actual execution rate from the broker transaction; every
+other movement — including a security bought directly in USD, which produces a "verdeckter"
+(hidden) gain with no euro changing hands — is valued at the ECB reference rate of the transaction
+date.
+
+The FX figures on a real 2025 IBKR statement reconcile with Interactive Brokers' own German tax
+report (BubbleTax) within ECB rounding, and the non-taxable margin-loan split matches it exactly.
+
 ## Altbestand (Pre-2009 Holdings)
 
 Securities purchased before January 1, 2009 ("Altbestand") may be exempt from capital gains tax under grandfathering rules. The program:
