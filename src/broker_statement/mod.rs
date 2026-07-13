@@ -53,7 +53,7 @@ pub use self::corporate_actions::{CorporateAction, CorporateActionType as Broker
 pub use self::dividends::Dividend;
 pub use self::fees::Fee;
 pub use self::grants::{CashGrant, StockGrant, process_grants};
-pub use self::interest::{IdleCashInterest, FxGain};
+pub use self::interest::{IdleCashInterest, FxGain, ForeignCashFlow};
 pub use self::merging::StatementsMergingStrategy;
 pub use self::payments::Withholding;
 pub use self::reader::ReadingStrictness;
@@ -73,6 +73,8 @@ pub struct BrokerStatement {
     pub deposits_and_withdrawals: Vec<CashAssets>,
     pub idle_cash_interest: Vec<IdleCashInterest>,
     pub fx_gains: Vec<FxGain>,
+    /// Raw per-currency cash-flow ledger (IB statement of funds), replayed by the German FX FIFO.
+    pub foreign_cash_flows: Vec<ForeignCashFlow>,
     pub tax_agent_withholdings: TaxAgentWithholdings,
 
     pub exchanges: Exchanges,
@@ -255,6 +257,7 @@ impl BrokerStatement {
             deposits_and_withdrawals: Vec::new(),
             idle_cash_interest: Vec::new(),
             fx_gains: Vec::new(),
+            foreign_cash_flows: Vec::new(),
             tax_agent_withholdings: TaxAgentWithholdings::new(),
 
             exchanges: Exchanges::new_empty(),
@@ -516,6 +519,7 @@ impl BrokerStatement {
         self.deposits_and_withdrawals.extend(statement.deposits_and_withdrawals);
         self.idle_cash_interest.extend(statement.idle_cash_interest);
         self.fx_gains.extend(statement.fx_gains);
+        self.foreign_cash_flows.extend(statement.foreign_cash_flows);
         self.tax_agent_withholdings.merge(statement.tax_agent_withholdings);
 
         self.exchanges.merge(statement.exchanges);

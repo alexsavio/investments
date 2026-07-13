@@ -16,7 +16,7 @@ use super::corporate_actions::CorporateAction;
 use super::dividends::{DividendId, DividendAccruals};
 use super::fees::Fee;
 use super::grants::{CashGrant, StockGrant};
-use super::interest::{IdleCashInterest, FxGain};
+use super::interest::{IdleCashInterest, FxGain, ForeignCashFlow};
 use super::trades::{ForexTrade, StockBuy, StockSell};
 use super::taxes::{TaxId, TaxAccruals, TaxAgentWithholdings};
 
@@ -31,6 +31,8 @@ pub struct PartialBrokerStatement {
     pub fees: Vec<Fee>,
     pub idle_cash_interest: Vec<IdleCashInterest>,
     pub fx_gains: Vec<FxGain>,
+    /// Raw per-currency cash-flow ledger (IB statement of funds), replayed by the German FX FIFO.
+    pub foreign_cash_flows: Vec<ForeignCashFlow>,
     pub tax_agent_withholdings: TaxAgentWithholdings,
 
     pub exchanges: Exchanges,
@@ -71,6 +73,7 @@ impl PartialBrokerStatement {
             fees: Vec::new(),
             idle_cash_interest: Vec::new(),
             fx_gains: Vec::new(),
+            foreign_cash_flows: Vec::new(),
             tax_agent_withholdings: TaxAgentWithholdings::new(),
 
             exchanges: Exchanges::new(exchanges),
