@@ -838,7 +838,7 @@ mod tests {
     /// double-counts or misses figures.
     #[test]
     fn gross_value_lands_in_the_named_column() {
-        let header = render(|w| CsvFormatter::write_header(w));
+        let header = render(CsvFormatter::write_header);
         let columns: Vec<String> = header.split(',').map(str::to_string).collect();
         let cell = |row: &str, name: &str| -> String {
             let idx = columns
