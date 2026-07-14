@@ -25,11 +25,12 @@ pub struct CurrencyFxResult {
     pub currency: String,
     /// §20-taxable disposals of held currency (Fremdwährungsguthaben).
     pub taxable: Vec<FxRealization>,
-    /// Total non-taxable Fremdwährungskredit-Tilgung result in EUR (full precision).
-    pub non_taxable: Decimal,
+    /// Non-taxable Fremdwährungskredit-Tilgung realizations, dated so the caller can year-filter
+    /// them exactly as it does the taxable ones.
+    pub non_taxable: Vec<FxRealization>,
 }
 
-/// A single realized taxable FX gain/loss in EUR (full precision; positive = gain, negative = loss).
+/// A single realized FX gain/loss in EUR (full precision; positive = gain, negative = loss).
 #[derive(Debug)]
 pub struct FxRealization {
     pub date: Date,
@@ -118,7 +119,7 @@ where
                 CurrencyFxResult {
                     currency: flow.currency.clone(),
                     taxable: Vec::new(),
-                    non_taxable: dec!(0),
+                    non_taxable: Vec::new(),
                 },
             );
         }
@@ -150,7 +151,11 @@ where
                 });
             } else {
                 // Repaying borrowed currency → non-taxable (Tilgung Fremdwährungskredit).
-                result.non_taxable += units * (front.rate - rate);
+                result.non_taxable.push(FxRealization {
+                    date: flow.date,
+                    amount: units * (front.rate - rate),
+                    activity_code: flow.activity_code.clone(),
+                });
             }
             front.qty -= sign(front.qty) * units;
             remaining -= sign(remaining) * units;
@@ -224,7 +229,8 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(results[0].taxable.is_empty());
         // Repaid 1000 USD borrowed at 0.90 with USD costing 0.91 → 1000*(0.90-0.91) = -10.
-        assert_eq!(results[0].non_taxable, dec!(-10));
+        assert_eq!(results[0].non_taxable.len(), 1);
+        assert_eq!(results[0].non_taxable[0].amount, dec!(-10));
     }
 
     /// A forex conversion that runs before the purchase leaves a positive USD balance; the later
@@ -239,7 +245,7 @@ mod tests {
         ];
         let results = compute_fx_fifo(&flows, rates(&[(13, dec!(0.8607))])).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].non_taxable, dec!(0));
+        assert!(results[0].non_taxable.is_empty());
         assert_eq!(results[0].taxable.len(), 1);
         // 1000*(0.8607-0.8588) = 1.90.
         assert_eq!(results[0].taxable[0].amount, dec!(1.90));
@@ -257,7 +263,7 @@ mod tests {
         ];
         let results = compute_fx_fifo(&flows, rates(&[(1, dec!(0.86))])).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].non_taxable, dec!(0));
+        assert!(results[0].non_taxable.is_empty());
         assert_eq!(results[0].taxable.len(), 1);
         // 100*(0.85-0.86) = -1.00.
         assert_eq!(results[0].taxable[0].amount, dec!(-1.00));
