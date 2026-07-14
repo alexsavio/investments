@@ -756,7 +756,21 @@ fn build_foreign_cash_flows(stmtfunds: &StatementOfFunds) -> GenericResult<Vec<F
             && line.activity_code == "FOREX"
             && !line.transaction_id.is_empty()
         {
-            eur_legs.insert(line.transaction_id.as_str(), line.amount);
+            // A transactionID pairs a forex leg with its EUR counter-leg. A duplicate EUR-leg id
+            // (multi-account or merged statements) would silently bind the wrong execution amount to
+            // a foreign leg, so refuse rather than pick the last writer.
+            if eur_legs
+                .insert(line.transaction_id.as_str(), line.amount)
+                .is_some()
+            {
+                return Err(format!(
+                    "Duplicate FOREX transactionID {} on the EUR leg of the Statement of Funds: \
+                     the execution rate cannot be paired unambiguously (multi-account or merged \
+                     statements are not supported).",
+                    line.transaction_id
+                )
+                .into());
+            }
         }
     }
 
@@ -1128,6 +1142,34 @@ mod tests {
         assert_eq!(usd[1].activity_code, "FOREX");
         assert_eq!(usd[1].amount, dec!(4996.94));
         assert_eq!(usd[1].eur_execution, Some(dec!(-4353.72)));
+    }
+
+    /// Two EUR forex legs sharing a transactionID make the execution-rate pairing ambiguous; the
+    /// ledger build refuses rather than silently binding the last-written EUR amount.
+    #[test]
+    fn stmtfunds_rejects_duplicate_forex_transaction_id() {
+        let data = r#"<FlexQueryResponse queryName="german-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20250101" toDate="20251231">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
+        <CashReportCurrency currency="EUR" startingCash="0" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <StmtFunds>
+        <StatementOfFundsLine currency="EUR" date="20251104" activityCode="FOREX" amount="-100" balance="-100" levelOfDetail="Currency" transactionID="200"/>
+        <StatementOfFundsLine currency="EUR" date="20251104" activityCode="FOREX" amount="-200" balance="-300" levelOfDetail="Currency" transactionID="200"/>
+      </StmtFunds>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>"#;
+        let err = match FlexQueryResponse::parse(data.as_bytes()) {
+            Ok(_) => panic!("expected a duplicate FOREX transactionID error"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("Duplicate FOREX transactionID"),
+            "{err}"
+        );
     }
 
     fn trade_row(symbol: &str, asset_category: &str) -> Trade {
