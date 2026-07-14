@@ -297,6 +297,10 @@ pub struct GermanTaxStatement {
     pub kap_inv_equity: KapInvGroup,
     pub kap_inv_mixed: KapInvGroup,
     pub kap_inv_other: KapInvGroup,
+
+    /// §23 EStG results for a non-interest-bearing foreign-currency account (Anlage SO). Empty for
+    /// the default §20 treatment.
+    pub section23: Section23,
 }
 
 /// Gross (pre-Teilfreistellung) Anlage KAP-INV figures for one fund-type group.
@@ -308,6 +312,45 @@ pub struct KapInvGroup {
     pub sale_gains: Decimal,
     /// Gross losses from fund-unit sales (positive magnitude).
     pub sale_losses: Decimal,
+}
+
+/// §23 EStG (private Veräußerungsgeschäfte) foreign-currency results, reported for manual Anlage SO
+/// declaration. The tool computes no tax here — §23 income is taxed at the filer's personal income
+/// rate, which it cannot know — so these are informational totals, mirroring the Anlage N / §22
+/// grant handling.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Section23 {
+    /// Gains on currency held ≤ 1 year (taxable as Sonstige Einkünfte).
+    pub short_term_gains: Decimal,
+    /// Losses on currency held ≤ 1 year (positive magnitude; offset §23 gains only).
+    pub short_term_losses: Decimal,
+    /// Gains on currency held > 1 year — tax-free (Spekulationsfrist met).
+    pub long_term_tax_free: Decimal,
+    /// Borrowed-currency (negative-balance) FX realized under §23 — flagged for manual review, as
+    /// the §20 Fremdwährungskredit rule (BMF 19.05.2022 Rz. 131) does not carry over to §23.
+    pub borrowed_review: Decimal,
+}
+
+impl Section23 {
+    /// Net short-term (≤ 1 year) result: gains minus losses. Positive = taxable base before the
+    /// Freigrenze; ≤ 0 = a §23 loss (deductible against §23 gains in other years only).
+    pub fn short_term_net(&self) -> Decimal {
+        self.short_term_gains - self.short_term_losses
+    }
+
+    /// Whether there is anything to report.
+    pub fn is_empty(&self) -> bool {
+        self.short_term_gains == dec!(0)
+            && self.short_term_losses == dec!(0)
+            && self.long_term_tax_free == dec!(0)
+            && self.borrowed_review == dec!(0)
+    }
+
+    /// The §23 Freigrenze for `year`: €600 through 2023, €1000 from 2024. If total §23 gains (across
+    /// all private sales, not only currency) stay below it, they are entirely tax-free.
+    pub fn freigrenze(year: i32) -> Decimal {
+        if year >= 2024 { dec!(1000) } else { dec!(600) }
+    }
 }
 
 impl GermanTaxStatement {
@@ -379,6 +422,8 @@ impl GermanTaxStatement {
             kap_inv_equity: KapInvGroup::default(),
             kap_inv_mixed: KapInvGroup::default(),
             kap_inv_other: KapInvGroup::default(),
+
+            section23: Section23::default(),
         })
     }
 

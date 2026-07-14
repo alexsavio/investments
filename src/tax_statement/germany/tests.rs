@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use crate::broker_statement::{BrokerStatement, ReadingStrictness};
 use crate::brokers::Broker;
-use crate::config::Config;
+use crate::config::{Config, ForeignCurrencyTaxation};
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::converter::{CurrencyConverter, CurrencyConverterBackend};
 use crate::taxes::{TaxConfig, TaxRemapping};
@@ -75,17 +75,41 @@ fn read_fixture(name: &str) -> BrokerStatement {
     .unwrap()
 }
 
-/// Run the full German tax pipeline over a fixture with an explicit tax config.
+/// Run the full German tax pipeline over a fixture with an explicit tax config, defaulting to the
+/// §20 (interest-bearing) foreign-currency treatment.
 fn run_pipeline_with_config(
     fixture: &str,
     year: i32,
     tax_config: &TaxConfig,
 ) -> GermanTaxStatement {
+    run_pipeline_full(
+        fixture,
+        year,
+        tax_config,
+        ForeignCurrencyTaxation::InterestBearing,
+    )
+}
+
+/// Run the full German tax pipeline with an explicit tax config and foreign-currency treatment.
+fn run_pipeline_full(
+    fixture: &str,
+    year: i32,
+    tax_config: &TaxConfig,
+    fx_taxation: ForeignCurrencyTaxation,
+) -> GermanTaxStatement {
     let statement = read_fixture(fixture);
     let converter = converter();
 
     let mut german = GermanTaxStatement::new(year, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
-    process_broker_statement(&mut german, &statement, year, &converter, tax_config).unwrap();
+    process_broker_statement(
+        &mut german,
+        &statement,
+        year,
+        &converter,
+        tax_config,
+        fx_taxation,
+    )
+    .unwrap();
     german.calculate_totals();
     german
 }
