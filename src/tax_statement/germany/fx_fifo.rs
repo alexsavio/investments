@@ -295,6 +295,48 @@ mod tests {
         assert!(err.to_string().contains("inconsistent"), "{err}");
     }
 
+    /// A lot acquired in one year and disposed across later years keeps its original acquisition
+    /// rate: multi-year statements (merged in period order) value a carried-over position correctly,
+    /// and each disposal is dated to its own year for the caller's year filter.
+    #[test]
+    fn carries_lot_rate_across_year_boundaries() {
+        let mk =
+            |year: i32, code: &str, amount: Decimal, balance: Decimal, eur: Option<Decimal>| {
+                ForeignCashFlow {
+                    currency: "USD".to_string(),
+                    date: Date::from_ymd_opt(year, 11, 4).unwrap(),
+                    transaction_id: String::new(),
+                    activity_code: code.to_string(),
+                    amount,
+                    balance,
+                    eur_execution: eur,
+                }
+            };
+        let flows = vec![
+            // Acquire 1000 USD at execution 0.90 in 2023.
+            mk(2023, "FOREX", dec!(1000), dec!(1000), Some(dec!(-900))),
+            // Dispose 500 USD at ECB 0.95 in 2024, then 500 at ECB 1.00 in 2025.
+            mk(2024, "BUY", dec!(-500), dec!(500), None),
+            mk(2025, "BUY", dec!(-500), dec!(0), None),
+        ];
+        let ecb = |date: Date, _ccy: &str| -> GenericResult<Decimal> {
+            Ok(match date.year() {
+                2024 => dec!(0.95),
+                2025 => dec!(1.00),
+                other => return Err(format!("no rate for {other}").into()),
+            })
+        };
+        let results = compute_fx_fifo(&flows, ecb).unwrap();
+        assert_eq!(results.len(), 1);
+        let taxable = &results[0].taxable;
+        assert_eq!(taxable.len(), 2);
+        // Both disposals are valued against the 2023 acquisition rate 0.90, not against each other.
+        assert_eq!(taxable[0].date.year(), 2024);
+        assert_eq!(taxable[0].amount, dec!(25.00)); // 500*(0.95-0.90)
+        assert_eq!(taxable[1].date.year(), 2025);
+        assert_eq!(taxable[1].amount, dec!(50.00)); // 500*(1.00-0.90)
+    }
+
     /// A FOREX leg whose paired EUR amount carries the wrong (same) sign yields a negative rate and
     /// would fabricate a huge gain; it is refused instead.
     #[test]

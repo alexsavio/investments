@@ -246,11 +246,15 @@ than emit a wrong number when they are not met:
 - **Statement of Funds at `Currency` level of detail.** This is the source ledger. Without it the FX
   gain cannot be computed; the program warns when a statement shows foreign-currency activity but
   carries no such ledger.
-- **One tax year, starting from a zero foreign balance.** The FIFO replays only the movements in the
-  statement and seeds every currency from empty, so it validates that the movements sum, in document
-  order, to the broker's reported balance after each step. A carried-in balance (foreign cash held
-  across 1 January, whose prior-year acquisition rate a single-year statement does not carry),
-  out-of-order rows, or dropped rows break that check and are rejected. Export one full tax year.
+- **A continuous history starting from a zero foreign balance.** The FIFO replays the movements and
+  seeds every currency from empty, validating that they sum, in document order, to the broker's
+  reported balance after each step. It therefore requires the ledger to begin where the foreign
+  balance was zero (account opening). For a position held across a year boundary, drop **every
+  year's** Flex file from account opening onward into the statements directory: they are merged in
+  period order into one continuous ledger, so a lot acquired in 2023 and disposed in 2024 is
+  correctly valued at its 2023 rate, and only the filing year's disposals are taxed. A single-year
+  statement whose opening balance is non-zero, out-of-order rows, or dropped rows break the check and
+  are rejected rather than mis-valued.
 - **One account per query.** As with securities FIFO, a duplicate forex `transactionID` (multi-account
   or merged exports) makes the execution-rate pairing ambiguous and is rejected.
 - **§20 treatment only.** All foreign currency is treated as an interest-bearing Fremdwährungsguthaben
