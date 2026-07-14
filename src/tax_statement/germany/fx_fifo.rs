@@ -91,7 +91,22 @@ where
         // real exchange (the paired EUR leg, which carries the opposite sign), otherwise the ECB
         // reference rate.
         let rate = match (flow.activity_code.as_str(), flow.eur_execution) {
-            ("FOREX", Some(eur_execution)) => -eur_execution / flow.amount,
+            ("FOREX", Some(eur_execution)) => {
+                // A real conversion's two legs have opposite signs, so -eur/amount is positive. A
+                // same-sign or zero EUR leg (a malformed export or a mis-paired transactionID)
+                // would yield a non-positive rate and fabricate a large gain; refuse instead.
+                let rate = -eur_execution / flow.amount;
+                if rate <= dec!(0) {
+                    return Err(format!(
+                        "Malformed FOREX leg for {} on {}: EUR execution {} against movement {} \
+                         gives a non-positive rate {}. A real conversion's legs carry opposite \
+                         signs; refusing rather than booking a fabricated gain.",
+                        flow.currency, flow.date, eur_execution, flow.amount, rate
+                    )
+                    .into());
+                }
+                rate
+            }
             _ => ecb_rate(flow.date, &flow.currency)?,
         };
 
@@ -272,5 +287,17 @@ mod tests {
         ];
         let err = compute_fx_fifo(&flows, rates(&[(13, dec!(0.8607))])).unwrap_err();
         assert!(err.to_string().contains("inconsistent"), "{err}");
+    }
+
+    /// A FOREX leg whose paired EUR amount carries the wrong (same) sign yields a negative rate and
+    /// would fabricate a huge gain; it is refused instead.
+    #[test]
+    fn malformed_forex_same_sign_leg_is_rejected() {
+        let flows = vec![
+            // 1000 USD in, but the EUR leg is +910 (should be -910) → rate -910/1000 = -0.91.
+            flow(4, "FOREX", dec!(1000), dec!(1000), Some(dec!(910))),
+        ];
+        let err = compute_fx_fifo(&flows, rates(&[(4, dec!(0.90))])).unwrap_err();
+        assert!(err.to_string().contains("non-positive"), "{err}");
     }
 }
