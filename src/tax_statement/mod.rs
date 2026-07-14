@@ -198,6 +198,7 @@ fn generate_german_tax_statement(
         &converter,
         &config.taxes,
         portfolio.foreign_currency_taxation,
+        &portfolio.opening_foreign_currency,
     )?;
 
     let has_income = has_trades || has_dividends || has_interest || has_fx_gains;

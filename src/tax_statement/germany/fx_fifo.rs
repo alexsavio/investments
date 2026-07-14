@@ -41,6 +41,21 @@ pub struct FxRealization {
     pub activity_code: String,
 }
 
+/// A pre-history foreign-currency lot declared in config, seeding the FIFO for a statement that does
+/// not begin from a zero balance (truncated history). The FIFO opens the currency from this lot
+/// instead of empty; the statement's running balance must still reconcile from the declared opening
+/// onward, so a wrong quantity is still caught by the balance-chain check. The declared rate is
+/// trusted — it is the acquisition rate the truncated statement cannot supply.
+pub struct OpeningLot {
+    pub currency: String,
+    /// Signed quantity at the statement's start: positive = held (Guthaben), negative = borrowed.
+    pub quantity: Decimal,
+    /// EUR value of one unit of the foreign currency at acquisition.
+    pub eur_per_unit: Decimal,
+    /// Acquisition date (drives the §23 holding period).
+    pub date: Date,
+}
+
 /// One FIFO lot: a signed quantity of the foreign currency carrying its EUR-per-unit rate.
 struct Lot {
     /// Remaining quantity: positive = held (Guthaben), negative = borrowed (Kredit).
@@ -56,8 +71,15 @@ struct Lot {
 /// `ecb_rate(date, currency)` returns the ECB reference rate as EUR per one unit of `currency`.
 /// EUR movements are the filing currency (no FX gain against themselves) and are skipped. Results
 /// are returned in first-seen currency order.
+///
+/// `opening` seeds each currency's inventory before the flows are replayed, for a statement whose
+/// history does not start from a zero balance. Each opening lot moves that currency's starting
+/// balance from zero to the declared quantity; the balance-chain check then validates the flows
+/// against the declared opening, so a wrong quantity is still rejected. Pass an empty slice for the
+/// common full-history case.
 pub fn compute_fx_fifo<R>(
     flows: &[ForeignCashFlow],
+    opening: &[OpeningLot],
     ecb_rate: R,
 ) -> GenericResult<Vec<CurrencyFxResult>>
 where
@@ -68,26 +90,40 @@ where
     let mut results: HashMap<String, CurrencyFxResult> = HashMap::new();
     let mut running: HashMap<String, Decimal> = HashMap::new();
 
+    for lot in opening {
+        if lot.currency == "EUR" || lot.quantity == dec!(0) {
+            continue;
+        }
+        register_currency(&mut order, &mut lots, &mut results, &lot.currency);
+        *running.entry(lot.currency.clone()).or_insert(dec!(0)) += lot.quantity;
+        lots.get_mut(&lot.currency).unwrap().push_back(Lot {
+            qty: lot.quantity,
+            rate: lot.eur_per_unit,
+            date: lot.date,
+        });
+    }
+
     for flow in flows {
         if flow.currency == "EUR" || flow.amount == dec!(0) {
             continue;
         }
 
-        // The FIFO can only value what it replays, and it starts every currency from an empty
-        // inventory. Verify that against the statement's own running balance: the movements must
-        // sum, in document order from a zero opening balance, to the reported balance after each
-        // step. A mismatch means a carried-in balance (foreign cash held across the year boundary,
-        // whose prior-year acquisition rate this statement does not carry), out-of-order rows, or
-        // dropped rows — each of which would silently mis-classify §20 gains, so refuse rather than
-        // guess a tax figure.
+        // The FIFO can only value what it replays, so it opens each currency from a known balance:
+        // zero, or the declared `opening` lot. Verify that against the statement's own running
+        // balance: the movements must sum, in document order from that opening, to the reported
+        // balance after each step. A mismatch means an undeclared carried-in balance (foreign cash
+        // held across the year boundary, whose prior-year acquisition rate this statement does not
+        // carry), out-of-order rows, or dropped rows — each of which would silently mis-classify §20
+        // gains, so refuse rather than guess a tax figure.
         let running_balance = running.entry(flow.currency.clone()).or_insert(dec!(0));
         *running_balance += flow.amount;
         if (*running_balance - flow.balance).abs() > dec!(0.01) {
             return Err(format!(
                 "Foreign-currency ledger for {} is inconsistent on {}: movements sum to {} but the \
-                 statement balance is {}. The Statement of Funds must start from a zero {} balance \
-                 and be in document order; carried-in balances and out-of-order rows are not \
-                 supported.",
+                 statement balance is {}. The Statement of Funds must reconcile from the opening \
+                 balance in document order. If the export does not begin at account opening, declare \
+                 the carried-in {} balance via the portfolio's opening_foreign_currency config; \
+                 out-of-order or dropped rows are not supported.",
                 flow.currency, flow.date, running_balance, flow.balance, flow.currency
             )
             .into());
@@ -116,18 +152,7 @@ where
             _ => ecb_rate(flow.date, &flow.currency)?,
         };
 
-        if !results.contains_key(&flow.currency) {
-            order.push(flow.currency.clone());
-            lots.insert(flow.currency.clone(), VecDeque::new());
-            results.insert(
-                flow.currency.clone(),
-                CurrencyFxResult {
-                    currency: flow.currency.clone(),
-                    taxable: Vec::new(),
-                    non_taxable: Vec::new(),
-                },
-            );
-        }
+        register_currency(&mut order, &mut lots, &mut results, &flow.currency);
         let lots = lots.get_mut(&flow.currency).unwrap();
         let result = results.get_mut(&flow.currency).unwrap();
 
@@ -177,6 +202,28 @@ where
         .into_iter()
         .map(|currency| results.remove(&currency).unwrap())
         .collect())
+}
+
+/// Register a currency's inventory, result bucket, and first-seen order slot on first use.
+fn register_currency(
+    order: &mut Vec<String>,
+    lots: &mut HashMap<String, VecDeque<Lot>>,
+    results: &mut HashMap<String, CurrencyFxResult>,
+    currency: &str,
+) {
+    if results.contains_key(currency) {
+        return;
+    }
+    order.push(currency.to_string());
+    lots.insert(currency.to_string(), VecDeque::new());
+    results.insert(
+        currency.to_string(),
+        CurrencyFxResult {
+            currency: currency.to_string(),
+            taxable: Vec::new(),
+            non_taxable: Vec::new(),
+        },
+    );
 }
 
 /// Sign of a non-zero decimal as `+1` / `-1`.
@@ -233,7 +280,7 @@ mod tests {
             // Forex brings 1000 USD in, paying 910 EUR (execution 0.91) → repays the loan.
             flow(4, "FOREX", dec!(1000), dec!(0), Some(dec!(-910))),
         ];
-        let results = compute_fx_fifo(&flows, rates(&[(4, dec!(0.90))])).unwrap();
+        let results = compute_fx_fifo(&flows, &[], rates(&[(4, dec!(0.90))])).unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].taxable.is_empty());
         // Repaid 1000 USD borrowed at 0.90 with USD costing 0.91 → 1000*(0.90-0.91) = -10.
@@ -251,7 +298,7 @@ mod tests {
             // Buy disposes 1000 USD valued at the ECB rate 0.8607.
             flow(13, "BUY", dec!(-1000), dec!(0), None),
         ];
-        let results = compute_fx_fifo(&flows, rates(&[(13, dec!(0.8607))])).unwrap();
+        let results = compute_fx_fifo(&flows, &[], rates(&[(13, dec!(0.8607))])).unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].non_taxable.is_empty());
         assert_eq!(results[0].taxable.len(), 1);
@@ -269,7 +316,7 @@ mod tests {
             // Reconvert 100 USD to EUR, receiving 85 EUR (execution 0.85).
             flow(2, "FOREX", dec!(-100), dec!(0), Some(dec!(85))),
         ];
-        let results = compute_fx_fifo(&flows, rates(&[(1, dec!(0.86))])).unwrap();
+        let results = compute_fx_fifo(&flows, &[], rates(&[(1, dec!(0.86))])).unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].non_taxable.is_empty());
         assert_eq!(results[0].taxable.len(), 1);
@@ -285,7 +332,49 @@ mod tests {
             // Buy of 1000 USD but the balance shows -6000: 5000 USD was already borrowed on 1 Jan.
             flow(4, "BUY", dec!(-1000), dec!(-6000), None),
         ];
-        let err = compute_fx_fifo(&flows, rates(&[(4, dec!(0.90))])).unwrap_err();
+        let err = compute_fx_fifo(&flows, &[], rates(&[(4, dec!(0.90))])).unwrap_err();
+        assert!(err.to_string().contains("inconsistent"), "{err}");
+    }
+
+    /// A declared opening lot seeds the inventory so a truncated-history statement reconciles: the
+    /// disposal is valued against the declared acquisition rate and dated, and the balance chain now
+    /// validates from the declared opening.
+    #[test]
+    fn declared_opening_lot_is_accepted() {
+        // 1000 USD held at year start, acquired at 0.90 on 2023-06-01 (before this statement).
+        let opening = vec![OpeningLot {
+            currency: "USD".to_string(),
+            quantity: dec!(1000),
+            eur_per_unit: dec!(0.90),
+            date: Date::from_ymd_opt(2023, 6, 1).unwrap(),
+        }];
+        // Spend 400 USD (buy) at ECB 0.95; balance falls from the seeded 1000 to 600.
+        let flows = vec![flow(4, "BUY", dec!(-400), dec!(600), None)];
+        let results = compute_fx_fifo(&flows, &opening, rates(&[(4, dec!(0.95))])).unwrap();
+
+        assert_eq!(results.len(), 1);
+        let taxable = &results[0].taxable;
+        assert_eq!(taxable.len(), 1);
+        assert_eq!(taxable[0].amount, dec!(20.00)); // 400 * (0.95 - 0.90)
+        assert_eq!(
+            taxable[0].acquisition_date,
+            Date::from_ymd_opt(2023, 6, 1).unwrap()
+        );
+    }
+
+    /// A declared opening lot whose quantity does not reconcile with the statement's own running
+    /// balance is still refused: the escape hatch trusts the rate, not a wrong balance.
+    #[test]
+    fn wrong_declared_opening_quantity_is_still_rejected() {
+        let opening = vec![OpeningLot {
+            currency: "USD".to_string(),
+            quantity: dec!(1000), // claims +1000 held...
+            eur_per_unit: dec!(0.90),
+            date: Date::from_ymd_opt(2023, 6, 1).unwrap(),
+        }];
+        // ...but the first row's balance -6000 after a -1000 buy implies the opening was -5000.
+        let flows = vec![flow(4, "BUY", dec!(-1000), dec!(-6000), None)];
+        let err = compute_fx_fifo(&flows, &opening, rates(&[(4, dec!(0.90))])).unwrap_err();
         assert!(err.to_string().contains("inconsistent"), "{err}");
     }
 
@@ -299,7 +388,7 @@ mod tests {
             flow(13, "BUY", dec!(-1000), dec!(0), None),
             flow(13, "FOREX", dec!(1000), dec!(1000), Some(dec!(-858.80))),
         ];
-        let err = compute_fx_fifo(&flows, rates(&[(13, dec!(0.8607))])).unwrap_err();
+        let err = compute_fx_fifo(&flows, &[], rates(&[(13, dec!(0.8607))])).unwrap_err();
         assert!(err.to_string().contains("inconsistent"), "{err}");
     }
 
@@ -334,7 +423,7 @@ mod tests {
                 other => return Err(format!("no rate for {other}").into()),
             })
         };
-        let results = compute_fx_fifo(&flows, ecb).unwrap();
+        let results = compute_fx_fifo(&flows, &[], ecb).unwrap();
         assert_eq!(results.len(), 1);
         let taxable = &results[0].taxable;
         assert_eq!(taxable.len(), 2);
@@ -353,7 +442,7 @@ mod tests {
             // 1000 USD in, but the EUR leg is +910 (should be -910) → rate -910/1000 = -0.91.
             flow(4, "FOREX", dec!(1000), dec!(1000), Some(dec!(910))),
         ];
-        let err = compute_fx_fifo(&flows, rates(&[(4, dec!(0.90))])).unwrap_err();
+        let err = compute_fx_fifo(&flows, &[], rates(&[(4, dec!(0.90))])).unwrap_err();
         assert!(err.to_string().contains("non-positive"), "{err}");
     }
 }

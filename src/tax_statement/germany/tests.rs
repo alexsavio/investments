@@ -108,6 +108,7 @@ fn run_pipeline_full(
         &converter,
         tax_config,
         fx_taxation,
+        &Default::default(),
     )
     .unwrap();
     german.calculate_totals();
