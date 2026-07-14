@@ -10,7 +10,8 @@ use log::{debug, warn};
 use rust_decimal::RoundingStrategy;
 
 use crate::broker_statement::{
-    BrokerCorporateActionType, BrokerStatement, FifoDetails, StockSourceDetails,
+    BrokerCorporateActionType, BrokerStatement, Dividend, FifoDetails, ForeignCashFlow, ForexTrade,
+    StockSourceDetails,
 };
 use crate::core::GenericResult;
 use crate::currency::Cash;
@@ -752,12 +753,40 @@ fn process_interest(
 /// disposals are §20 EStG capital income (gains taxable, losses offsettable in the general pot); a
 /// negative balance is a Fremdwährungskredit whose repayment FX result is not taxable (Tilgung
 /// eines Fremdwährungskredits, BMF 19.05.2022 Rz. 131).
+/// True when the statement shows foreign-currency activity — a forex trade or a non-EUR dividend —
+/// but carries no foreign cash ledger, meaning the Statement of Funds Currency detail is absent and
+/// §20 Fremdwährungsgewinne cannot be computed from it.
+fn foreign_activity_without_ledger(
+    foreign_cash_flows: &[ForeignCashFlow],
+    forex_trades: &[ForexTrade],
+    dividends: &[Dividend],
+) -> bool {
+    foreign_cash_flows.is_empty()
+        && (!forex_trades.is_empty()
+            || dividends
+                .iter()
+                .any(|dividend| dividend.amount.currency != "EUR"))
+}
+
 fn process_fx_gains(
     statement: &mut GermanTaxStatement,
     broker_statement: &BrokerStatement,
     year: i32,
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
+    if foreign_activity_without_ledger(
+        &broker_statement.foreign_cash_flows,
+        &broker_statement.forex_trades,
+        &broker_statement.dividends,
+    ) {
+        warn!(
+            "The statement has foreign-currency activity but no Statement of Funds Currency-level \
+             cash ledger, so §20 Fremdwährungsgewinne were not computed. Re-export the IBKR Flex \
+             query with the Statement of Funds at Currency level of detail to capture foreign FX \
+             gains."
+        );
+    }
+
     let results = compute_fx_fifo(&broker_statement.foreign_cash_flows, |date, currency| {
         converter.currency_rate(date, currency, "EUR").map_err(|e| {
             format!(
@@ -1702,6 +1731,54 @@ mod tests {
         assert!(csv_string.contains("EUR.USD"));
         assert!(csv_string.contains("SUMMARY_FX_GAINS"));
         assert!(csv_string.contains("SUMMARY_FX_LOSSES"));
+    }
+
+    /// FX gains can only be computed from the foreign cash ledger, so the processor flags a
+    /// statement that shows foreign activity (a non-EUR dividend or a forex trade) but carries no
+    /// ledger — and stays quiet for a EUR-only statement or when the ledger is present.
+    #[test]
+    fn detects_foreign_activity_without_a_ledger() {
+        use crate::instruments::IssuerTaxationType;
+
+        let dividend = |currency: &str| Dividend {
+            date: Date::from_ymd_opt(2024, 6, 1).unwrap(),
+            issuer: "NVDA".to_string(),
+            original_issuer: "NVDA".to_string(),
+            amount: Cash::new(currency, dec!(10)),
+            paid_tax: Cash::new(currency, dec!(0)),
+            taxation_type: IssuerTaxationType::Manual { country_code: None },
+            skip_from_cash_flow: false,
+        };
+        let usd_flow = ForeignCashFlow {
+            currency: "USD".to_string(),
+            date: Date::from_ymd_opt(2024, 6, 1).unwrap(),
+            transaction_id: String::new(),
+            activity_code: "DIV".to_string(),
+            amount: dec!(10),
+            balance: dec!(10),
+            eur_execution: None,
+        };
+
+        // A foreign dividend with no ledger to compute FX from → flagged.
+        assert!(foreign_activity_without_ledger(
+            &[],
+            &[],
+            &[dividend("USD")]
+        ));
+        // EUR-only activity → nothing to compute, not flagged.
+        assert!(!foreign_activity_without_ledger(
+            &[],
+            &[],
+            &[dividend("EUR")]
+        ));
+        // No activity at all → not flagged.
+        assert!(!foreign_activity_without_ledger(&[], &[], &[]));
+        // Ledger present → the FIFO runs, so not flagged even with a foreign dividend.
+        assert!(!foreign_activity_without_ledger(
+            &[usd_flow],
+            &[],
+            &[dividend("USD")]
+        ));
     }
 
     /// Test that FX losses can offset capital gains (general loss bucket).
