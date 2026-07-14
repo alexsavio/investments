@@ -4,8 +4,6 @@
 
 use std::io::Write;
 
-use rust_decimal::RoundingStrategy;
-
 use crate::core::GenericResult;
 use crate::formatting;
 use crate::taxes::germany::TeilfreistellungRate;
@@ -711,13 +709,10 @@ impl CsvFormatter {
         Ok(())
     }
 
-    /// Round a reported figure to two places, half away from zero (German tax-form practice for
-    /// per-line amounts). Each figure is rounded once from full precision; a one-cent gap between
-    /// rounded components and a rounded total is acceptable, unlike the silent truncation of `{:.2}`.
+    /// Round a reported figure to two places, half away from zero. Delegates to the module-shared
+    /// [`super::format_eur`] so the CSV and the console cannot disagree by a rounding cent.
     fn format_decimal(value: Decimal) -> String {
-        let mut value = value.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero);
-        value.rescale(2);
-        value.to_string()
+        super::format_eur(value)
     }
 
     fn escape_csv(value: &str) -> String {
