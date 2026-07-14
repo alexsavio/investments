@@ -33,7 +33,10 @@ pub struct CurrencyFxResult {
 /// A single realized FX gain/loss in EUR (full precision; positive = gain, negative = loss).
 #[derive(Debug)]
 pub struct FxRealization {
+    /// Disposal date (the movement that realized the gain/loss).
     pub date: Date,
+    /// Acquisition date of the consumed lot — the §23 holding period runs from here to `date`.
+    pub acquisition_date: Date,
     pub amount: Decimal,
     pub activity_code: String,
 }
@@ -44,6 +47,8 @@ struct Lot {
     qty: Decimal,
     /// EUR value of one unit of the foreign currency at acquisition.
     rate: Decimal,
+    /// Acquisition date of this lot (the §23 holding period is measured from here).
+    date: Date,
 }
 
 /// Replay the cash-flow ledger through a per-currency signed-inventory FIFO.
@@ -135,6 +140,7 @@ where
                 lots.push_back(Lot {
                     qty: remaining,
                     rate,
+                    date: flow.date,
                 });
                 remaining = dec!(0);
                 continue;
@@ -146,6 +152,7 @@ where
                 // Disposing held currency → §20 taxable gain/loss.
                 result.taxable.push(FxRealization {
                     date: flow.date,
+                    acquisition_date: front.date,
                     amount: units * (rate - front.rate),
                     activity_code: flow.activity_code.clone(),
                 });
@@ -153,6 +160,7 @@ where
                 // Repaying borrowed currency → non-taxable (Tilgung Fremdwährungskredit).
                 result.non_taxable.push(FxRealization {
                     date: flow.date,
+                    acquisition_date: front.date,
                     amount: units * (front.rate - rate),
                     activity_code: flow.activity_code.clone(),
                 });

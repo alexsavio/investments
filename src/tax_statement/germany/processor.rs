@@ -13,6 +13,7 @@ use crate::broker_statement::{
     BrokerCorporateActionType, BrokerStatement, Dividend, FifoDetails, ForeignCashFlow, ForexTrade,
     StockSourceDetails,
 };
+use crate::config::ForeignCurrencyTaxation;
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
@@ -24,10 +25,11 @@ use crate::taxes::germany::{AbgeltungsteuerBreakdown, TeilfreistellungRate};
 use crate::time::Date;
 use crate::types::Decimal;
 
-use super::fx_fifo::compute_fx_fifo;
+use super::fx_fifo::{CurrencyFxResult, compute_fx_fifo};
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, CorporateActionType, DividendEntry,
-    FeeEntry, FxGainEntry, GermanTaxStatement, InterestEntry, StockGrantEntry, VorabpauschaleEntry,
+    FeeEntry, FxGainEntry, GermanTaxStatement, InterestEntry, Section23, StockGrantEntry,
+    VorabpauschaleEntry,
 };
 
 /// Helper function to convert to EUR with context-specific error message.
@@ -57,6 +59,7 @@ pub fn process_broker_statement(
     year: i32,
     converter: &CurrencyConverter,
     tax_config: &TaxConfig,
+    fx_taxation: ForeignCurrencyTaxation,
 ) -> GenericResult<(bool, bool, bool, bool)> {
     debug!("Processing German tax statement for year {}", year);
 
@@ -64,7 +67,7 @@ pub fn process_broker_statement(
     let has_dividends =
         process_dividends(statement, broker_statement, year, converter, tax_config)?;
     let has_interest = process_interest(statement, broker_statement, year, converter)?;
-    let has_fx_gains = process_fx_gains(statement, broker_statement, year, converter)?;
+    let has_fx_gains = process_fx_gains(statement, broker_statement, year, converter, fx_taxation)?;
 
     // Process additional income types
     let has_fees = process_fees(statement, broker_statement, year, converter)?;
@@ -773,6 +776,7 @@ fn process_fx_gains(
     broker_statement: &BrokerStatement,
     year: i32,
     converter: &CurrencyConverter,
+    fx_taxation: ForeignCurrencyTaxation,
 ) -> GenericResult<bool> {
     if foreign_activity_without_ledger(
         &broker_statement.foreign_cash_flows,
@@ -781,7 +785,7 @@ fn process_fx_gains(
     ) {
         warn!(
             "The statement has foreign-currency activity but no Statement of Funds Currency-level \
-             cash ledger, so §20 Fremdwährungsgewinne were not computed. Re-export the IBKR Flex \
+             cash ledger, so Fremdwährungsgewinne were not computed. Re-export the IBKR Flex \
              query with the Statement of Funds at Currency level of detail to capture foreign FX \
              gains."
         );
@@ -797,10 +801,27 @@ fn process_fx_gains(
         })
     })?;
 
+    Ok(match fx_taxation {
+        ForeignCurrencyTaxation::InterestBearing => route_fx_section20(statement, &results, year),
+        ForeignCurrencyTaxation::NonInterestBearing => {
+            route_fx_section23(statement, &results, year)
+        }
+    })
+}
+
+/// Route FIFO realizations into the §20 EStG capital-income path (Anlage KAP) for the default
+/// interest-bearing treatment: held-currency disposals are taxable Fremdwährungsgewinne, borrowed
+/// currency repaid at a gain/loss is a non-taxable Fremdwährungskredit-Tilgung (BMF 19.05.2022
+/// Rz. 131). Returns whether any FX income fell in `year`.
+fn route_fx_section20(
+    statement: &mut GermanTaxStatement,
+    results: &[CurrencyFxResult],
+    year: i32,
+) -> bool {
     let mut has_income = false;
     let mut non_taxable_margin_fx = dec!(0);
 
-    for result in &results {
+    for result in results {
         let currency_pair = format!("EUR.{}", result.currency);
 
         for realization in &result.taxable {
@@ -865,7 +886,76 @@ fn process_fx_gains(
     statement.non_taxable_margin_fx =
         non_taxable_margin_fx.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero);
 
-    Ok(has_income)
+    has_income
+}
+
+/// Route FIFO realizations into the §23 EStG buckets (Anlage SO) for a non-interest-bearing account.
+/// The one-year Spekulationsfrist splits held-currency disposals into taxable (≤ 1 year) and
+/// tax-free (> 1 year); borrowed-currency repayments are flagged for manual review because the §20
+/// Fremdwährungskredit exemption (BMF 19.05.2022 Rz. 131) does not carry over to §23. The tool
+/// computes no tax here — §23 income is taxed at the filer's personal rate — so the buckets are
+/// informational, mirroring the Anlage N / §22 grant handling. Returns whether any §23 realization
+/// fell in `year`.
+fn route_fx_section23(
+    statement: &mut GermanTaxStatement,
+    results: &[CurrencyFxResult],
+    year: i32,
+) -> bool {
+    let mut section = Section23::default();
+
+    for result in results {
+        for realization in &result.taxable {
+            if realization.date.year() != year {
+                continue;
+            }
+
+            // "mehr als ein Jahr": tax-free only when the disposal is strictly after the first
+            // anniversary of acquisition (holding period per §187/§188 BGB via §108 AO).
+            let held_over_one_year = realization
+                .acquisition_date
+                .checked_add_months(chrono::Months::new(12))
+                .is_some_and(|anniversary| realization.date > anniversary);
+
+            if held_over_one_year {
+                // A > 1-year loss is non-deductible under §23 and has no reportable effect, so only
+                // gains accumulate into the tax-free bucket.
+                if realization.amount > dec!(0) {
+                    section.long_term_tax_free += realization.amount;
+                }
+            } else if realization.amount >= dec!(0) {
+                section.short_term_gains += realization.amount;
+            } else {
+                section.short_term_losses += realization.amount.abs();
+            }
+        }
+
+        for realization in &result.non_taxable {
+            if realization.date.year() == year {
+                section.borrowed_review += realization.amount;
+            }
+        }
+    }
+
+    // §23 has no external per-line worksheet to reconcile against, so each bucket is summed at full
+    // precision and rounded once.
+    let round =
+        |value: Decimal| value.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero);
+    section.short_term_gains = round(section.short_term_gains);
+    section.short_term_losses = round(section.short_term_losses);
+    section.long_term_tax_free = round(section.long_term_tax_free);
+    section.borrowed_review = round(section.borrowed_review);
+
+    let has_income = !section.is_empty();
+    if has_income {
+        debug!(
+            "FX §23: short-term net €{:.2}, long-term tax-free €{:.2}, borrowed-review €{:.2}",
+            section.short_term_net(),
+            section.long_term_tax_free,
+            section.borrowed_review
+        );
+    }
+    statement.section23 = section;
+    has_income
 }
 
 /// Process broker fees.
@@ -1199,6 +1289,7 @@ fn process_corporate_actions(
 
 #[cfg(test)]
 mod tests {
+    use super::super::fx_fifo::FxRealization;
     use super::*;
     use crate::tax_statement::germany::{CsvFormatter, GermanTaxStatement};
     use crate::taxes::germany::TeilfreistellungRate;
@@ -2571,5 +2662,106 @@ mod tests {
         CsvFormatter::write(&statement, &mut csv_output).unwrap();
         let csv = String::from_utf8(csv_output).unwrap();
         assert!(!csv.contains("VORABPAUSCHALE"));
+    }
+
+    /// Build one taxable/borrowed FX realization for the §23 routing tests.
+    fn realization(
+        acquired: (i32, u32, u32),
+        disposed: (i32, u32, u32),
+        amount: Decimal,
+    ) -> FxRealization {
+        FxRealization {
+            date: Date::from_ymd_opt(disposed.0, disposed.1, disposed.2).unwrap(),
+            acquisition_date: Date::from_ymd_opt(acquired.0, acquired.1, acquired.2).unwrap(),
+            amount,
+            activity_code: "FOREX".to_string(),
+        }
+    }
+
+    /// §23 routing splits held-currency disposals by the one-year Spekulationsfrist, drops
+    /// non-deductible long-held losses, flags borrowed-currency realizations, and year-filters.
+    #[test]
+    fn section23_routes_realizations_by_holding_period() {
+        let result = CurrencyFxResult {
+            currency: "USD".to_string(),
+            taxable: vec![
+                realization((2025, 1, 10), (2025, 6, 10), dec!(100)), // short-term gain
+                realization((2025, 2, 1), (2025, 7, 1), dec!(-30)),   // short-term loss
+                realization((2023, 1, 5), (2025, 1, 10), dec!(50)),   // >1yr gain → tax-free
+                realization((2023, 3, 1), (2025, 3, 5), dec!(-20)),   // >1yr loss → dropped
+                realization((2024, 1, 1), (2024, 12, 31), dec!(999)), // other year → filtered
+            ],
+            non_taxable: vec![
+                realization((2025, 4, 1), (2025, 5, 1), dec!(15)), // borrowed → manual review
+                realization((2024, 1, 1), (2024, 6, 1), dec!(77)), // other year → filtered
+            ],
+        };
+
+        let mut statement =
+            GermanTaxStatement::new(2025, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        let has_income = route_fx_section23(&mut statement, &[result], 2025);
+
+        assert!(has_income);
+        let s = &statement.section23;
+        assert_eq!(s.short_term_gains, dec!(100));
+        assert_eq!(s.short_term_losses, dec!(30));
+        assert_eq!(s.short_term_net(), dec!(70));
+        assert_eq!(s.long_term_tax_free, dec!(50));
+        assert_eq!(s.borrowed_review, dec!(15));
+
+        // §23 must stay isolated from the §20 path: no FX gain entries, no non-taxable margin.
+        assert!(statement.fx_gains.is_empty());
+        assert_eq!(statement.non_taxable_margin_fx, dec!(0));
+    }
+
+    /// The Spekulationsfrist is inclusive of the first anniversary: a disposal exactly one year
+    /// after acquisition is still taxable (≤ 1 year); one day later is tax-free (> 1 year).
+    #[test]
+    fn section23_one_year_boundary_is_taxable() {
+        let on_anniversary = CurrencyFxResult {
+            currency: "USD".to_string(),
+            taxable: vec![realization((2024, 6, 10), (2025, 6, 10), dec!(40))],
+            non_taxable: vec![],
+        };
+        let mut statement =
+            GermanTaxStatement::new(2025, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        route_fx_section23(&mut statement, &[on_anniversary], 2025);
+        assert_eq!(statement.section23.short_term_gains, dec!(40));
+        assert_eq!(statement.section23.long_term_tax_free, dec!(0));
+
+        let day_after = CurrencyFxResult {
+            currency: "USD".to_string(),
+            taxable: vec![realization((2024, 6, 10), (2025, 6, 11), dec!(40))],
+            non_taxable: vec![],
+        };
+        let mut statement =
+            GermanTaxStatement::new(2025, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        route_fx_section23(&mut statement, &[day_after], 2025);
+        assert_eq!(statement.section23.short_term_gains, dec!(0));
+        assert_eq!(statement.section23.long_term_tax_free, dec!(40));
+    }
+
+    /// The §23 buckets surface in the CSV under Anlage SO with the Freigrenze and borrowed-review flag.
+    #[test]
+    fn section23_renders_anlage_so_csv() {
+        let result = CurrencyFxResult {
+            currency: "USD".to_string(),
+            taxable: vec![realization((2025, 1, 10), (2025, 6, 10), dec!(100))],
+            non_taxable: vec![realization((2025, 4, 1), (2025, 5, 1), dec!(15))],
+        };
+        let mut statement =
+            GermanTaxStatement::new(2025, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        route_fx_section23(&mut statement, &[result], 2025);
+        statement.calculate_totals();
+
+        let mut csv_output = Vec::new();
+        CsvFormatter::write(&statement, &mut csv_output).unwrap();
+        let csv = String::from_utf8(csv_output).unwrap();
+        assert!(csv.contains("ANLAGE SO (§23 EStG)"));
+        assert!(csv.contains("SECTION23_SHORT_TERM_NET"));
+        assert!(csv.contains("SECTION23_FREIGRENZE"));
+        assert!(csv.contains("SECTION23_BORROWED_REVIEW"));
+        // €1000 Freigrenze applies from 2024 onward.
+        assert!(csv.contains("1000"));
     }
 }

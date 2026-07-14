@@ -13,7 +13,7 @@ use crate::types::Decimal;
 
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry,
-    GermanTaxStatement, InterestEntry, StockGrantEntry,
+    GermanTaxStatement, InterestEntry, Section23, StockGrantEntry,
 };
 
 /// Anlage KAP-INV line numbers for one fund type: (distributions, Vorabpauschale, sale gains/losses).
@@ -404,6 +404,7 @@ impl CsvFormatter {
         Self::write_kap_inv_section(writer, statement)?;
         Self::write_vorabpauschale(writer, statement)?;
         Self::write_short_positions(writer, statement)?;
+        Self::write_section23(writer, statement)?;
 
         // Non-capital income (reported separately)
         if statement.total_stock_grant_income > dec!(0)
@@ -644,6 +645,66 @@ impl CsvFormatter {
                 "SHORT_POSITION,{},{}",
                 Self::escape_csv(&label),
                 Self::format_decimal(*quantity)
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Anlage SO (§23 EStG) figures for a non-interest-bearing foreign-currency account. Reported
+    /// for manual declaration only — §23 income is taxed at the filer's personal rate, which the
+    /// tool cannot know, so no tax is computed here.
+    fn write_section23<W: Write>(
+        writer: &mut W,
+        statement: &GermanTaxStatement,
+    ) -> GenericResult<()> {
+        let section = &statement.section23;
+        if section.is_empty() {
+            return Ok(());
+        }
+
+        writeln!(writer)?;
+        writeln!(
+            writer,
+            "# ANLAGE SO (§23 EStG) — private Veräußerungsgeschäfte from a non-interest-bearing"
+        )?;
+        writeln!(
+            writer,
+            "# foreign-currency account. No tax is computed: §23 income is taxed at your personal rate."
+        )?;
+        writeln!(
+            writer,
+            "SECTION23_SHORT_TERM_GAIN,Veräußerungsgeschäfte gehalten ≤ 1 Jahr — Gewinn,{}",
+            Self::format_decimal(section.short_term_gains)
+        )?;
+        writeln!(
+            writer,
+            "SECTION23_SHORT_TERM_LOSS,Veräußerungsgeschäfte gehalten ≤ 1 Jahr — Verlust,{}",
+            Self::format_decimal(section.short_term_losses)
+        )?;
+        writeln!(
+            writer,
+            "SECTION23_SHORT_TERM_NET,Veräußerungsgeschäfte gehalten ≤ 1 Jahr — netto,{}",
+            Self::format_decimal(section.short_term_net())
+        )?;
+        writeln!(
+            writer,
+            "SECTION23_FREIGRENZE,Freigrenze {} (Gesamtgewinn ≤ Freigrenze → steuerfrei; sonst voll steuerpflichtig),{}",
+            statement.year,
+            Self::format_decimal(Section23::freigrenze(statement.year))
+        )?;
+        if section.long_term_tax_free != dec!(0) {
+            writeln!(
+                writer,
+                "SECTION23_LONG_TERM_TAX_FREE,Steuerfrei (> 1 Jahr gehalten — Spekulationsfrist erfüllt),{}",
+                Self::format_decimal(section.long_term_tax_free)
+            )?;
+        }
+        if section.borrowed_review != dec!(0) {
+            writeln!(
+                writer,
+                "SECTION23_BORROWED_REVIEW,Fremdwährungskredit-Realisierung — MANUAL REVIEW (§20-Ausnahme BMF 19.05.2022 Rz. 131 gilt nicht für §23),{}",
+                Self::format_decimal(section.borrowed_review)
             )?;
         }
 

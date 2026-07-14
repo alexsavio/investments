@@ -191,8 +191,14 @@ fn generate_german_tax_statement(
     let converter = CurrencyConverter::new_ecb(database, None, true);
 
     // Process broker statement and populate entries
-    let (has_trades, has_dividends, has_interest, has_fx_gains) =
-        germany::process_broker_statement(&mut statement, &broker_statement, year, &converter, &config.taxes)?;
+    let (has_trades, has_dividends, has_interest, has_fx_gains) = germany::process_broker_statement(
+        &mut statement,
+        &broker_statement,
+        year,
+        &converter,
+        &config.taxes,
+        portfolio.foreign_currency_taxation,
+    )?;
 
     let has_income = has_trades || has_dividends || has_interest || has_fx_gains;
 
@@ -270,6 +276,39 @@ fn generate_german_tax_statement(
                 "Tilgung Fremdwährungskredit (Margin Loan FX): €{:.2}",
                 statement.non_taxable_margin_fx
             );
+        }
+
+        // Anlage SO (§23 EStG): private Veräußerungsgeschäfte from a non-interest-bearing
+        // foreign-currency account. Reported for manual declaration — no tax is computed here.
+        let section23 = &statement.section23;
+        if !section23.is_empty() {
+            println!("\n{}", Color::Cyan.paint("=== Anlage SO (§23 EStG) Form Values ==="));
+            println!(
+                "Zeile 41-47 (Veräußerungsgeschäfte, gehalten ≤ 1 Jahr): Gewinn €{:.2} / Verlust €{:.2} → netto €{:.2}",
+                section23.short_term_gains,
+                section23.short_term_losses,
+                section23.short_term_net()
+            );
+            let freigrenze = germany::Section23::freigrenze(year);
+            println!(
+                "Freigrenze {year}: €{:.2} (Gesamtgewinn aus allen privaten Veräußerungen ≤ Freigrenze → steuerfrei; sonst voll steuerpflichtig)",
+                freigrenze
+            );
+            if section23.long_term_tax_free != Decimal::ZERO {
+                println!(
+                    "Steuerfrei (> 1 Jahr gehalten, Spekulationsfrist erfüllt): €{:.2}",
+                    section23.long_term_tax_free
+                );
+            }
+            if section23.borrowed_review != Decimal::ZERO {
+                println!(
+                    "{}",
+                    Color::Yellow.paint(format!(
+                        "Prüfen: Fremdwährungskredit-Realisierung €{:.2} — die §20-Ausnahme (BMF 19.05.2022 Rz. 131) gilt nicht für §23; ggf. als privates Veräußerungsgeschäft anzusetzen.",
+                        section23.borrowed_review
+                    ))
+                );
+            }
         }
     } else if has_income {
         // No output file specified, just print summary

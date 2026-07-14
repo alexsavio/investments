@@ -287,6 +287,19 @@ impl Config {
     }
 }
 
+/// How a portfolio's foreign-currency balances are taxed under German law.
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ForeignCurrencyTaxation {
+    /// Interest-bearing cash (e.g. Interactive Brokers pays interest): currency gains are §20 EStG
+    /// capital income (Abgeltungsteuer). The default — correct for the common broker case.
+    #[default]
+    InterestBearing,
+    /// Non-interest-bearing currency held as an asset: currency gains are §23 EStG private
+    /// Veräußerungsgeschäfte (one-year Spekulationsfrist, Anlage SO, personal income rate).
+    NonInterestBearing,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PortfolioConfig {
@@ -333,6 +346,10 @@ pub struct PortfolioConfig {
 
     #[serde(default, deserialize_with = "deserialize_cash_flows")]
     pub tax_deductions: Vec<(Date, Decimal)>,
+
+    /// German tax treatment of this account's foreign-currency balances (§20 vs §23).
+    #[serde(default)]
+    pub foreign_currency_taxation: ForeignCurrencyTaxation,
 }
 
 impl PortfolioConfig {

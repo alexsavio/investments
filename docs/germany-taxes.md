@@ -257,15 +257,49 @@ than emit a wrong number when they are not met:
   are rejected rather than mis-valued.
 - **One account per query.** As with securities FIFO, a duplicate forex `transactionID` (multi-account
   or merged exports) makes the execution-rate pairing ambiguous and is rejected.
-- **§20 treatment only.** All foreign currency is treated as an interest-bearing Fremdwährungsguthaben
-  (§20 EStG), which is correct for Interactive Brokers. A non-interest-bearing balance would instead
-  fall under §23 EStG (private Veräußerungsgeschäfte, one-year Spekulationsfrist, losses deductible
-  only against §23 gains); that path is not implemented.
+- **Tax treatment selected per account.** By default all foreign currency is treated as an
+  interest-bearing Fremdwährungsguthaben (§20 EStG), which is correct for Interactive Brokers. A
+  non-interest-bearing balance falls under §23 EStG instead; select it per portfolio with
+  `foreign_currency_taxation: non_interest_bearing` (see below).
 - **EUR-based account.** A conversion between two non-EUR currencies (e.g. USD↔GBP) has no EUR leg, so
   both sides are valued at the ECB reference rate rather than the actual execution rate.
 
 Each realized §20 gain/loss is rounded to cents per row to reconcile against BubbleTax's per-line
 worksheet; the non-taxable margin-loan total is summed at full precision and rounded once.
+
+### Non-interest-bearing currency (§23 EStG, Anlage SO)
+
+A foreign-currency balance that earns no interest is not §20 capital income; its disposals are
+private Veräußerungsgeschäfte under §23 EStG. Set this per portfolio:
+
+```yaml
+portfolios:
+  - name: my-account
+    broker: interactive-brokers
+    statements: "..."
+    foreign_currency_taxation: non_interest_bearing  # default: interest_bearing (§20)
+```
+
+In this mode the same signed-inventory FIFO runs, but its realizations route to Anlage SO instead of
+Anlage KAP, and **no tax is computed** — §23 income is taxed at the filer's personal income rate,
+which the tool cannot know. It reports informational buckets, mirroring the Anlage N / §22 grant
+handling:
+
+- **One-year Spekulationsfrist.** A held-currency disposal more than one year after acquisition is
+  tax-free (`long_term_tax_free`); the holding period is measured from the FIFO lot's acquisition
+  date to the disposal, inclusive of the anniversary (a disposal exactly one year later is still
+  taxable). Disposals within the year split into `short_term_gains` and `short_term_losses`.
+- **Freigrenze cliff.** The statement prints the year's §23 Freigrenze (€600 through 2023, €1000 from
+  2024). It is a cliff, not an allowance: if the filer's *total* private-sale gains for the year stay
+  at or below it they are entirely tax-free, and one euro over makes the whole amount taxable. Because
+  the tool sees only this account's currency gains — not the filer's other private sales — it cannot
+  apply the Freigrenze itself and leaves the €0-tax decision to the filer.
+- **Borrowed currency flagged for review.** The §20 Fremdwährungskredit exemption (BMF 19.05.2022
+  Rz. 131) does not carry over to §23. A negative-balance repayment is surfaced as
+  `borrowed_review` — its §23 treatment is a manual call, not silently excluded as it is under §20.
+
+§23 losses offset only §23 gains (never the §20 pot or KAP), so the tool keeps these figures isolated
+from the Anlage KAP totals.
 
 ## Altbestand (Pre-2009 Holdings)
 
