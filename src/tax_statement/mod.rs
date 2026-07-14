@@ -227,46 +227,53 @@ fn generate_german_tax_statement(
         println!("Interest entries: {}", statement.interest.len());
         println!("FX gain/loss entries: {}", statement.fx_gains.len());
         println!(
-            "Total taxable income: €{:.2}",
-            statement.total_taxable_income
+            "Total taxable income: €{}",
+            germany::format_eur(statement.total_taxable_income)
         );
         if statement.total_fx_gains > Decimal::ZERO || statement.total_fx_losses > Decimal::ZERO {
             println!(
-                "FX gains: €{:.2}, FX losses: €{:.2}",
-                statement.total_fx_gains, statement.total_fx_losses
+                "FX gains: €{}, FX losses: €{}",
+                germany::format_eur(statement.total_fx_gains),
+                germany::format_eur(statement.total_fx_losses)
             );
         }
-        println!("Total German tax: €{:.2}", statement.total_german_tax);
+        println!(
+            "Total German tax: €{}",
+            germany::format_eur(statement.total_german_tax)
+        );
         if statement.total_foreign_tax > Decimal::ZERO {
             println!(
-                "Foreign tax credit: €{:.2}",
-                statement.total_foreign_tax_credit
+                "Foreign tax credit: €{}",
+                germany::format_eur(statement.total_foreign_tax_credit)
             );
         }
-        println!("Net tax due: €{:.2}", statement.net_tax_due);
+        println!(
+            "Net tax due: €{}",
+            germany::format_eur(statement.net_tax_due)
+        );
 
         // Print Anlage KAP form values
         println!("\n{}", Color::Cyan.paint("=== Anlage KAP Form Values ==="));
         println!(
-            "KAP Zeile 19 (Ausländische Kapitalerträge): €{:.2}",
-            statement.kap_zeile_19
+            "KAP Zeile 19 (Ausländische Kapitalerträge): €{}",
+            germany::format_eur(statement.kap_zeile_19)
         );
         if statement.kap_zeile_22 > Decimal::ZERO {
             println!(
-                "KAP Zeile 22 (Sonstige Verluste): €{:.2}",
-                statement.kap_zeile_22
+                "KAP Zeile 22 (Sonstige Verluste): €{}",
+                germany::format_eur(statement.kap_zeile_22)
             );
         }
         if statement.kap_zeile_23 > Decimal::ZERO {
             println!(
-                "KAP Zeile 23 (Aktien-Verluste): €{:.2}",
-                statement.kap_zeile_23
+                "KAP Zeile 23 (Aktien-Verluste): €{}",
+                germany::format_eur(statement.kap_zeile_23)
             );
         }
         if statement.kap_zeile_41 > Decimal::ZERO {
             println!(
-                "KAP Zeile 41 (Anrechenbare ausländische Steuer): €{:.2}",
-                statement.kap_zeile_41
+                "KAP Zeile 41 (Anrechenbare ausländische Steuer): €{}",
+                germany::format_eur(statement.kap_zeile_41)
             );
         }
 
@@ -274,8 +281,8 @@ fn generate_german_tax_statement(
         if statement.non_taxable_margin_fx != Decimal::ZERO {
             println!("\n{}", Color::Yellow.paint("=== Non-Taxable (Nicht steuerbar) ==="));
             println!(
-                "Tilgung Fremdwährungskredit (Margin Loan FX): €{:.2}",
-                statement.non_taxable_margin_fx
+                "Tilgung Fremdwährungskredit (Margin Loan FX): €{}",
+                germany::format_eur(statement.non_taxable_margin_fx)
             );
         }
 
@@ -285,28 +292,28 @@ fn generate_german_tax_statement(
         if !section23.is_empty() {
             println!("\n{}", Color::Cyan.paint("=== Anlage SO (§23 EStG) Form Values ==="));
             println!(
-                "Zeile 41-47 (Veräußerungsgeschäfte, gehalten ≤ 1 Jahr): Gewinn €{:.2} / Verlust €{:.2} → netto €{:.2}",
-                section23.short_term_gains,
-                section23.short_term_losses,
-                section23.short_term_net()
+                "Zeile 41-47 (Veräußerungsgeschäfte, gehalten ≤ 1 Jahr): Gewinn €{} / Verlust €{} → netto €{}",
+                germany::format_eur(section23.short_term_gains),
+                germany::format_eur(section23.short_term_losses),
+                germany::format_eur(section23.short_term_net())
             );
             let freigrenze = germany::Section23::freigrenze(year);
             println!(
-                "Freigrenze {year}: €{:.2} (Gesamtgewinn aus allen privaten Veräußerungen ≤ Freigrenze → steuerfrei; sonst voll steuerpflichtig)",
-                freigrenze
+                "Freigrenze {year}: €{} (Gesamtgewinn aus allen privaten Veräußerungen ≤ Freigrenze → steuerfrei; sonst voll steuerpflichtig)",
+                germany::format_eur(freigrenze)
             );
             if section23.long_term_tax_free != Decimal::ZERO {
                 println!(
-                    "Steuerfrei (> 1 Jahr gehalten, Spekulationsfrist erfüllt): €{:.2}",
-                    section23.long_term_tax_free
+                    "Steuerfrei (> 1 Jahr gehalten, Spekulationsfrist erfüllt): €{}",
+                    germany::format_eur(section23.long_term_tax_free)
                 );
             }
             if section23.borrowed_review != Decimal::ZERO {
                 println!(
                     "{}",
                     Color::Yellow.paint(format!(
-                        "Prüfen: Fremdwährungskredit-Realisierung €{:.2} — die §20-Ausnahme (BMF 19.05.2022 Rz. 131) gilt nicht für §23; ggf. als privates Veräußerungsgeschäft anzusetzen.",
-                        section23.borrowed_review
+                        "Prüfen: Fremdwährungskredit-Realisierung €{} — die §20-Ausnahme (BMF 19.05.2022 Rz. 131) gilt nicht für §23; ggf. als privates Veräußerungsgeschäft anzusetzen.",
+                        germany::format_eur(section23.borrowed_review)
                     ))
                 );
             }

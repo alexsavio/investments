@@ -16,7 +16,7 @@ use crate::taxes::{TaxConfig, TaxRemapping};
 use crate::time::{self, Date};
 use crate::types::Decimal;
 
-use super::{GermanTaxStatement, process_broker_statement};
+use super::{GermanTaxStatement, format_eur, process_broker_statement};
 
 /// Fixed EUR conversion backend: every non-EUR currency converts to EUR at a constant rate,
 /// independent of date. Keeps expected tax figures hand-computable.
@@ -118,6 +118,18 @@ fn run_pipeline_full(
 /// Run the full German tax pipeline over a fixture and return the finalized statement.
 fn run_pipeline(fixture: &str, year: i32) -> GermanTaxStatement {
     run_pipeline_with_config(fixture, year, &TaxConfig::default())
+}
+
+/// The shared EUR formatter (used by both the CSV and the console) rounds half away from zero, the
+/// German tax-form convention. This is exactly where the `{:.2}` formatter diverges: it rounds
+/// half-to-even, so a `…2.325` midpoint would render as `12.32` on the console while the CSV shows
+/// `12.33`. Routing both surfaces through this helper keeps them in agreement.
+#[test]
+fn format_eur_rounds_half_away_from_zero() {
+    assert_eq!(format_eur(dec!(12.325)), "12.33");
+    assert_eq!(format_eur(dec!(-12.325)), "-12.33");
+    assert_eq!(format_eur(dec!(0)), "0.00");
+    assert_eq!(format_eur(dec!(29.35)), "29.35");
 }
 
 /// Smoke test: the fixture parses through the real IB Flex reader and the two AAPL sells are
