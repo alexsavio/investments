@@ -172,6 +172,24 @@ portfolios:
     # symbol_remapping:
     #   - {from: TMOS@, to: TMOS, exchange: MOEX, when: post}
 
+  # German filers: an Interactive Brokers account settled in EUR. Two portfolio-level options control
+  # the foreign-currency tax treatment (see docs/germany-taxes.md for full detail).
+  #- name: ibkr
+  #  broker: interactive-brokers
+  #  statements: ~/Brokerage/Interactive Brokers/Statements
+  #  currency: EUR
+  #  # How this account's foreign-currency balances are taxed. Default `interest_bearing` = §20 EStG
+  #  # (Abgeltungsteuer, Anlage KAP), correct for IBKR. `non_interest_bearing` = §23 EStG private
+  #  # Veräußerungsgeschäfte (1-year Spekulationsfrist, Anlage SO, report-only — no tax computed).
+  #  foreign_currency_taxation: interest_bearing
+  #  # Only when the Flex export does not reach account opening: declare the carried-in foreign balance
+  #  # so the FX FIFO seeds from it instead of rejecting the statement. Keyed by ISO 4217 code.
+  #  opening_foreign_currency:
+  #    USD:
+  #      quantity: 90.00      # signed: positive = held (Guthaben), negative = borrowed (Kredit)
+  #      eur_per_unit: 0.92   # EUR value of one unit at acquisition (the rate the export can't supply)
+  #      as_of: 2023.11.04    # acquisition date (YYYY.MM.DD or DD.MM.YYYY); drives the §23 holding period
+
 # Tax configuration
 #
 # For Russia: Starting from 2021 progressive tax rate has replaced the fixed one. Here you can specify your non-investment
