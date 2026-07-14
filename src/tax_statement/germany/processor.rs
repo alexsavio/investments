@@ -801,7 +801,6 @@ fn process_fx_gains(
     let mut non_taxable_margin_fx = dec!(0);
 
     for result in &results {
-        non_taxable_margin_fx += result.non_taxable;
         let currency_pair = format!("EUR.{}", result.currency);
 
         for realization in &result.taxable {
@@ -844,10 +843,17 @@ fn process_fx_gains(
             statement.add_fx_gain(entry);
         }
 
-        if result.non_taxable != dec!(0) {
+        let currency_non_taxable: Decimal = result
+            .non_taxable
+            .iter()
+            .filter(|realization| realization.date.year() == year)
+            .map(|realization| realization.amount)
+            .sum();
+        non_taxable_margin_fx += currency_non_taxable;
+        if currency_non_taxable != dec!(0) {
             debug!(
                 "FX non-taxable (Tilgung Fremdwährungskredit) {}: €{:.2}",
-                result.currency, result.non_taxable
+                result.currency, currency_non_taxable
             );
         }
     }
