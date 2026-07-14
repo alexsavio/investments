@@ -811,6 +811,10 @@ fn process_fx_gains(
 
             // Round each realized gain/loss to cents. FX has no Teilfreistellung; §32d(1) flat tax
             // with q = 0 (a per-row loss floors its own tax to zero, but still offsets in the pot).
+            // Rounding per realization (rather than once over the summed pot) is deliberate: it
+            // mirrors BubbleTax's per-line worksheet, so the tool reconciles row by row against the
+            // authoritative report. The non-taxable total is instead summed at full precision and
+            // rounded once, matching how BubbleTax reports that single aggregate.
             let gross_amount_eur = realization
                 .amount
                 .round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero);

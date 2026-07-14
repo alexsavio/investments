@@ -237,6 +237,32 @@ date.
 The FX figures on a real 2025 IBKR statement reconcile with Interactive Brokers' own German tax
 report (BubbleTax) within ECB rounding, and the non-taxable margin-loan split matches it exactly.
 
+### Requirements and scope
+
+The FIFO trusts the statement's own running balance and refuses to guess when it cannot. For the
+figures to be correct, the statement must satisfy these boundaries — the program errors out rather
+than emit a wrong number when they are not met:
+
+- **Statement of Funds at `Currency` level of detail.** This is the source ledger. Without it the FX
+  gain cannot be computed; the program warns when a statement shows foreign-currency activity but
+  carries no such ledger.
+- **One tax year, starting from a zero foreign balance.** The FIFO replays only the movements in the
+  statement and seeds every currency from empty, so it validates that the movements sum, in document
+  order, to the broker's reported balance after each step. A carried-in balance (foreign cash held
+  across 1 January, whose prior-year acquisition rate a single-year statement does not carry),
+  out-of-order rows, or dropped rows break that check and are rejected. Export one full tax year.
+- **One account per query.** As with securities FIFO, a duplicate forex `transactionID` (multi-account
+  or merged exports) makes the execution-rate pairing ambiguous and is rejected.
+- **§20 treatment only.** All foreign currency is treated as an interest-bearing Fremdwährungsguthaben
+  (§20 EStG), which is correct for Interactive Brokers. A non-interest-bearing balance would instead
+  fall under §23 EStG (private Veräußerungsgeschäfte, one-year Spekulationsfrist, losses deductible
+  only against §23 gains); that path is not implemented.
+- **EUR-based account.** A conversion between two non-EUR currencies (e.g. USD↔GBP) has no EUR leg, so
+  both sides are valued at the ECB reference rate rather than the actual execution rate.
+
+Each realized §20 gain/loss is rounded to cents per row to reconcile against BubbleTax's per-line
+worksheet; the non-taxable margin-loan total is summed at full precision and rounded once.
+
 ## Altbestand (Pre-2009 Holdings)
 
 Securities purchased before January 1, 2009 ("Altbestand") may be exempt from capital gains tax under grandfathering rules. The program:
