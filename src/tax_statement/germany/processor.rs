@@ -3,7 +3,7 @@
 //! Processes broker statement data and populates the German tax statement
 //! with capital gains, dividends, interest entries, and FX gains/losses.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::Datelike;
 use log::{debug, warn};
@@ -13,7 +13,7 @@ use crate::broker_statement::{
     BrokerCorporateActionType, BrokerStatement, Dividend, FifoDetails, ForeignCashFlow, ForexTrade,
     StockSourceDetails,
 };
-use crate::config::ForeignCurrencyTaxation;
+use crate::config::{ForeignCurrencyTaxation, OpeningForeignCurrency};
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
@@ -25,7 +25,7 @@ use crate::taxes::germany::{AbgeltungsteuerBreakdown, TeilfreistellungRate};
 use crate::time::Date;
 use crate::types::Decimal;
 
-use super::fx_fifo::{CurrencyFxResult, compute_fx_fifo};
+use super::fx_fifo::{CurrencyFxResult, OpeningLot, compute_fx_fifo};
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, CorporateActionType, DividendEntry,
     FeeEntry, FxGainEntry, GermanTaxStatement, InterestEntry, Section23, StockGrantEntry,
@@ -60,6 +60,7 @@ pub fn process_broker_statement(
     converter: &CurrencyConverter,
     tax_config: &TaxConfig,
     fx_taxation: ForeignCurrencyTaxation,
+    opening_foreign_currency: &BTreeMap<String, OpeningForeignCurrency>,
 ) -> GenericResult<(bool, bool, bool, bool)> {
     debug!("Processing German tax statement for year {}", year);
 
@@ -67,7 +68,15 @@ pub fn process_broker_statement(
     let has_dividends =
         process_dividends(statement, broker_statement, year, converter, tax_config)?;
     let has_interest = process_interest(statement, broker_statement, year, converter)?;
-    let has_fx_gains = process_fx_gains(statement, broker_statement, year, converter, fx_taxation)?;
+    let opening = opening_lots(opening_foreign_currency);
+    let has_fx_gains = process_fx_gains(
+        statement,
+        broker_statement,
+        year,
+        converter,
+        fx_taxation,
+        &opening,
+    )?;
 
     // Process additional income types
     let has_fees = process_fees(statement, broker_statement, year, converter)?;
@@ -771,12 +780,26 @@ fn foreign_activity_without_ledger(
                 .any(|dividend| dividend.amount.currency != "EUR"))
 }
 
+/// Convert the per-portfolio declared opening balances into FIFO seed lots.
+fn opening_lots(opening: &BTreeMap<String, OpeningForeignCurrency>) -> Vec<OpeningLot> {
+    opening
+        .iter()
+        .map(|(currency, lot)| OpeningLot {
+            currency: currency.clone(),
+            quantity: lot.quantity,
+            eur_per_unit: lot.eur_per_unit,
+            date: lot.as_of,
+        })
+        .collect()
+}
+
 fn process_fx_gains(
     statement: &mut GermanTaxStatement,
     broker_statement: &BrokerStatement,
     year: i32,
     converter: &CurrencyConverter,
     fx_taxation: ForeignCurrencyTaxation,
+    opening: &[OpeningLot],
 ) -> GenericResult<bool> {
     if foreign_activity_without_ledger(
         &broker_statement.foreign_cash_flows,
@@ -791,15 +814,19 @@ fn process_fx_gains(
         );
     }
 
-    let results = compute_fx_fifo(&broker_statement.foreign_cash_flows, |date, currency| {
-        converter.currency_rate(date, currency, "EUR").map_err(|e| {
-            format!(
-                "Failed to convert {currency} to EUR on {date}. This may indicate missing ECB \
-                 exchange rates. Ensure your database has currency rates for this date. Error: {e}"
-            )
-            .into()
-        })
-    })?;
+    let results = compute_fx_fifo(
+        &broker_statement.foreign_cash_flows,
+        opening,
+        |date, currency| {
+            converter.currency_rate(date, currency, "EUR").map_err(|e| {
+                format!(
+                    "Failed to convert {currency} to EUR on {date}. This may indicate missing ECB \
+                     exchange rates. Ensure your database has currency rates for this date. Error: {e}"
+                )
+                .into()
+            })
+        },
+    )?;
 
     Ok(match fx_taxation {
         ForeignCurrencyTaxation::InterestBearing => route_fx_section20(statement, &results, year),

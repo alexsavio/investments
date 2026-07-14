@@ -246,15 +246,16 @@ than emit a wrong number when they are not met:
 - **Statement of Funds at `Currency` level of detail.** This is the source ledger. Without it the FX
   gain cannot be computed; the program warns when a statement shows foreign-currency activity but
   carries no such ledger.
-- **A continuous history starting from a zero foreign balance.** The FIFO replays the movements and
-  seeds every currency from empty, validating that they sum, in document order, to the broker's
-  reported balance after each step. It therefore requires the ledger to begin where the foreign
-  balance was zero (account opening). For a position held across a year boundary, drop **every
-  year's** Flex file from account opening onward into the statements directory: they are merged in
-  period order into one continuous ledger, so a lot acquired in 2023 and disposed in 2024 is
-  correctly valued at its 2023 rate, and only the filing year's disposals are taxed. A single-year
-  statement whose opening balance is non-zero, out-of-order rows, or dropped rows break the check and
-  are rejected rather than mis-valued.
+- **A continuous history from a known opening balance.** The FIFO replays the movements and seeds
+  every currency from empty, validating that they sum, in document order, to the broker's reported
+  balance after each step. It therefore requires the ledger to begin where the foreign balance was
+  zero (account opening). For a position held across a year boundary, drop **every year's** Flex file
+  from account opening onward into the statements directory: they are merged in period order into one
+  continuous ledger, so a lot acquired in 2023 and disposed in 2024 is correctly valued at its 2023
+  rate, and only the filing year's disposals are taxed. A single-year statement whose opening balance
+  is non-zero, out-of-order rows, or dropped rows break the check and are rejected rather than
+  mis-valued. When the export genuinely cannot reach back to account opening, declare the carried-in
+  balance in config (see **Incomplete history** below) instead of leaving it to fail.
 - **One account per query.** As with securities FIFO, a duplicate forex `transactionID` (multi-account
   or merged exports) makes the execution-rate pairing ambiguous and is rejected.
 - **Tax treatment selected per account.** By default all foreign currency is treated as an
@@ -266,6 +267,30 @@ than emit a wrong number when they are not met:
 
 Each realized §20 gain/loss is rounded to cents per row to reconcile against BubbleTax's per-line
 worksheet; the non-taxable margin-loan total is summed at full precision and rounded once.
+
+### Incomplete history (declared opening balance)
+
+When the earliest available Flex export does not begin at account opening, the foreign balance it
+starts from is non-zero and the FIFO cannot know that balance's acquisition rate. Rather than guess,
+it rejects the statement — unless you declare the carried-in balance per portfolio:
+
+```yaml
+portfolios:
+  - name: my-account
+    broker: interactive-brokers
+    statements: "..."
+    opening_foreign_currency:
+      USD:
+        quantity: 90.00        # signed: positive = held (Guthaben), negative = borrowed (Kredit)
+        eur_per_unit: 0.92     # EUR value of one unit at acquisition
+        as_of: 2023.11.04      # acquisition date (YYYY.MM.DD or DD.MM.YYYY); drives the §23 holding period
+```
+
+Each entry seeds that currency's FIFO with one lot before the statement is replayed. The balance-chain
+check still runs from the declared opening, so a **quantity** that does not reconcile with the
+statement is still rejected — only the acquisition **rate** is trusted from config, because it is the
+one figure the truncated export cannot supply. Prefer supplying full history from account opening
+whenever the export allows it; the declaration is an escape hatch, not the normal path.
 
 ### Non-interest-bearing currency (§23 EStG, Anlage SO)
 
