@@ -13,6 +13,11 @@ use crate::broker_statement::partial::PartialBrokerStatement;
 use crate::broker_statement::trades::{StockBuy, StockSell};
 use crate::broker_statement::{Fee, Withholding};
 use crate::taxes::TaxRemapping;
+use crate::broker_statement::corporate_actions::{
+    CorporateAction as DomainCorporateAction, CorporateActionType as DomainCorporateActionType,
+};
+
+use super::corporate_actions;
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::{Cash, CashAssets};
 use crate::exchanges::Exchange;
@@ -268,12 +273,20 @@ pub struct CorporateActions {
     pub actions: Vec<CorporateAction>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorporateAction {
     #[serde(rename = "@currency")]
     pub currency: String,
+
+    #[serde(rename = "@assetCategory", default)]
+    pub asset_category: String,
+
+    #[serde(rename = "@reportDate", default)]
+    pub report_date: String,
+
+    #[serde(rename = "@proceeds", default)]
+    pub proceeds: Decimal,
 
     #[serde(rename = "@symbol")]
     pub symbol: String,
@@ -564,6 +577,59 @@ impl FlexStatement {
             // Capture the raw per-currency cash-flow ledger, replayed by the German FX FIFO to
             // compute Fremdwährungsgewinne (§20 EStG) instead of IB's net per-trade P&L.
             statement.foreign_cash_flows = build_foreign_cash_flows(stmtfunds)?;
+        }
+
+        // Corporate actions. Without these a post-split position keeps its pre-split share
+        // count and cost basis, which silently corrupts every FIFO disposal after the split --
+        // the statement's own OpenPositions check is what catches it (e.g. CRWD 10 vs 40).
+        if let Some(ref actions) = self.corporate_actions {
+            let mut parsed = Vec::new();
+
+            for action in &actions.actions {
+                // The Flex export uses IB's short asset codes rather than the CSV's words.
+                if action.asset_category != "STK" {
+                    log::warn!(
+                        "Skipping corporate action for non-stock instrument {} (assetCategory {}): {}",
+                        action.symbol, action.asset_category, action.description);
+                    continue;
+                }
+
+                let report_date = if action.report_date.is_empty() {
+                    None
+                } else {
+                    Some(parse_flex_date(&action.report_date)?)
+                };
+
+                parsed.push(corporate_actions::parse_action(&corporate_actions::ActionRecord {
+                    time: parse_flex_datetime(&action.date_time)?.into(),
+                    report_date,
+                    description: &action.description,
+                    currency: &action.currency,
+                    quantity: action.quantity,
+                    proceeds: action.proceeds,
+                })?);
+            }
+
+            // A complex split arrives as two rows (withdrawal + deposit) and must be joined
+            // before it can be applied. Mirrors CorporateActionsParser::commit.
+            let mut splits = Vec::<DomainCorporateAction>::new();
+            for action in parsed {
+                match action.action {
+                    DomainCorporateActionType::StockSplit {..} => {
+                        if let Some(last) = splits.last() {
+                            if action.time != last.time || action.symbol != last.symbol {
+                                statement.corporate_actions.push(
+                                    corporate_actions::join_stock_splits(std::mem::take(&mut splits))?);
+                            }
+                        }
+                        splits.push(action);
+                    },
+                    _ => statement.corporate_actions.push(action),
+                }
+            }
+            if !splits.is_empty() {
+                statement.corporate_actions.push(corporate_actions::join_stock_splits(splits)?);
+            }
         }
 
         // Parse cash transactions (dividends, interest, etc.)

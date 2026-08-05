@@ -6,7 +6,9 @@ use crate::broker_statement::corporate_actions::{CorporateAction, CorporateActio
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::Cash;
 use crate::formatting::format_date;
-#[cfg(test)] use crate::types::{Date, DateTime, Decimal};
+use crate::time::DateOptTime;
+use crate::types::{Date, Decimal};
+#[cfg(test)] use crate::types::DateTime;
 use crate::util::{self, DecimalRestrictions};
 
 use super::StatementParser;
@@ -79,15 +81,40 @@ fn parse(record: &Record) -> GenericResult<CorporateAction> {
         return Err!("Unsupported asset category of corporate action: {:?}", asset_category);
     }
 
-    let time = record.parse_date_time("Date/Time")?;
-    let report_date = Some(record.parse_date("Report Date")?);
+    parse_action(&ActionRecord {
+        time: record.parse_date_time("Date/Time")?.into(),
+        report_date: Some(record.parse_date("Report Date")?),
+        description: record.get_value("Description")?,
+        currency: record.get_value("Currency")?,
+        quantity: record.parse_quantity("Quantity", DecimalRestrictions::No)?,
+        proceeds: record.parse_amount("Proceeds", DecimalRestrictions::No)?,
+    })
+}
 
-    let description = util::fold_spaces(record.get_value("Description")?);
+/// Reader-agnostic view of one corporate-action row.
+///
+/// The CSV activity statement and the Flex XML carry the same fields under different names and
+/// casing. Both build this and call [`parse_action`], so the two readers cannot drift apart on
+/// what a split or a spinoff means -- the XML reader previously had no corporate-action support
+/// at all, which silently left post-split positions on the pre-split basis.
+pub struct ActionRecord<'a> {
+    pub time: DateOptTime,
+    pub report_date: Option<Date>,
+    pub description: &'a str,
+    pub currency: &'a str,
+    pub quantity: Decimal,
+    pub proceeds: Decimal,
+}
+
+pub fn parse_action(record: &ActionRecord) -> GenericResult<CorporateAction> {
+    let (time, report_date) = (record.time, record.report_date);
+
+    let description = util::fold_spaces(record.description);
     let description = description.as_ref();
 
     lazy_static! {
         static ref GENERIC_REGEX: Regex = Regex::new(&format!(concat!(
-            r"^(?P<symbol>{symbol}) ?\({id}\) ",
+            r"(?i)^(?P<symbol>{symbol}) ?\({id}\) ",
             r"(?P<action>Spinoff|Split|Stock Dividend|Subscribable Rights Issue) ",
             r"(?:{id} )?(?P<to>[1-9]\d*) for (?P<from>[1-9]\d*) ",
 
@@ -102,7 +129,7 @@ fn parse(record: &Record) -> GenericResult<CorporateAction> {
             id=SecurityID::REGEX)).unwrap();
 
         static ref LIQUIDATION_REGEX: Regex = Regex::new(&format!(concat!(
-            r"^(?P<symbol>{symbol}) ?\({id}\) ",
+            r"(?i)^(?P<symbol>{symbol}) ?\({id}\) ",
             r"(?P<action>Merged\(Liquidation\)) ",
             r"FOR (?P<currency>[A-Z]{{3}}) (?P<price>[0-9.]+) PER SHARE ",
             r"\((?P<other_symbol>{symbol}), [^,)]+, {id}\)$"),
@@ -117,15 +144,16 @@ fn parse(record: &Record) -> GenericResult<CorporateAction> {
     let other_symbol = parse_symbol(captures.name("other_symbol").unwrap().as_str())?;
     let error = || Err!("Unsupported corporate action: {:?}", description);
 
-    let action = match captures.name("action").unwrap().as_str() {
-        "Merged(Liquidation)" => {
+    let action_verb = captures.name("action").unwrap().as_str().to_lowercase();
+    let action = match action_verb.as_str() {
+        "merged(liquidation)" => {
             if other_symbol != symbol {
                 return error();
             }
 
-            let currency = record.get_value("Currency")?;
-            let volume = record.parse_amount("Proceeds", DecimalRestrictions::PositiveOrZero)?;
-            let quantity = -record.parse_quantity("Quantity", DecimalRestrictions::StrictlyNegative)?;
+            let currency = record.currency;
+            let volume = record.proceeds;
+            let quantity = -record.quantity;
 
             let price = util::parse_decimal(
                 captures.name("price").unwrap().as_str(),
@@ -144,9 +172,9 @@ fn parse(record: &Record) -> GenericResult<CorporateAction> {
             }
         },
 
-        "Spinoff" => {
-            let quantity = record.parse_quantity("Quantity", DecimalRestrictions::StrictlyPositive)?;
-            let currency = record.get_value("Currency")?.to_owned();
+        "spinoff" => {
+            let quantity = record.quantity;
+            let currency = record.currency.to_owned();
 
             CorporateActionType::Spinoff {
                 symbol: other_symbol,
@@ -154,7 +182,7 @@ fn parse(record: &Record) -> GenericResult<CorporateAction> {
             }
         },
 
-        "Split" => {
+        "split" => {
             if other_symbol != symbol {
                 return error();
             }
@@ -163,7 +191,7 @@ fn parse(record: &Record) -> GenericResult<CorporateAction> {
             let to: u32 = captures.name("to").unwrap().as_str().parse()?;
             let ratio = StockSplitRatio::new(from, to);
 
-            let change = record.parse_quantity("Quantity", DecimalRestrictions::NonZero)?;
+            let change = record.quantity;
             let (withdrawal, deposit) = if change.is_sign_positive() {
                 (None, Some(change))
             } else {
@@ -173,15 +201,15 @@ fn parse(record: &Record) -> GenericResult<CorporateAction> {
             CorporateActionType::StockSplit{ratio, withdrawal, deposit}
         },
 
-        "Stock Dividend" => {
-            let quantity = record.parse_quantity("Quantity", DecimalRestrictions::StrictlyPositive)?;
+        "stock dividend" => {
+            let quantity = record.quantity;
             CorporateActionType::StockDividend {
                 stock: Some(other_symbol),
                 quantity,
             }
         },
 
-        "Subscribable Rights Issue" => CorporateActionType::SubscribableRightsIssue,
+        "subscribable rights issue" => CorporateActionType::SubscribableRightsIssue,
 
         _ => unreachable!(),
     };
@@ -189,7 +217,7 @@ fn parse(record: &Record) -> GenericResult<CorporateAction> {
     Ok(CorporateAction {time: time.into(), report_date, symbol, action})
 }
 
-fn join_stock_splits(mut actions: Vec<CorporateAction>) -> GenericResult<CorporateAction> {
+pub fn join_stock_splits(mut actions: Vec<CorporateAction>) -> GenericResult<CorporateAction> {
     match actions.len() {
         0 => unreachable!(),
         1 => {
