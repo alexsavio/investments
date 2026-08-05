@@ -83,7 +83,7 @@ impl BrokerStatementReader for StatementReader {
         // Handle XML Flex Query files
         if util::has_extension(path, "xml") {
             let data = std::fs::read(path)?;
-            return flex_query::FlexQueryResponse::parse(&data);
+            return flex_query::FlexQueryResponse::parse(&data, &mut self.tax_remapping);
         }
 
         // Handle CSV Activity Statements
