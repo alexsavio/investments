@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::Duration;
 use clap::{Arg, ArgAction, ArgMatches, value_parser};
+use log::warn;
 use serde::Deserialize;
 use serde::de::{Deserializer, Error, IgnoredAny};
 use validator::Validate;
@@ -183,8 +184,23 @@ impl Config {
     pub fn get_tax_country(&self) -> Country {
         match self.taxes.jurisdiction {
             Some(TaxJurisdiction::Germany) => localities::germany(&self.taxes),
-            // Default to Russia when the jurisdiction is omitted (backwards compatibility).
-            Some(TaxJurisdiction::Russia) | None => localities::russia(&self.taxes),
+            Some(TaxJurisdiction::Russia) => localities::russia(&self.taxes),
+
+            // Defaulting to Russia keeps upstream configs working, but it is the only path where a
+            // mistake yields plausible-looking output instead of an error. Every other way of
+            // getting the jurisdiction wrong is already caught: `TaxJurisdiction` is a typed enum,
+            // so a bad value fails to deserialize, and `Config`, `TaxConfig` and `PortfolioConfig`
+            // all set `deny_unknown_fields`, so a wrong key name fails too. Only silence reaches
+            // here, so say so loudly rather than quietly filing under the wrong tax code.
+            None => {
+                warn!(concat!(
+                    "No tax jurisdiction is configured, so Russian tax rules are being applied. ",
+                    "If you file elsewhere, set `jurisdiction` under the top-level `taxes:` block ",
+                    "(for example `jurisdiction: germany`); otherwise every figure below is ",
+                    "computed under the wrong tax code."
+                ));
+                localities::russia(&self.taxes)
+            },
         }
     }
 
