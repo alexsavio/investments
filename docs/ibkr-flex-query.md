@@ -168,9 +168,25 @@ portfolios:
     statements: ~/Documents/IBKR/Statements
     currency: EUR  # Your base currency
 
-    # For German tax reporting
-    tax_country: germany
+    # How this account's foreign-currency balances are taxed.
+    # `interest_bearing` (default) = §20 EStG, correct for IBKR.
+    foreign_currency_taxation: interest_bearing
+
+# The jurisdiction is account-wide, so it belongs in the top-level `taxes:` block,
+# not inside a portfolio.
+taxes:
+  jurisdiction: germany       # required — omitting it applies Russian rules
+  church_tax_rate: 0          # Kirchensteuer: 0, 8 or 9 (percent). Default 0
+  sparer_pauschbetrag: 1000   # saver's allowance; default 1000 (2023+) / 801 (before)
 ```
+
+See [`config-example.yaml`](config-example.yaml) for the remaining German options
+(`loss_carryforward_stock`, `loss_carryforward_other`, `etf_classification`, `basiszins`,
+`fund_nav`, `opening_foreign_currency`).
+
+> `jurisdiction` is the only setting whose absence is not an error. A misspelled value fails
+> to deserialize, and an unknown key is rejected outright by `deny_unknown_fields` — but an
+> omitted `taxes:` block falls back to Russia. The tool warns when that happens; heed it.
 
 Place your downloaded Flex Query XML files in the `statements` directory.
 
