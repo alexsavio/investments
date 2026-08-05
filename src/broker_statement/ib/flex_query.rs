@@ -12,6 +12,7 @@ use crate::broker_statement::interest::{IdleCashInterest, ForeignCashFlow};
 use crate::broker_statement::partial::PartialBrokerStatement;
 use crate::broker_statement::trades::{StockBuy, StockSell};
 use crate::broker_statement::{Fee, Withholding};
+use crate::taxes::TaxRemapping;
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::{Cash, CashAssets};
 use crate::exchanges::Exchange;
@@ -438,7 +439,7 @@ pub struct StockGrantActivity {
 }
 
 impl FlexQueryResponse {
-    pub fn parse(data: &[u8]) -> GenericResult<PartialBrokerStatement> {
+    pub fn parse(data: &[u8], tax_remapping: &mut TaxRemapping) -> GenericResult<PartialBrokerStatement> {
         let response: FlexQueryResponse = xml::deserialize(data)?;
 
         if response.flex_statements.statements.is_empty() {
@@ -455,12 +456,12 @@ impl FlexQueryResponse {
         }
 
         let statement = &response.flex_statements.statements[0];
-        statement.parse()
+        statement.parse(tax_remapping)
     }
 }
 
 impl FlexStatement {
-    fn parse(&self) -> GenericResult<PartialBrokerStatement> {
+    fn parse(&self, tax_remapping: &mut TaxRemapping) -> GenericResult<PartialBrokerStatement> {
         let mut statement = PartialBrokerStatement::new(
             &[Exchange::Us, Exchange::Lse, Exchange::Other],
             false,
@@ -568,7 +569,7 @@ impl FlexStatement {
         // Parse cash transactions (dividends, interest, etc.)
         if let Some(ref transactions) = self.cash_transactions {
             for tx in &transactions.transactions {
-                parse_cash_transaction(&mut statement, tx)?;
+                parse_cash_transaction(&mut statement, tx, tax_remapping)?;
             }
         }
 
@@ -892,7 +893,9 @@ impl CashTxIncome {
     }
 }
 
-fn parse_cash_transaction(statement: &mut PartialBrokerStatement, tx: &CashTransaction) -> EmptyResult {
+fn parse_cash_transaction(
+    statement: &mut PartialBrokerStatement, tx: &CashTransaction, tax_remapping: &mut TaxRemapping,
+) -> EmptyResult {
     let date = parse_flex_datetime(&tx.date_time)?;
     let amount = Cash::new(&tx.currency, tx.amount);
 
@@ -914,7 +917,14 @@ fn parse_cash_transaction(statement: &mut PartialBrokerStatement, tx: &CashTrans
         }
 
         "Withholding Tax" => {
-            // Tax on dividends - will be matched by the tax accrual system
+            // Tax on dividends - will be matched by the tax accrual system.
+            //
+            // IB sometimes dates a withholding entry differently from the dividend it belongs to
+            // (reclassifications and refunds land in a later statement), which leaves the tax
+            // unmatched and aborts the whole statement. `tax_remapping` is the configured escape
+            // hatch for that; the CSV reader has always honoured it, so honour it here too rather
+            // than telling XML users to write rules that nothing consumes.
+            let date = tax_remapping.map(date, &tx.description);
             if !tx.symbol.is_empty() {
                 let issuer = InstrumentId::Symbol(tx.symbol.clone());
                 let tax_amount = tx.amount.abs();
@@ -1039,7 +1049,7 @@ mod tests {
         let data =
             std::fs::read("src/tax_statement/germany/testdata/income_edge/statement.xml").unwrap();
         // Must not panic (negative dividend) or error (cancelled trade).
-        let partial = FlexQueryResponse::parse(&data).unwrap();
+        let partial = FlexQueryResponse::parse(&data, &mut TaxRemapping::new()).unwrap();
 
         // The single credit-interest event appears in both StmtFunds (CINT) and CashTransactions
         // (Broker Interest Received). With the StmtFunds section actually parsed, this assertion is
@@ -1123,7 +1133,7 @@ mod tests {
     </FlexStatement>
   </FlexStatements>
 </FlexQueryResponse>"#;
-        let partial = FlexQueryResponse::parse(data.as_bytes()).unwrap();
+        let partial = FlexQueryResponse::parse(data.as_bytes(), &mut TaxRemapping::new()).unwrap();
 
         // The BaseCurrency summary row is excluded; the three Currency-level rows are captured in order.
         let flows = &partial.foreign_cash_flows;
@@ -1162,7 +1172,7 @@ mod tests {
     </FlexStatement>
   </FlexStatements>
 </FlexQueryResponse>"#;
-        let err = match FlexQueryResponse::parse(data.as_bytes()) {
+        let err = match FlexQueryResponse::parse(data.as_bytes(), &mut TaxRemapping::new()) {
             Ok(_) => panic!("expected a duplicate FOREX transactionID error"),
             Err(e) => e,
         };
