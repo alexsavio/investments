@@ -177,22 +177,54 @@ impl BrokerStatement {
             statement.cash_flows.extend(cash_flows);
         }
 
+        // An unmatched tax accrual is not always an error, and the two cases pull in opposite
+        // directions.
+        //
+        // An unmatched *charge* means a dividend is missing from the statement. Withheld tax
+        // without its income understates taxable income, so it must stay fatal.
+        //
+        // An unmatched *refund* is routine: when a broker reclassifies a distribution (a US
+        // Return of Capital, say) it removes the dividend rows and refunds the withholding, so
+        // the refund legitimately has nothing to reverse. Aborting the whole statement over a
+        // credit the user is owed is the wrong severity -- warn, drop it, and carry on. Dropping
+        // it only forgoes a small foreign-tax credit, which errs against the taxpayer rather
+        // than for them.
         if !tax_accruals.is_empty() {
-            let taxes = tax_accruals.keys()
-                .map(|tax: &TaxId| format!(
-                    "* {date}: {issuer}", date=formatting::format_date(tax.date),
-                    issuer=tax.issuer))
-                .collect::<Vec<_>>()
-                .join("\n");
+            let mut unmatched = Vec::new();
 
-            let mut hint = String::new();
-            if statement.broker.type_ == Broker::InteractiveBrokers {
-                // https://github.com/KonishchevDmitry/investments/blob/master/docs/brokers.md#ib-tax-remapping
-                let url = "https://bit.ly/investments-ib-tax-remapping";
-                hint = format!("\n\nProbably manual tax remapping rules are required (see {url})");
+            for (tax_id, accruals) in tax_accruals {
+                // get_result() rejects a reversal with no matching payment; that is exactly the
+                // refund-only case, and the only way to distinguish it without new introspection.
+                if accruals.get_result().is_err() {
+                    log::warn!(
+                        "Dropping a {} withholding refund dated {} that has no originating \
+                         dividend in the statement -- most often a reclassified distribution \
+                         (e.g. Return of Capital). Its foreign tax credit is not claimed. If the \
+                         distribution should have been taxable, the dividend row is missing and \
+                         the statement is incomplete.",
+                        tax_id.issuer, formatting::format_date(tax_id.date));
+                    continue;
+                }
+                unmatched.push(tax_id);
             }
 
-            return Err!("Unable to find origin operations for the following taxes:\n{taxes}{hint}");
+            if !unmatched.is_empty() {
+                let taxes = unmatched.iter()
+                    .map(|tax: &TaxId| format!(
+                        "* {date}: {issuer}", date=formatting::format_date(tax.date),
+                        issuer=tax.issuer))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let mut hint = String::new();
+                if statement.broker.type_ == Broker::InteractiveBrokers {
+                    // https://github.com/KonishchevDmitry/investments/blob/master/docs/brokers.md#ib-tax-remapping
+                    let url = "https://bit.ly/investments-ib-tax-remapping";
+                    hint = format!("\n\nProbably manual tax remapping rules are required (see {url})");
+                }
+
+                return Err!("Unable to find origin operations for the following taxes:\n{taxes}{hint}");
+            }
         }
 
         process_grants(&mut statement, strictness.contains(ReadingStrictness::GRANTS))?;
