@@ -1,26 +1,28 @@
 use std::collections::BTreeMap;
 
+use chrono::Datelike;
 use itertools::Itertools;
 use static_table_derive::StaticTable;
 
 use crate::broker_statement::{BrokerStatement, StockSell, StockSellType};
 use crate::commissions::CommissionCalc;
 use crate::config::PortfolioConfig;
-use crate::core::EmptyResult;
+use crate::core::{EmptyResult, GenericResult};
 use crate::currency::{Cash, MultiCurrencyCashAccount};
 use crate::currency::converter::{CurrencyConverter, CurrencyConverterRc};
 use crate::formatting::table::Cell;
 use crate::instruments::InstrumentInfo;
-use crate::localities::Country;
+use crate::localities::{Country, Jurisdiction};
 use crate::quotes::Quotes;
-use crate::taxes::{IncomeType, LtoDeduction, long_term_ownership::LtoDeductionCalculator, TaxCalculator};
+use crate::tax_statement::germany::{self, GermanTaxStatement};
+use crate::taxes::{IncomeType, LtoDeduction, long_term_ownership::LtoDeductionCalculator, Tax, TaxCalculator, TaxConfig};
 use crate::trades;
 use crate::types::{Date, Decimal};
 use crate::util;
 
 pub fn simulate_sell(
-    country: &Country, portfolio: &PortfolioConfig, mut statement: BrokerStatement,
-    converter: CurrencyConverterRc, quotes: &Quotes,
+    country: &Country, portfolio: &PortfolioConfig, tax_config: &TaxConfig,
+    mut statement: BrokerStatement, converter: CurrencyConverterRc, quotes: &Quotes,
     positions: Option<Vec<(String, Option<Decimal>)>>, base_currency: Option<&str>,
 ) -> EmptyResult {
     let (positions, all_positions) = match positions {
@@ -49,6 +51,12 @@ pub fn simulate_sell(
         quotes.batch(statement.get_quote_query(symbol))?;
     }
 
+    // Snapshot the German tax year *before* anything is emulated: the disposals are priced at the
+    // difference they make to it, so the untouched year is the reference point.
+    let mut german = (country.jurisdiction == Jurisdiction::Germany).then(|| {
+        GermanTaxSimulation::new(&statement, &converter, tax_config, portfolio)
+    }).transpose()?;
+
     let net_value = statement.net_value(
         &converter, quotes, portfolio.currency(),
         all_positions // To be able to simulate sell for portfolio with symbols for which quotes aren't available
@@ -70,6 +78,16 @@ pub fn simulate_sell(
         }
 
         statement.emulate_sell(symbol, quantity, price, &mut commission_calc)?;
+
+        if let Some(german) = german.as_mut() {
+            // Price this disposal on a statement carrying exactly the sales made so far.
+            // `emulate_sell` also draws down `open_positions`, which the processor reads as the
+            // year-end holdings behind the §19 InvStG "fully disposed" test — so deferring every
+            // step to the end of the loop would judge each disposal against a book where all the
+            // others had already been sold, and pile their combined effect onto the first row.
+            statement.process_trades(None)?;
+            german.observe(&statement, &converter, tax_config, portfolio)?;
+        }
     }
 
     statement.process_trades(None, false)?;
@@ -80,7 +98,198 @@ pub fn simulate_sell(
         .cloned().collect::<Vec<_>>();
     assert_eq!(stock_sells.len(), positions.len());
 
-    print_results(country, portfolio, &statement.instrument_info, stock_sells, additional_commissions, &converter)
+    print_results(
+        country, portfolio, &statement.instrument_info, stock_sells, additional_commissions,
+        &converter, german.as_ref())
+}
+
+/// Year-level German tax for the disposals being simulated.
+///
+/// A German disposal has no tax price of its own. The charge falls out of the *whole* tax year:
+/// the §20(6) EStG loss pots (share losses live in their own pot and offset only share gains), the
+/// prior-year festgestellter Verlustvortrag, and whatever is left of the Sparer-Pauschbetrag.
+/// Pricing a trim at the flat 26.375% `localities::germany` stand-in therefore invents tax that is
+/// not owed — a gain is free while the year's Aktien pot is still negative, and only becomes
+/// payable once the pot and the allowance are exhausted.
+///
+/// So the year is recomputed after each simulated sale is emulated, and each disposal is priced at
+/// the difference it makes. A loss-making trim then shows as *negative* tax — correctly, because it
+/// shelters a gain booked elsewhere in the same year.
+///
+/// Every step must observe a statement carrying exactly the sales made so far, never the finished
+/// set: `emulate_sell` draws down `open_positions`, which the processor reads back as the year-end
+/// holdings behind the §19 InvStG "fully disposed" test and the §18 Vorabpauschale. Computing the
+/// steps after the fact would judge each disposal against a book where all the others had already
+/// gone, and collapse their combined effect onto the first row.
+///
+/// Each row is rounded to cents on its own while the total is taken end-to-end, so summing the
+/// rows can miss the total by a cent. That is the same trade-off `format_eur` documents: one
+/// rounding per reported figure, rather than a total that disagrees with its own arithmetic.
+struct GermanTaxSimulation {
+    year: i32,
+
+    /// `taxes[k]` is the year's net German tax when the first `k` simulated disposals happen, so
+    /// `taxes[0]` is the untouched year. Always one longer than the number of disposals observed.
+    taxes: Vec<Decimal>,
+
+    /// What each disposal would cost taxed on its own at the §32d(1) flat rate, church tax
+    /// included — the comparator the deduction column is measured against.
+    standalone: Vec<Decimal>,
+
+    /// The year before the simulated sales, and as of the last one observed, kept so the pots and
+    /// the allowance that produced these figures can be shown alongside them.
+    before: GermanTaxStatement,
+    after: Option<GermanTaxStatement>,
+}
+
+impl GermanTaxSimulation {
+    /// Snapshot the tax year before any sale is emulated. `statement` must be untouched.
+    fn new(
+        statement: &BrokerStatement, converter: &CurrencyConverter, tax_config: &TaxConfig,
+        portfolio: &PortfolioConfig,
+    ) -> GenericResult<GermanTaxSimulation> {
+        let year = crate::exchanges::today_trade_conclusion_time().date.year();
+
+        let (before, _has_income) = germany::compute_tax_year(
+            statement, year, converter, tax_config,
+            portfolio.foreign_currency_taxation, &portfolio.opening_foreign_currency)?;
+
+        Ok(GermanTaxSimulation {
+            year,
+            taxes: vec![before.net_tax_due],
+            standalone: Vec::new(),
+            before,
+            after: None,
+        })
+    }
+
+    /// Record the year as it stands after one more sale has been emulated onto `statement`.
+    fn observe(
+        &mut self, statement: &BrokerStatement, converter: &CurrencyConverter,
+        tax_config: &TaxConfig, portfolio: &PortfolioConfig,
+    ) -> EmptyResult {
+        let (year, _has_income) = germany::compute_tax_year(
+            statement, self.year, converter, tax_config,
+            portfolio.foreign_currency_taxation, &portfolio.opening_foreign_currency)?;
+
+        // The processor emits one capital-gain entry per qualifying trade, in `stock_sells` order,
+        // and `emulate_sell` appends — so this sale owns the last entry. Verify rather than trust
+        // it: mispairing them would silently price the wrong trade.
+        let trades: Vec<&StockSell> = statement.stock_sells.iter()
+            .filter(|trade| germany::produces_capital_gain(trade, self.year))
+            .collect();
+
+        if trades.len() != year.capital_gains.len() {
+            return Err!(
+                "German tax simulation: {} yielded {} capital gain entries for {} trades",
+                self.year, year.capital_gains.len(), trades.len());
+        }
+
+        let simulated = self.standalone.len() + 1;
+        let real = trades.len().checked_sub(simulated).ok_or_else(|| format!(
+            "German tax simulation: {} has only {} trades for {simulated} simulated sales",
+            self.year, trades.len()))?;
+
+        if !trades[real..].iter().all(|trade| trade.emulation) ||
+           trades[..real].iter().any(|trade| trade.emulation) {
+            return Err!(
+                "German tax simulation: the simulated sales aren't the trailing {} trades",
+                self.year);
+        }
+
+        // What this disposal costs on its own, at the same §32d(1) rates the year uses — so the
+        // deduction column compares like with like. Deriving it from the flat
+        // `localities::germany` stand-in instead would omit church tax and understate the
+        // comparator, turning the deduction negative for an 8-9% filer.
+        let entry = year.capital_gains.last().expect(
+            "the checks above guarantee at least one capital gain entry for the simulated sale");
+        self.standalone.push(year.tax_rates.compute_taxes(entry.taxable_amount, dec!(0)).total);
+
+        self.taxes.push(year.net_tax_due);
+        self.after = Some(year);
+
+        Ok(())
+    }
+
+    /// Tax the `index`-th simulated disposal adds to the year, given the ones before it.
+    fn marginal(&self, index: usize) -> Decimal {
+        germany::round_eur(self.taxes[index + 1] - self.taxes[index])
+    }
+
+    /// What the `index`-th disposal would cost taxed on its own, before the year's pots and
+    /// allowance are brought to bear.
+    fn standalone(&self, index: usize) -> Decimal {
+        germany::round_eur(self.standalone[index])
+    }
+
+    /// The year as of the last observed sale, falling back to the untouched year if none was
+    /// observed (no simulated sale reached the German path).
+    fn after(&self) -> &GermanTaxStatement {
+        self.after.as_ref().unwrap_or(&self.before)
+    }
+
+    /// Tax the simulated disposals add to the year as a whole. Taken end-to-end rather than by
+    /// summing the rows, so it stays exact; rounded rows may differ from it by a cent.
+    fn total(&self) -> Decimal {
+        germany::round_eur(self.taxes[self.taxes.len() - 1] - self.taxes[0])
+    }
+
+    /// Explain the marginal figures: without the pots and the allowance a reader cannot tell a
+    /// genuinely untaxed disposal from a broken one.
+    fn print(&self) {
+        let mut table = GermanContextTable::new();
+
+        let after = self.after();
+
+        let mut row = |name: &str, before: Decimal, after: Decimal| {
+            table.add_row(GermanContextRow {
+                name: name.to_owned(),
+                before: germany::format_eur(before),
+                after: germany::format_eur(after),
+            });
+        };
+
+        row("Taxable income (§20 EStG)",
+            self.before.total_taxable_income, after.total_taxable_income);
+        row("Sparer-Pauschbetrag used",
+            self.before.sparer_pauschbetrag_used, after.sparer_pauschbetrag_used);
+        row("Sparer-Pauschbetrag left",
+            self.before.sparer_pauschbetrag - self.before.sparer_pauschbetrag_used,
+            after.sparer_pauschbetrag - after.sparer_pauschbetrag_used);
+        // Carried forward as positive magnitudes, exactly as the filed statement reports them.
+        // A gain eats into the matching pot, so these shrink as the sale is added.
+        row("Loss carryforward, shares (§20(6))",
+            self.before.loss_carryforward_stock_next, after.loss_carryforward_stock_next);
+        row("Loss carryforward, general",
+            self.before.loss_carryforward_other_next, after.loss_carryforward_other_next);
+        row("Net German tax due", self.before.net_tax_due, after.net_tax_due);
+
+        table.print(&format!(
+            "German tax year {} — the sale is priced at what it changes here, not at a flat rate",
+            self.year));
+
+        if self.taxes.len() > 2 {
+            // Each row is the tax the *next* disposal adds once the ones above it have already
+            // eaten into the pot and the allowance, so the split across rows depends on their
+            // order and no single row is that position's standalone cost. Only the total is
+            // order-independent. Say so — someone reading one row in isolation would be misled.
+            println!(
+                "Per-position tax is marginal and depends on row order: each is what that sale \n\
+                 adds on top of the ones above it. Only the total is order-independent; simulate \n\
+                 a position on its own to see its standalone cost.\n");
+        }
+    }
+}
+
+#[derive(StaticTable)]
+#[table(name="GermanContextTable")]
+struct GermanContextRow {
+    #[column(name="")]
+    name: String,
+    #[column(name="Without the sale", align="right")]
+    before: String,
+    #[column(name="With the sale", align="right")]
+    after: String,
 }
 
 struct TaxYearTotals {
@@ -102,7 +311,7 @@ impl TaxYearTotals {
 fn print_results(
     country: &Country, portfolio: &PortfolioConfig, instrument_info: &InstrumentInfo,
     stock_sells: Vec<StockSell>, additional_commissions: MultiCurrencyCashAccount,
-    converter: &CurrencyConverter,
+    converter: &CurrencyConverter, german: Option<&GermanTaxSimulation>,
 ) -> EmptyResult {
     let mut trades_table = TradesTable::new();
     let mut fifo_table = FifoTable::new();
@@ -122,6 +331,12 @@ fn print_results(
     let mut same_currency = true;
     let mut tax_exemptions = false;
 
+    // Summed from the rows, so the German deduction total is the sum of the deductions shown.
+    // The year-level `tax_deductible_income` aggregation below is derived differently — it nets
+    // additional commissions and LTO — so mixing the two would leave a structural gap, not a
+    // rounding one.
+    let mut total_row_tax_expected = Cash::zero(country.currency);
+
     let sell_date = stock_sells.iter()
         .map(|trade| trade.conclusion_time.date)
         .reduce(|prev, next| {
@@ -130,7 +345,7 @@ fn print_results(
         })
         .unwrap();
 
-    for trade in stock_sells {
+    for (index, trade) in stock_sells.into_iter().enumerate() {
         let (sell_price, commission) = match trade.type_ {
             StockSellType::Trade {price, commission, ..} => {
                 same_currency &=
@@ -148,9 +363,29 @@ fn print_results(
 
         let instrument = instrument_info.get_or_empty(&trade.symbol);
         let details = trade.calculate(country, &instrument, &portfolio.tax_exemptions, converter)?;
-        let tax = details.estimate_tax(&tax_calculator, tax_year);
+
+        let tax = match german {
+            // What the disposal actually adds to the German tax year, given the pots, the
+            // carryforward and the remaining allowance. `expected` is what it would have cost
+            // taxed on its own at the same §32d(1) rates, so the deduction column shows exactly
+            // what those year-wide mechanics saved.
+            Some(german) => {
+                let expected = country.cash(german.standalone(index));
+                let to_pay = country.cash(german.marginal(index));
+                Tax {
+                    expected,
+                    paid: Cash::zero(country.currency),
+                    deduction: expected - to_pay,
+                    to_pay,
+                }
+            },
+            None => details.estimate_tax(&tax_calculator, tax_year),
+        };
+
         let real = details.real_profit(converter, &tax)?;
         tax_exemptions |= details.tax_exemption_applied();
+
+        total_row_tax_expected += tax.expected;
 
         total_purchase_cost.deposit(details.purchase_cost);
         total_purchase_local_cost += details.purchase_local_cost;
@@ -247,6 +482,14 @@ fn print_results(
         total_tax_deduction += tax.deduction;
     }
 
+    if let Some(german) = german {
+        // Taken end-to-end over the year rather than by summing the rows, so the total stays exact
+        // even where rounded row taxes drift from it by a cent. The deduction is then measured
+        // against the same per-row standalone figures the rows show, so the column adds up.
+        total_tax_to_pay = country.cash(german.total());
+        total_tax_deduction = total_row_tax_expected - total_tax_to_pay;
+    }
+
     let total_real = trades::calculate_real_profit(
         converter.real_time_date(), total_purchase_cost, total_purchase_local_cost,
         total_profit.clone(), total_local_profit, total_tax_to_pay, converter)?;
@@ -274,7 +517,12 @@ fn print_results(
     }
     if !tax_exemptions && lto_deductions.is_empty() {
         trades_table.hide_taxable_local_profit();
-        trades_table.hide_tax_deduction();
+
+        // For Germany the deduction is what the loss pots and the allowance took off the flat
+        // rate — the whole point of the exercise, so keep the column whenever it says anything.
+        if german.is_none() || total_tax_deduction.is_zero() {
+            trades_table.hide_tax_deduction();
+        }
     }
     if !tax_exemptions {
         fifo_table.hide_tax_free();
@@ -292,6 +540,10 @@ fn print_results(
             title = format!("{title} ({tax_year})")
         }
         lto.print(&title);
+    }
+
+    if let Some(german) = german {
+        german.print();
     }
 
     Ok(())

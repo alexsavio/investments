@@ -52,6 +52,57 @@ fn convert_to_eur(
         })
 }
 
+/// Compute the complete German tax result for `year` from `broker_statement`.
+///
+/// This is the whole year-level computation — the §20(6) loss pots, the prior-year festgestellter
+/// Verlustvortrag and the Sparer-Pauschbetrag — not a sum of per-trade estimates. Those year-wide
+/// mechanics are the reason a single disposal has no tax price of its own: a share gain is free
+/// while the year's Aktien pot is still negative, and dearer once the allowance is spent.
+///
+/// Callers that want the tax cost of a *hypothetical* disposal run this twice — once on the
+/// statement as it stands, once on a statement carrying the emulated sale — and take the
+/// difference. `analysis::sell_simulation` does exactly that; the flat `localities::germany` rate
+/// is an approximation for the analysis views and must not be used to price a sale.
+///
+/// Returns the computed statement and whether the year has any income at all.
+pub fn compute_tax_year(
+    broker_statement: &BrokerStatement,
+    year: i32,
+    converter: &CurrencyConverter,
+    tax_config: &TaxConfig,
+    fx_taxation: ForeignCurrencyTaxation,
+    opening_foreign_currency: &BTreeMap<String, OpeningForeignCurrency>,
+) -> GenericResult<(GermanTaxStatement, bool)> {
+    // church_tax_rate is accepted in the documented percent form (0, 8, 9) and normalized to a
+    // fraction here — used raw it would levy a ~900% church tax.
+    let church_tax_rate = tax_config.german_church_tax_fraction()?;
+    let (loss_carryforward_stock, loss_carryforward_other) = tax_config.german_loss_carryforward()?;
+    let sparer_pauschbetrag = tax_config.german_sparer_pauschbetrag(year);
+
+    let mut statement = GermanTaxStatement::new(
+        year,
+        church_tax_rate,
+        loss_carryforward_stock,
+        loss_carryforward_other,
+        sparer_pauschbetrag,
+    )?;
+
+    let (has_trades, has_dividends, has_interest, has_fx_gains) = process_broker_statement(
+        &mut statement,
+        broker_statement,
+        year,
+        converter,
+        tax_config,
+        fx_taxation,
+        opening_foreign_currency,
+    )?;
+
+    statement.calculate_totals();
+
+    let has_income = has_trades || has_dividends || has_interest || has_fx_gains;
+    Ok((statement, has_income))
+}
+
 /// Process broker statement and populate German tax statement entries.
 pub fn process_broker_statement(
     statement: &mut GermanTaxStatement,
@@ -133,6 +184,22 @@ pub fn process_broker_statement(
 
     Ok((has_trades, has_dividends, has_interest, has_fx_gains))
 }
+/// Whether `trade` yields a capital-gain entry in `year`'s statement.
+///
+/// Germany assigns the tax year by the obligatory transaction (conclusion) date, not the settlement
+/// date, and only genuine trades are priced here — corporate-action disposals go through
+/// `process_corporate_actions`.
+///
+/// Public because `process_trades` emits one entry per matching trade, in `stock_sells` order, and
+/// the sell simulation needs that mapping to find the entries its emulated sales produced.
+pub fn produces_capital_gain(trade: &crate::broker_statement::StockSell, year: i32) -> bool {
+    trade.conclusion_time.date.year() == year
+        && matches!(
+            trade.type_,
+            crate::broker_statement::StockSellType::Trade { .. }
+        )
+}
+
 /// Process stock sales and create capital gain entries.
 fn process_trades(
     statement: &mut GermanTaxStatement,
@@ -161,18 +228,7 @@ fn process_trades(
     let mut vp_consumed: HashSet<String> = HashSet::new();
 
     for trade in &broker_statement.stock_sells {
-        // Germany assigns the tax year by the obligatory transaction (conclusion) date, not the
-        // settlement date.
-        if trade.conclusion_time.date.year() != year {
-            continue;
-        }
-
-        // Only genuine trades yield capital gains here; corporate-action disposals are handled by
-        // process_corporate_actions.
-        if !matches!(
-            trade.type_,
-            crate::broker_statement::StockSellType::Trade { .. }
-        ) {
+        if !produces_capital_gain(trade, year) {
             continue;
         }
 
@@ -2460,6 +2516,93 @@ mod tests {
         assert_eq!(statement.total_taxable_income, dec!(0));
         assert_eq!(statement.total_german_tax, dec!(0));
         assert_eq!(statement.sparer_pauschbetrag_used, dec!(900));
+    }
+
+    /// The chain `simulate-sell` builds: the year's tax after each disposal is added in turn.
+    /// Mirrors `GermanTaxSimulation::observe`, which recomputes the year once per emulated sale.
+    fn tax_after_each(
+        statement: &mut GermanTaxStatement, disposals: &[CapitalGainEntry],
+    ) -> Vec<Decimal> {
+        disposals
+            .iter()
+            .map(|entry| {
+                statement.add_capital_gain(entry.clone());
+                statement.calculate_totals();
+                statement.net_tax_due
+            })
+            .collect()
+    }
+
+    /// The pricing rule behind `simulate-sell`: a hypothetical disposal costs what it adds to the
+    /// year, so a share gain is free while the Aktien pot is still negative and only becomes
+    /// payable once the pot and the allowance are gone. This is exactly what the flat 26.375%
+    /// `localities::germany` stand-in cannot express — it would charge tax on every sale below,
+    /// where only the last one owes anything.
+    #[test]
+    fn hypothetical_disposal_is_priced_at_what_it_adds_to_the_year() {
+        // A year already €3,000 down on share sales, with the full allowance intact.
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(1000)).unwrap();
+        statement.add_capital_gain(stock_capital_entry(dec!(-3000)));
+        statement.calculate_totals();
+        assert_eq!(statement.net_tax_due, dec!(0));
+
+        let taxes = tax_after_each(&mut statement, &[
+            stock_capital_entry(dec!(1000)), // pot −3000 → −2000: free
+            stock_capital_entry(dec!(2000)), // pot exhausted, still nothing taxable
+            stock_capital_entry(dec!(1000)), // +1000 net gain, covered by the allowance
+            stock_capital_entry(dec!(1000)), // +2000 net, less €1,000 allowance → €1,000 taxable
+        ]);
+
+        assert_eq!(taxes[0], dec!(0));
+        assert_eq!(taxes[1], dec!(0));
+        assert_eq!(taxes[2], dec!(0));
+        // 25% + 5.5% Soli on the first €1,000 that clears both the pot and the allowance.
+        assert_eq!(taxes[3], dec!(263.75));
+
+        // The marginal cost of each disposal is the step it caused: the first three are free and
+        // the fourth carries the whole charge, which a flat rate would smear over all four.
+        assert_eq!(taxes[3] - taxes[2], dec!(263.75));
+    }
+
+    /// A loss-making disposal is worth *negative* tax when the year holds a gain for it to shelter
+    /// — the in-year offset, and the reason a trim can be cheaper than it looks.
+    #[test]
+    fn hypothetical_loss_shelters_a_gain_booked_earlier_in_the_year() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.add_capital_gain(stock_capital_entry(dec!(10000)));
+        statement.calculate_totals();
+
+        let before = statement.net_tax_due;
+        assert_eq!(before, dec!(2637.50));
+
+        let taxes = tax_after_each(&mut statement, &[stock_capital_entry(dec!(-4000))]);
+        assert_eq!(taxes[0], dec!(1582.50)); // €6,000 taxable
+
+        // Realising the loss saves €1,055 of tax that would otherwise fall due this year.
+        assert_eq!(taxes[0] - before, dec!(-1055.00));
+    }
+
+    /// The deduction column measures the marginal charge against what the disposal would have cost
+    /// on its own *at the same rates*. Taken from the flat `localities::germany` stand-in instead,
+    /// the comparator would omit church tax — reading €814.71 against an €864.76 charge, a negative
+    /// "deduction" on a sale that in fact got no relief at all.
+    #[test]
+    fn standalone_comparator_carries_church_tax() {
+        let profit = dec!(3088.96);
+
+        let rates = crate::taxes::germany::GermanTaxRates::for_year(2024, dec!(0.09)).unwrap();
+        let standalone = super::super::round_eur(rates.compute_taxes(profit, dec!(0)).total);
+
+        // 3088.96 / 4.09 = 755.25 Abgeltungsteuer, plus 9% KiSt and 5.5% Soli on it.
+        assert_eq!(standalone, dec!(864.76));
+
+        // A fully-taxed disposal's marginal charge *is* the standalone one, so its deduction is
+        // exactly zero. The church-tax-free stand-in would have made it negative.
+        let flat_stand_in = super::super::round_eur(profit * dec!(0.26375));
+        assert_eq!(flat_stand_in, dec!(814.71));
+        assert!(flat_stand_in < standalone);
     }
 
     #[test]

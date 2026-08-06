@@ -176,6 +176,12 @@ pub fn germany(_config: &TaxConfig) -> Country {
     // Teilfreistellung, no loss pots, and no Sparer-Pauschbetrag. The real German tax math lives in
     // the `tax_statement::germany` module — do not use this rate for the filing statement.
     // Church tax (8% or 9%) is configured per user, not included in this base rate.
+    //
+    // Nor to price a sale: what a disposal costs depends on the whole tax year, so it is not a rate
+    // times a gain. `tax_statement::germany::compute_tax_year` computes the year and
+    // `analysis::sell_simulation` prices a hypothetical sale at the difference it makes to it —
+    // which is how a gain lands tax-free while the year's §20(6) Aktien pot is still negative,
+    // where this rate would invent a charge.
 
     let abgeltungssteuer_rate = dec!(0.25);
     let solidarity_surcharge = dec!(0.055); // 5.5% of Abgeltungssteuer

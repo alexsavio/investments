@@ -98,7 +98,7 @@ pub fn simulate_sell(
     let (converter, quotes) = load_tools(config)?;
 
     sell_simulation::simulate_sell(
-        &config.get_tax_country(), portfolio, statement,
+        &config.get_tax_country(), portfolio, &config.taxes, statement,
         converter, &quotes, positions, base_currency)?;
 
     Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker))
