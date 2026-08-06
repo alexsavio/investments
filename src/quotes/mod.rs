@@ -27,6 +27,7 @@ use serde::Deserialize;
 use validator::Validate;
 
 use crate::config::Config;
+use crate::localities::Jurisdiction;
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::Cash;
 use crate::db;
@@ -129,12 +130,19 @@ impl Quotes {
         // * FCS API is too restrictive
         //
         // So use CBR API here and fallback to FCS API only for unknown currencies.
-        providers.push(Arc::new(Cbr::new(cbr::BASE_URL)));
+        //
+        // Not for German filers: their rates must come from the ECB, which CurrencyConverter
+        // sources directly, so consulting the Central Bank of Russia is both wrong and (with
+        // the feed currently emitting values like "5,28906E-05") a hard failure on a rate
+        // nobody in this jurisdiction should be using.
+        if config.get_tax_country().jurisdiction != Jurisdiction::Germany {
+            providers.push(Arc::new(Cbr::new(cbr::BASE_URL)));
+        }
 
         // Use FCS API for forex
         if let Some(config) = config.quotes.fcsapi.as_ref() {
             providers.push(Arc::new(FcsApi::new(config)))
-        } else if !has_custom_provider {
+        } else if !has_custom_provider && config.get_tax_country().jurisdiction != Jurisdiction::Germany {
             return Err!("FCS API access key is not set in the configuration file");
         }
 
