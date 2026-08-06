@@ -193,9 +193,12 @@ impl BrokerStatement {
             let mut unmatched = Vec::new();
 
             for (tax_id, accruals) in tax_accruals {
-                // get_result() rejects a reversal with no matching payment; that is exactly the
-                // refund-only case, and the only way to distinguish it without new introspection.
-                if accruals.get_result().is_err() {
+                // Ask for the refund-only shape specifically. `get_result()` failing is a much
+                // wider net: it also rejects a partial refund against a dividend that *is*
+                // present, and a mixed-currency accrual. Dropping those with a
+                // "no originating dividend" warning would both misdescribe them and lose a
+                // genuine inconsistency.
+                if accruals.is_refund_only() {
                     log::warn!(
                         "Dropping a {} withholding refund dated {} that has no originating \
                          dividend in the statement -- most often a reclassified distribution \

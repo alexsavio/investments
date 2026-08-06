@@ -62,6 +62,21 @@ impl Payments {
         self.transactions.extend(other.transactions.iter());
     }
 
+    /// Whether these are reversals only, with no payment anywhere to reverse against.
+    ///
+    /// The refund-only case: when a broker reclassifies a distribution (a US Return of Capital,
+    /// say) it removes the dividend rows and refunds the withholding, so the credit legitimately
+    /// has nothing to net against.
+    ///
+    /// This is deliberately narrower than "[`get_result`](Self::get_result) failed". That also
+    /// rejects a reversal whose amount merely fails to match an existing payment (a partial
+    /// refund) and a mixed-currency accrual -- both real problems that must stay fatal rather
+    /// than be waved through as a reclassification.
+    pub fn is_refund_only(&self) -> bool {
+        !self.transactions.is_empty() &&
+            self.transactions.iter().all(|transaction| transaction.cash.is_negative())
+    }
+
     pub fn get_result(self) -> GenericResult<(Option<Cash>, Vec<CashAssets>)> {
         let Payments { strict, mut transactions } = self;
         transactions.sort_by_key(|transaction| transaction.date);
