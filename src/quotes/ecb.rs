@@ -146,6 +146,13 @@ struct EcbObservation {
 fn parse_observations(response: Response) -> GenericResult<Vec<EcbObservation>> {
     let response = response.text()?;
 
+    // A window with no published observations comes back empty, not as a CSV with zero rows.
+    // That is a normal answer -- ECB publishes on TARGET business days with a lag, so asking
+    // for today's rate before it exists is routine -- and must not read as a malformed header.
+    if response.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
         .from_reader(response.as_bytes());
