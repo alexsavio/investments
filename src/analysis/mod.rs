@@ -12,7 +12,6 @@ use itertools::Itertools;
 
 use crate::broker_statement::{BrokerStatement, ReadingStrictness};
 use crate::config::{Config, PortfolioConfig};
-use crate::localities::Jurisdiction;
 use crate::core::GenericResult;
 use crate::currency::converter::{CurrencyConverter, CurrencyConverterRc};
 use crate::db;
@@ -135,15 +134,8 @@ fn load_tools(config: &Config) -> GenericResult<(CurrencyConverterRc, QuotesRc)>
     let database = db::connect(&config.db_path)?;
     let quotes = Rc::new(Quotes::new(config, database.clone())?);
 
-    // Pick the rate source from the jurisdiction, as the tax statement already does. A German
-    // filer's conversions must use ECB reference rates; defaulting everyone to the Central Bank
-    // of Russia gave simulate-sell and analyse a different -- and for Germany, wrong -- basis
-    // than tax-statement computed from the same positions.
-    let converter = if config.get_tax_country().jurisdiction == Jurisdiction::Germany {
-        CurrencyConverter::new_ecb(database, Some(quotes.clone()), false)
-    } else {
-        CurrencyConverter::new(database, Some(quotes.clone()), false)
-    };
+    let converter = CurrencyConverter::for_jurisdiction(
+        config.get_tax_country().jurisdiction, database, Some(quotes.clone()), false);
 
     Ok((converter, quotes))
 }

@@ -65,7 +65,8 @@ pub fn generate_tax_statement(
     };
 
     let database = db::connect(&config.db_path)?;
-    let converter = CurrencyConverter::new(database, None, true);
+    let converter = CurrencyConverter::for_jurisdiction(
+        country.jurisdiction, database, None, true);
     let mut tax_calculator = TaxCalculator::new(country.clone());
 
     let (trades_tax, has_trading_income, has_trading_income_to_declare) = trades::process_income(
@@ -188,7 +189,8 @@ fn generate_german_tax_statement(
     // Connect to database for currency conversion using official ECB reference rates (required by
     // German tax authorities), not the Central Bank of Russia rates used for other jurisdictions.
     let database = db::connect(&config.db_path)?;
-    let converter = CurrencyConverter::new_ecb(database, None, true);
+    let converter = CurrencyConverter::for_jurisdiction(
+        config.get_tax_country().jurisdiction, database, None, true);
 
     // Process broker statement and populate entries
     let (has_trades, has_dividends, has_interest, has_fx_gains) = germany::process_broker_statement(

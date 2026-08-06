@@ -77,24 +77,44 @@ pub struct JurisdictionTraits {
     pub code: &'static str,
     pub currency: &'static str,
     pub tax_precision: u32,
+
+    /// Official source of currency rates for this jurisdiction's tax authority.
+    ///
+    /// Not a preference: the authority dictates which rates a return must use, so this is
+    /// derived from the jurisdiction and never configured. Deciding it per call site is how
+    /// `simulate-sell` came to convert a German filer's amounts at Central Bank of Russia
+    /// rates while `tax-statement` used the ECB on the same positions.
+    pub rate_source: RateSourceKind,
+}
+
+/// Which central bank publishes the reference rates a jurisdiction's tax authority requires.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RateSourceKind {
+    /// Central Bank of Russia. RUB base.
+    Cbr,
+    /// European Central Bank. EUR base.
+    Ecb,
 }
 
 impl Jurisdiction {
     pub fn traits(self) -> JurisdictionTraits {
         match self {
             Jurisdiction::Russia => JurisdictionTraits {
+                rate_source: RateSourceKind::Cbr,
                 name: "Russia",
                 code: "RU",
                 currency: "RUB",
                 tax_precision: 0,
             },
             Jurisdiction::Usa => JurisdictionTraits {
+                rate_source: RateSourceKind::Cbr,
                 name: "USA",
                 code: "US",
                 currency: "USD",
                 tax_precision: 2,
             },
             Jurisdiction::Germany => JurisdictionTraits {
+                rate_source: RateSourceKind::Ecb,
                 name: "Germany",
                 code: "DE",
                 currency: "EUR",

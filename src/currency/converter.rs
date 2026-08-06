@@ -10,7 +10,7 @@ use crate::currency::rate_cache::{CurrencyRateCache, CurrencyRateCacheResult};
 use crate::db;
 use crate::forex::get_currency_pair;
 use crate::formatting;
-use crate::localities;
+use crate::localities::{self, Jurisdiction, RateSourceKind};
 use crate::quotes::{self, cbr, ecb, CurrencyRate, Quotes, QuoteQuery};
 #[cfg(test)] use crate::time;
 use crate::types::{Date, Decimal};
@@ -44,6 +44,24 @@ impl CurrencyConverter {
         let rate_cache = CurrencyRateCache::new(database);
         let backend = CurrencyRateCacheBackend::new(rate_cache, quotes, strict_mode);
         Rc::new(CurrencyConverter::new_with_backend(backend))
+    }
+
+    /// Build a converter using whichever central bank this configuration's tax jurisdiction
+    /// requires.
+    ///
+    /// Prefer this over [`new`](Self::new) and [`new_ecb`](Self::new_ecb) at every call site.
+    /// The rate source is a property of the jurisdiction, not of the command being run: when
+    /// each caller chose for itself, `simulate-sell` and `analyse` converted a German filer's
+    /// amounts at Central Bank of Russia rates while `tax-statement` used the ECB on the same
+    /// positions.
+    pub fn for_jurisdiction(
+        jurisdiction: Jurisdiction, database: db::Connection, quotes: Option<Rc<Quotes>>,
+        strict_mode: bool,
+    ) -> CurrencyConverterRc {
+        match jurisdiction.traits().rate_source {
+            RateSourceKind::Cbr => Self::new(database, quotes, strict_mode),
+            RateSourceKind::Ecb => Self::new_ecb(database, quotes, strict_mode),
+        }
     }
 
     /// Like [`new`](Self::new), but sources official currency rates from the European Central Bank
