@@ -82,7 +82,8 @@ pub fn generate_tax_statement(
     };
 
     let database = db::connect(&config.db_path)?;
-    let converter = CurrencyConverter::new(database, None, true);
+    let converter = CurrencyConverter::for_jurisdiction(
+        country.jurisdiction, database, None, true);
     let mut tax_calculator = TaxCalculator::new(country.clone());
 
     let (trades_tax, has_trading_income, has_trading_income_to_declare) = trades::process_income(
@@ -186,30 +187,15 @@ fn generate_german_tax_statement(
 
     broker_statement.check_period_against_tax_year(year)?;
 
-    // Get German tax configuration. church_tax_rate is accepted in the documented percent form
-    // (0, 8, 9) and normalized to a fraction here — used raw it would levy a ~900% church tax.
-    let church_tax_rate = config.taxes.german_church_tax_fraction()?;
-    let (loss_carryforward_stock, loss_carryforward_other) =
-        config.taxes.german_loss_carryforward()?;
-    let sparer_pauschbetrag = config.taxes.german_sparer_pauschbetrag(year);
-
-    // Create the German tax statement
-    let mut statement = germany::GermanTaxStatement::new(
-        year,
-        church_tax_rate,
-        loss_carryforward_stock,
-        loss_carryforward_other,
-        sparer_pauschbetrag,
-    )?;
-
     // Connect to database for currency conversion using official ECB reference rates (required by
     // German tax authorities), not the Central Bank of Russia rates used for other jurisdictions.
     let database = db::connect(&config.db_path)?;
-    let converter = CurrencyConverter::new_ecb(database, None, true);
+    let converter = CurrencyConverter::for_jurisdiction(
+        config.get_tax_country().jurisdiction, database, None, true);
 
-    // Process broker statement and populate entries
-    let (has_trades, has_dividends, has_interest, has_fx_gains) = germany::process_broker_statement(
-        &mut statement,
+    // The same year-level computation the sell simulation prices its disposals against, so a
+    // simulated trim and the filed statement can never disagree about the pots or the allowance.
+    let (statement, has_income) = germany::compute_tax_year(
         &broker_statement,
         year,
         &converter,
@@ -217,11 +203,6 @@ fn generate_german_tax_statement(
         portfolio.foreign_currency_taxation,
         &portfolio.opening_foreign_currency,
     )?;
-
-    let has_income = has_trades || has_dividends || has_interest || has_fx_gains;
-
-    // Calculate totals
-    statement.calculate_totals();
 
     // Output the statement
     if let Some(path) = output_path {

@@ -472,6 +472,32 @@ impl GermanTaxStatement {
         self.vorabpauschale.push(entry);
     }
 
+    /// Net tax due for the year as each of `disposals` is added to it in turn: element `k` is the
+    /// year carrying the first `k + 1` of them.
+    ///
+    /// This is how a *hypothetical* sale gets priced. A German disposal has no tax of its own —
+    /// the charge falls out of the whole year through the §20(6) pots, the carryforward and the
+    /// Sparer-Pauschbetrag — so its cost is the difference it makes to the year, and the cost of
+    /// the one after it depends on what the first already absorbed. Only the entry vectors change
+    /// between steps, so the year's dividends, interest and FX are processed once and each extra
+    /// disposal costs nothing but arithmetic.
+    ///
+    /// Leaves the statement carrying every disposal, with totals computed.
+    pub fn tax_with_disposals(&mut self, disposals: &[CapitalGainEntry]) -> Vec<Decimal> {
+        let existing = self.capital_gains.len();
+        let mut taxes = Vec::with_capacity(disposals.len());
+
+        for count in 1..=disposals.len() {
+            self.capital_gains.truncate(existing);
+            self.capital_gains.extend_from_slice(&disposals[..count]);
+
+            self.calculate_totals();
+            taxes.push(self.net_tax_due);
+        }
+
+        taxes
+    }
+
     /// Calculate all summary totals.
     pub fn calculate_totals(&mut self) {
         // Reset reporting totals.

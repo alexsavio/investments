@@ -26,7 +26,8 @@ pub fn generate_cash_flow_report(config: &Config, portfolio_name: &str, year: Op
     let broker = portfolio.broker.get_info(config, portfolio.plan.as_deref())?;
 
     let database = db::connect(&config.db_path)?;
-    let converter = CurrencyConverter::new(database, None, year.is_some());
+    let converter = CurrencyConverter::for_jurisdiction(
+        config.get_tax_country().jurisdiction, database, None, year.is_some());
 
     let statement = BrokerStatement::read(
         broker, portfolio.statements_path()?, &portfolio.symbol_remapping, &portfolio.instrument_internal_ids,

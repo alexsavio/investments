@@ -77,24 +77,44 @@ pub struct JurisdictionTraits {
     pub code: &'static str,
     pub currency: &'static str,
     pub tax_precision: u32,
+
+    /// Official source of currency rates for this jurisdiction's tax authority.
+    ///
+    /// Not a preference: the authority dictates which rates a return must use, so this is
+    /// derived from the jurisdiction and never configured. Deciding it per call site is how
+    /// `simulate-sell` came to convert a German filer's amounts at Central Bank of Russia
+    /// rates while `tax-statement` used the ECB on the same positions.
+    pub rate_source: RateSourceKind,
+}
+
+/// Which central bank publishes the reference rates a jurisdiction's tax authority requires.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RateSourceKind {
+    /// Central Bank of Russia. RUB base.
+    Cbr,
+    /// European Central Bank. EUR base.
+    Ecb,
 }
 
 impl Jurisdiction {
     pub fn traits(self) -> JurisdictionTraits {
         match self {
             Jurisdiction::Russia => JurisdictionTraits {
+                rate_source: RateSourceKind::Cbr,
                 name: "Russia",
                 code: "RU",
                 currency: "RUB",
                 tax_precision: 0,
             },
             Jurisdiction::Usa => JurisdictionTraits {
+                rate_source: RateSourceKind::Cbr,
                 name: "USA",
                 code: "US",
                 currency: "USD",
                 tax_precision: 2,
             },
             Jurisdiction::Germany => JurisdictionTraits {
+                rate_source: RateSourceKind::Ecb,
                 name: "Germany",
                 code: "DE",
                 currency: "EUR",
@@ -156,6 +176,12 @@ pub fn germany(_config: &TaxConfig) -> Country {
     // Teilfreistellung, no loss pots, and no Sparer-Pauschbetrag. The real German tax math lives in
     // the `tax_statement::germany` module — do not use this rate for the filing statement.
     // Church tax (8% or 9%) is configured per user, not included in this base rate.
+    //
+    // Nor to price a sale: what a disposal costs depends on the whole tax year, so it is not a rate
+    // times a gain. `tax_statement::germany::compute_tax_year` computes the year and
+    // `analysis::sell_simulation` prices a hypothetical sale at the difference it makes to it —
+    // which is how a gain lands tax-free while the year's §20(6) Aktien pot is still negative,
+    // where this rate would invent a charge.
 
     let abgeltungssteuer_rate = dec!(0.25);
     let solidarity_surcharge = dec!(0.055); // 5.5% of Abgeltungssteuer

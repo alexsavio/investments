@@ -27,7 +27,7 @@ use serde::Deserialize;
 use validator::Validate;
 
 use crate::config::Config;
-use crate::localities::Jurisdiction;
+use crate::localities::RateSourceKind;
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::Cash;
 use crate::db;
@@ -130,18 +130,19 @@ impl Quotes {
         //
         // So use CBR API here and fallback to FCS API only for unknown currencies.
         //
-        // Not for German filers: their rates must come from the ECB, which CurrencyConverter
-        // sources directly, so consulting the Central Bank of Russia is both wrong and (with
-        // the feed currently emitting values like "5,28906E-05") a hard failure on a rate
-        // nobody in this jurisdiction should be using.
-        if config.get_tax_country().jurisdiction != Jurisdiction::Germany {
+        // Only where the jurisdiction's tax authority actually uses CBR rates. Elsewhere the
+        // converter sources them directly (ECB for Germany), so consulting the Central Bank of
+        // Russia is both wrong and -- with the feed currently emitting values like
+        // "5,28906E-05" -- a hard failure on a rate nobody in that jurisdiction should use.
+        if config.get_tax_country().jurisdiction.traits().rate_source == RateSourceKind::Cbr {
             providers.push(Arc::new(Cbr::new(cbr::BASE_URL)));
         }
 
         // Use FCS API for forex
         if let Some(config) = config.quotes.fcsapi.as_ref() {
             providers.push(Arc::new(FcsApi::new(config)))
-        } else if !has_custom_provider && config.get_tax_country().jurisdiction != Jurisdiction::Germany {
+        } else if !has_custom_provider
+            && config.get_tax_country().jurisdiction.traits().rate_source == RateSourceKind::Cbr {
             return Err!("FCS API access key is not set in the configuration file");
         }
 
