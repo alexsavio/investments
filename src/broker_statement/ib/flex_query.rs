@@ -291,9 +291,6 @@ pub struct CorporateAction {
     #[serde(rename = "@symbol")]
     pub symbol: String,
 
-    #[serde(rename = "@isin", default)]
-    pub isin: String,
-
     #[serde(rename = "@description")]
     pub description: String,
 
@@ -302,12 +299,6 @@ pub struct CorporateAction {
 
     #[serde(rename = "@quantity")]
     pub quantity: Decimal,
-
-    #[serde(rename = "@type")]
-    pub action_type: String,
-
-    #[serde(rename = "@value")]
-    pub value: Decimal,
 }
 
 #[derive(Debug, Deserialize)]
@@ -587,11 +578,26 @@ impl FlexStatement {
 
             for action in &actions.actions {
                 // The Flex export uses IB's short asset codes rather than the CSV's words.
-                if action.asset_category != "STK" {
-                    log::warn!(
-                        "Skipping corporate action for non-stock instrument {} (assetCategory {}): {}",
-                        action.symbol, action.asset_category, action.description);
-                    continue;
+                match action.asset_category.as_str() {
+                    "STK" => {},
+
+                    // Absent, because the query doesn't export the field. Skipping on that would
+                    // drop *every* corporate action and reintroduce the exact FIFO corruption
+                    // this block exists to prevent -- and say "non-stock" while doing it. The
+                    // fix belongs in the query, so demand it.
+                    "" => return Err!(concat!(
+                        "The corporate action for {} has no assetCategory, so stock actions ",
+                        "can't be told from the rest and applying them blindly would corrupt ",
+                        "the cost basis. Add the Asset Category field to the Corporate Actions ",
+                        "section of the Flex query and re-run it."), action.symbol),
+
+                    other => {
+                        log::warn!(
+                            "Skipping corporate action for non-stock instrument {} \
+                             (assetCategory {}): {}",
+                            action.symbol, other, action.description);
+                        continue;
+                    },
                 }
 
                 let report_date = if action.report_date.is_empty() {
@@ -990,8 +996,12 @@ fn parse_cash_transaction(
             // unmatched and aborts the whole statement. `tax_remapping` is the configured escape
             // hatch for that; the CSV reader has always honoured it, so honour it here too rather
             // than telling XML users to write rules that nothing consumes.
-            let date = tax_remapping.map(date, &tx.description);
+            //
+            // Remap inside the guard: a symbol-less row is dropped below, and consuming a rule
+            // for it would let `ensure_all_mapping_rules_are_used` report a rule as applied that
+            // never reached an accrual.
             if !tx.symbol.is_empty() {
+                let date = tax_remapping.map(date, &tx.description);
                 let issuer = InstrumentId::Symbol(tx.symbol.clone());
                 let tax_amount = tx.amount.abs();
                 let tax = Cash::new(&tx.currency, tax_amount);

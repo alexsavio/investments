@@ -97,6 +97,11 @@ fn parse(record: &Record) -> GenericResult<CorporateAction> {
 /// casing. Both build this and call [`parse_action`], so the two readers cannot drift apart on
 /// what a split or a spinoff means -- the XML reader previously had no corporate-action support
 /// at all, which silently left post-split positions on the pre-split basis.
+///
+/// `quantity` and `proceeds` are carried unvalidated: what counts as a legal value depends on the
+/// action, which is only known after the description is matched, so [`parse_action`] applies the
+/// restriction per branch. Do not validate them here -- a reader that pre-restricts them would
+/// reject actions the other reader accepts, which is the drift this type exists to prevent.
 pub struct ActionRecord<'a> {
     pub time: DateOptTime,
     pub report_date: Option<Date>,
@@ -152,8 +157,12 @@ pub fn parse_action(record: &ActionRecord) -> GenericResult<CorporateAction> {
             }
 
             let currency = record.currency;
-            let volume = record.proceeds;
-            let quantity = -record.quantity;
+            let volume = util::validate_named_decimal(
+                "corporate action proceeds", record.proceeds,
+                DecimalRestrictions::PositiveOrZero)?;
+            let quantity = -util::validate_named_decimal(
+                "corporate action quantity", record.quantity,
+                DecimalRestrictions::StrictlyNegative)?;
 
             let price = util::parse_decimal(
                 captures.name("price").unwrap().as_str(),
@@ -173,7 +182,9 @@ pub fn parse_action(record: &ActionRecord) -> GenericResult<CorporateAction> {
         },
 
         "spinoff" => {
-            let quantity = record.quantity;
+            let quantity = util::validate_named_decimal(
+                "corporate action quantity", record.quantity,
+                DecimalRestrictions::StrictlyPositive)?;
             let currency = record.currency.to_owned();
 
             CorporateActionType::Spinoff {
@@ -191,7 +202,8 @@ pub fn parse_action(record: &ActionRecord) -> GenericResult<CorporateAction> {
             let to: u32 = captures.name("to").unwrap().as_str().parse()?;
             let ratio = StockSplitRatio::new(from, to);
 
-            let change = record.quantity;
+            let change = util::validate_named_decimal(
+                "corporate action quantity", record.quantity, DecimalRestrictions::NonZero)?;
             let (withdrawal, deposit) = if change.is_sign_positive() {
                 (None, Some(change))
             } else {
@@ -202,7 +214,9 @@ pub fn parse_action(record: &ActionRecord) -> GenericResult<CorporateAction> {
         },
 
         "stock dividend" => {
-            let quantity = record.quantity;
+            let quantity = util::validate_named_decimal(
+                "corporate action quantity", record.quantity,
+                DecimalRestrictions::StrictlyPositive)?;
             CorporateActionType::StockDividend {
                 stock: Some(other_symbol),
                 quantity,
@@ -214,7 +228,7 @@ pub fn parse_action(record: &ActionRecord) -> GenericResult<CorporateAction> {
         _ => unreachable!(),
     };
 
-    Ok(CorporateAction {time: time.into(), report_date, symbol, action})
+    Ok(CorporateAction {time, report_date, symbol, action})
 }
 
 pub fn join_stock_splits(mut actions: Vec<CorporateAction>) -> GenericResult<CorporateAction> {
