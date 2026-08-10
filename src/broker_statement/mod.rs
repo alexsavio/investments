@@ -678,7 +678,7 @@ impl BrokerStatement {
         let validator = DateValidator::new(self.period);
 
         validator.sort_and_validate(
-            "a deposit of withdrawal", &mut self.deposits_and_withdrawals,
+            "a deposit or withdrawal", &mut self.deposits_and_withdrawals,
             |cash_flow| cash_flow.date)?;
 
         self.sort_and_alter_fees(self.period.last_date());

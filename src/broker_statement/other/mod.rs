@@ -1,5 +1,6 @@
 pub mod config;
 
+use chrono::Datelike;
 use isin::ISIN;
 
 #[cfg(test)] use crate::brokers::Broker;
@@ -14,9 +15,10 @@ use crate::util::{self, DecimalRestrictions};
 
 #[cfg(test)] use super::{BrokerStatement, ReadingStrictness};
 use super::partial::PartialBrokerStatement;
+use super::payments::Withholding;
 use super::trades::{StockBuy, StockSell};
 
-use self::config::{Operation, TradeOperation, DividendOperation};
+use self::config::{Operation, BuyOperation, SellOperation, DividendOperation};
 
 pub struct StatementParser<'a> {
     currency: &'a str,
@@ -36,12 +38,12 @@ impl<'a> StatementParser<'a> {
         for operation in operations {
             let date = match operation {
                 Operation::Buy(trade) => {
-                    parser.parse_trade(trade, true).map_err(|e| format!(
+                    parser.parse_buy(trade).map_err(|e| format!(
                         "Invalid buy operation at {}: {e}", formatting::format_date(trade.date)))?;
                     trade.date
                 },
                 Operation::Sell(trade) => {
-                    parser.parse_trade(trade, false).map_err(|e| format!(
+                    parser.parse_sell(trade).map_err(|e| format!(
                         "Invalid sell operation at {}: {e}", formatting::format_date(trade.date)))?;
                     trade.date
                 },
@@ -61,7 +63,7 @@ impl<'a> StatementParser<'a> {
         Ok(parser.statement)
     }
 
-    fn parse_trade(&mut self, trade: &TradeOperation, buy: bool) -> EmptyResult {
+    fn parse_buy(&mut self, trade: &BuyOperation) -> EmptyResult {
         self.on_symbol(&trade.symbol)?;
 
         let conclusion_time = trade.date.into();
@@ -77,21 +79,44 @@ impl<'a> StatementParser<'a> {
             return Err!("Got an unexpected amount: {amount} vs {expected_amount}");
         }
 
-        if buy {
-            self.statement.deposits_and_withdrawals.push(
-                CashAssets::new_from_cash(trade.date, amount));
+        self.statement.deposits_and_withdrawals.push(
+            CashAssets::new_from_cash(trade.date, amount));
 
-            self.statement.stock_buys.push(StockBuy::new_trade(
-                &trade.symbol, quantity, price, amount, commission,
-                conclusion_time, execution_date));
-        } else {
-            self.statement.stock_sells.push(StockSell::new_trade(
-                &trade.symbol, quantity, price, amount, commission,
-                conclusion_time, execution_date, false));
+        self.statement.stock_buys.push(StockBuy::new_trade(
+            &trade.symbol, quantity, price, amount, commission,
+            conclusion_time, execution_date));
 
-            self.statement.deposits_and_withdrawals.push(
-                CashAssets::new_from_cash(trade.date, -amount));
+        Ok(())
+    }
+
+    fn parse_sell(&mut self, trade: &SellOperation) -> EmptyResult {
+        self.on_symbol(&trade.symbol)?;
+
+        let conclusion_time = trade.date.into();
+        let execution_date = trade.settle_date.unwrap_or(trade.date);
+
+        let quantity = util::validate_named_decimal("quantity", trade.quantity, DecimalRestrictions::StrictlyPositive)?;
+        let price = util::validate_named_cash("price", self.currency, trade.price, DecimalRestrictions::StrictlyPositive)?;
+        let net_amount = util::validate_named_cash("net amount", self.currency, trade.net_amount, DecimalRestrictions::StrictlyPositive)?;
+        let tax_withheld = util::validate_named_cash("tax withheld amount", self.currency, trade.tax_withheld, DecimalRestrictions::PositiveOrZero)?;
+        let commission = Cash::zero(self.currency);
+
+        let amount = (price * quantity).round();
+        if amount - tax_withheld != net_amount {
+            return Err!("{price} * {quantity} - {tax_withheld} != {net_amount}");
         }
+
+        self.statement.stock_sells.push(StockSell::new_trade(
+            &trade.symbol, quantity, price, amount, commission,
+            conclusion_time, execution_date, false));
+
+        if !tax_withheld.is_zero() {
+            self.statement.tax_agent_withholdings.add(
+                execution_date, execution_date.year(), Withholding::Withholding(tax_withheld))?;
+        }
+
+        self.statement.deposits_and_withdrawals.push(
+            CashAssets::new_from_cash(execution_date, -net_amount));
 
         Ok(())
     }
@@ -152,7 +177,7 @@ mod tests {
         assert!(statement.fees.is_empty());
         assert!(statement.cash_grants.is_empty());
         assert!(statement.idle_cash_interest.is_empty());
-        assert!(statement.tax_agent_withholdings.is_empty()); // FIXME(konishchev): Support + test
+        assert!(statement.tax_agent_withholdings.is_empty());
 
         assert!(statement.forex_trades.is_empty());
         assert!(!statement.stock_buys.is_empty());
