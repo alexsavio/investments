@@ -39,7 +39,8 @@ The review also **confirmed correct** (do not touch): FIFO/coefficient money pat
 - **R11 — Report-only stock grants and corporate actions.** Status: ✅ Done (`f8cbe379`) — `StockGrantEntry` / `CorporateActionEntry` + `process_stock_grants` / `process_corporate_actions`, both informational and both counted as activity so a vest-only or action-only year still produces a statement. Vests carry the vest-date EUR value and a general-base reminder (and a louder note when the statement has no FMV, since the shares would then be costed at zero). Corporate actions get a per-type note saying whether the FIFO queue already handled it (split, rename) or it needs manual review (delisting, liquidation, spinoff, scrip dividend, rights issue). New 19-column CSV rows, console lines, `grants` fixture, and a corporate-action assertion on `wash_sale_split`.
 - **R12 — Mechanical batch.** Status: ✅ Done (`c9bf4a0c`)
   (a) the `expect` is now a named error, and `coefficients::has_table` / `SpanishTaxConfig::has_actualization_table` separate "no table shipped for that disposal year" from a real fault, so "acquisition after disposal" propagates instead of silently marking the sale unpriced; (b) `loss <= 0` `deferred_losses` entries rejected, with an rstest covering all three malformed shapes; (c) the two IB flex skip-warnings are jurisdiction-neutral and rate-limited to once per instrument via a `HashSet` threaded through `parse_trade` / `parse_statement_of_funds_trade`; (d) trailing newline restored; (e) four `TODO(verify)` markers replaced by citations — rounding (AEAT "se redondeará por exceso"; foral silent), fecha de transmisión (LIRPF art. 14.1.c + NF art. 57.1.b + DGT V0152-26, trade date), homogeneity (RIRPF art. 8 + DF 33/2014 art. 47 + DGT V0796-26), reintegration keying (DGT V0913-08 + V3282-18, recompra pool with FIFO inside it); (f) the treaty-rate field documents the UK 10% / US-REIT / interest caveats and `docs/spain-taxes.md` gains a table for them; (g) plan.md corrected to NF 2/2025 for the fungible-crypto FIFO wording; (h) the fee-keyword and window-endpoint markers stay open by design.
-- **R13 — Docs + final gate.** Status: TODO — update `docs/spain-taxes.md` (margin interest, carry-out overlap rule, chained wash-sale, treaty-rate table with UK/REIT caveats, credit net-base per TEAC, Común two-phase compensation with the manual's example, R10 outcome); re-run the full gate; re-run the real-statement smoke test (`cargo run -- --config /private/tmp/claude-501/-Users-alexandre-projects-alexsavio-investments/864d554e-7895-4b99-9187-48e9e68b5156/scratchpad/es-smoke tax-statement ibkr-miren 2025 <scratch>/es2.csv` — expect the same €7.58 unless R3's rate rounding moves it by cents, and NO foreign WHT under retenciones); append a remediation report to this file (fixed/remaining, new totals if changed).
+- **R13 — Docs + final gate.** Status: ✅ Done — see the remediation report at the end of this file.
+  Task text: update `docs/spain-taxes.md` (margin interest, carry-out overlap rule, chained wash-sale, treaty-rate table with UK/REIT caveats, credit net-base per TEAC, Común two-phase compensation with the manual's example, R10 outcome); re-run the full gate; re-run the real-statement smoke test (`cargo run -- --config /private/tmp/claude-501/-Users-alexandre-projects-alexsavio-investments/864d554e-7895-4b99-9187-48e9e68b5156/scratchpad/es-smoke tax-statement ibkr-miren 2025 <scratch>/es2.csv` — expect the same €7.58 unless R3's rate rounding moves it by cents, and NO foreign WHT under retenciones); append a remediation report to this file (fixed/remaining, new totals if changed).
   Commit: `docs(spain-tax): document remediation outcomes and close the review`
 
 ## Explicitly accepted, not fixed (record only)
@@ -48,3 +49,75 @@ The review also **confirmed correct** (do not touch): FIFO/coefficient money pat
 - L6 sub-1e-27 per-lot allocation residual — invisible at 2 dp.
 - Settlement-vs-conclusion FX date simplification (L2) — inherited from the German path, documented.
 - Modelo 109 casillas remain 2019-vintage with warnings; DDI casilla stays `CASILLA_UNKNOWN` (nothing newer is published; OF 112/2026 has no casilla annex).
+
+## Remediation report (R13)
+
+**Date**: 2026-08-11 · Branch `002-spain-tax`, 13 remediation tasks on top of the 27-commit feature.
+
+### Gate
+
+| Check | Result |
+|---|---|
+| `cargo check --lib --all-targets` | clean |
+| `cargo test spain --lib` | **215 passed / 0 failed** (169 at the start of remediation) |
+| `cargo test --lib` | **681 passed / 33 failed** — every failure is a pre-existing `broker_statement::*::parse_real` case from the private, empty `testdata/` submodule. Filtering the failure list for anything that is not a `parse_real` case yields **0** rows, and the count is unchanged from the base |
+| `cargo test --no-fail-fast` (all targets) | lib as above; `tests/generate.rs` 1 passed; binary target has no tests |
+| `./check` (clippy, dev + release, `-Dwarnings`) | the same **4 pre-existing errors** in untouched files: `portfolio/rebalancing.rs`, `quotes/cbr/mod.rs`, `analysis/performance/statistics.rs`, `formats/xls/table.rs`. No new lint at any commit |
+
+### Real-statement smoke test
+
+`cargo run -- --config <scratch>/es-smoke tax-statement ibkr-miren 2025 <scratch>/es2.csv`, Gipuzkoa 2025.
+
+| Figure | Before | After | Why |
+|---|---|---|---|
+| Base liquidable | €99.55 | **€17.32** | R10: €82.23 of dividends are exempt under NF 3/2014 art. 9.24 |
+| Cuota íntegra | €19.91 | **€3.46** | 17.32 × 20% (the pre-reform 2025 foral scale) |
+| Credit (DDII) | €12.33 | **€0.00** | R3 + R10: the rate limb runs on the income that reaches the base, and the dividends are wholly exempt, so there is no Spanish tax to credit the €12.33 against. The excess is reclaimed from the source state |
+| Net tax due | €7.58 | **€3.46** | |
+
+Everything else is unchanged: ganancias y pérdidas stay at €16.18 (capital gains −12.25 + FX 28.43),
+so R5 (post-split units) and R9 (chained releases) moved nothing on this statement — it holds no
+split and no chained deferral. R1 found no paid margin interest here (`SUMMARY_RCM_INTEREST_PAID`
+0.00). The €17.18 of borrowed-balance FX is still excluded and flagged.
+
+Verified on the output:
+
+- **No retenciones row on either form.** The €12.33 appears in `SUMMARY_FOREIGN_WITHHOLDING`
+  (informational) and in a `# WARNING` naming casilla 07+22 as the box it does *not* belong in, and
+  the DDII row carries the credit.
+- The Modelo 109 boxes reconcile: `06+16` 1.14 − `17` 0.00 + `28` 16.18 = `33` 17.32. The íntegros
+  box is net of the exemption, because an exención is never declared as income (a formatter change
+  made while running this smoke test, with a regression test pinning the identity).
+
+### What changed, by task
+
+| Task | Commit | Effect on a filed number |
+|---|---|---|
+| R1 margin interest | `925163d4` | Paid interest no longer reduces RCM |
+| R2 carry-out snapshot + overlap guard | `085f90a9` | A carry-out is no longer emptied by post-year-end disposals; a double-deducting config is refused |
+| R4 Común two-phase compensation | `8d5ed408` | Común bases change wherever prior-year balances and a current-year cross-offset meet; Gipuzkoa bit-identical |
+| R3 credit net base + 2-dp rate | `b441d230` | Credits shrink where expenses or compensation reduced the foreign income; the rate is rounded before multiplying |
+| R5 post-split units | `2182d62d` | Deferrals across a split match the right fraction |
+| R6 coefficient validation | `64a6a4db` | A nonsensical override is refused instead of silently pricing |
+| R7 fee/ledger-only years | `4e6db148` | Those years now produce a statement |
+| R8 casillas | `3916de65` | Foreign WHT off the retenciones box; Modelo 100 numbered |
+| R9 definitive-disposal releases | `f9b70322` | A chained sale no longer integrates a loss that is still blocked |
+| R10 dividend exemption | `6f656eb2` | **Largest effect**: −€1,500/year of Gipuzkoa dividend income, and the matching loss of credit |
+| R11 grants + corporate actions | `f8cbe379` | Reporting only |
+| R12 mechanical batch | `c9bf4a0c` | No panics on an unpriced filing year; real coefficient faults propagate; markers cited |
+| R13 docs + gate | this commit | |
+
+### Left open
+
+- **Two `TODO(verify)` markers remain by design**: the custody-fee keyword list (art. 26.1.a names
+  the service, not a broker's wording; unrecognised fees are reported, not deducted) and whether the
+  two-month window's endpoints are inside it (treated as inclusive).
+- **Instituciones de inversión colectiva.** The €1,500 exemption does not cover fund/ETF/SICAV
+  distributions, and an IB statement does not distinguish them from company dividends. The tool
+  exempts them anyway and names every payer it exempted in a `warn!`, a console line and a CSV
+  `# WARNING`. A filer holding distributing funds must reduce the exemption by hand.
+- **Modelo 109 casillas stay 2019-vintage** and the DDII casilla stays `CASILLA_UNKNOWN`; Modelo 100
+  numbers come from a consultation draft. All under `# WARNING` banners.
+- Items recorded as accepted below (L5, L6, the settlement-vs-conclusion FX date) are unchanged.
+- Carried-in `deferred_losses` quantities are taken in the units the prior return reported; a split
+  between that acquisition and the current statement is not applied to them.

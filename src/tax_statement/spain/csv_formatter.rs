@@ -661,8 +661,8 @@ impl CsvFormatter {
                 let boxes = [
                     (
                         modelo_109::RCM_GROSS,
-                        "Rendimientos íntegros del capital mobiliario",
-                        statement.total_dividend_income + statement.total_interest_income,
+                        "Rendimientos íntegros del capital mobiliario (excluida la renta exenta)",
+                        Self::declarable_rcm_income(statement),
                     ),
                     (
                         modelo_109::RCM_EXPENSES,
@@ -737,8 +737,8 @@ impl CsvFormatter {
                     ),
                     (
                         modelo_100::DIVIDENDS,
-                        "Dividendos y participaciones en beneficios",
-                        statement.total_dividend_income,
+                        "Dividendos y participaciones en beneficios (excluida la renta exenta)",
+                        statement.total_dividend_income - statement.total_dividend_exemption,
                     ),
                     (
                         modelo_100::RCM_EXPENSES,
@@ -776,6 +776,16 @@ impl CsvFormatter {
         }
 
         Ok(())
+    }
+
+    /// Gross RCM income as the form declares it: exempt income is not declared at all.
+    ///
+    /// An exención is not a deduction — the €1,500 of dividends NF 3/2014 art. 9.24 relieves never
+    /// becomes rendimiento íntegro, so leaving it in this box would break the form's own arithmetic
+    /// (íntegros − gastos + ganancias would not reach the base liquidable).
+    fn declarable_rcm_income(statement: &SpanishTaxStatement) -> Decimal {
+        statement.total_dividend_income + statement.total_interest_income
+            - statement.total_dividend_exemption
     }
 
     /// Say where the foreign withholding does **not** go.
@@ -1443,6 +1453,64 @@ mod tests {
         assert!(output.contains("2025"), "{output}");
         assert!(output.contains("HAC/277/2026"), "{output}");
         assert!(!output.contains("casilla unverified"), "{output}");
+    }
+
+    /// The form's own arithmetic has to close: rendimientos íntegros − gastos + ganancias must
+    /// reach the base liquidable. Exempt income is not a deduction, it is never declared, so it
+    /// must not sit in the íntegros box.
+    #[test]
+    fn the_modelo_boxes_reconcile_with_the_savings_base() {
+        let regime = SpanishTaxRegime::Gipuzkoa;
+        let mut spain = SpanishTaxStatement::new(
+            2026,
+            regime,
+            SavingsScale::for_year(regime, 2026).unwrap(),
+            LossLedger::default(),
+            LossLedger::default(),
+            Decimal::ZERO,
+            dec!(0.15),
+            dec!(1500),
+        );
+        spain.dividends.push(DividendEntry {
+            symbol: "AAPL".to_string(),
+            isin: "US0378331005".to_string(),
+            description: "AAPL CASH DIVIDEND".to_string(),
+            date: date(),
+            gross_eur: dec!(900),
+            withheld_eur: dec!(270),
+            treaty_capped_credit: dec!(135),
+            exemption_eligible: true,
+            notes: None,
+        });
+        spain.interest.push(super::super::statement::InterestEntry {
+            date: date(),
+            description: "Broker interest received".to_string(),
+            gross_eur: dec!(90),
+            taxable: true,
+            notes: None,
+        });
+        spain.calculate_totals();
+
+        // The €900 dividend is wholly exempt, so only the €90 of interest is declarable.
+        assert_eq!(spain.total_dividend_exemption, dec!(900));
+        assert_eq!(spain.savings_base, dec!(90));
+
+        let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
+        let cell = |key: &str| -> Decimal {
+            output
+                .lines()
+                .find(|line| line.starts_with(&format!("{key},")))
+                .and_then(|line| line.rsplit(',').next())
+                .expect("box present")
+                .parse()
+                .unwrap()
+        };
+
+        let gross = cell("MODELO_109_CASILLA_06+16");
+        let expenses = cell("MODELO_109_CASILLA_17");
+        let gains = cell("MODELO_109_CASILLA_28");
+        assert_eq!(gross, dec!(90.00));
+        assert_eq!(gross - expenses + gains, cell("MODELO_109_CASILLA_33"));
     }
 
     /// Casilla 33 carries the base **liquidable** — the figure after group compensation — so the

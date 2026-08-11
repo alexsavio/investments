@@ -392,6 +392,14 @@ safekeeping, administration, custodia, administración). An unrecognised fee is 
 deducted** — that overstates tax rather than understating it. Trading commissions are not affected
 either way: they are already inside the FIFO cost basis.
 
+### Interest paid on a margin loan
+
+IB reports margin interest as a **negative** "Broker Interest Paid" accrual in the same ledger as the
+credit interest, so a naive sum would net it off your RCM income. Neither regime allows that: LIRPF
+art. 26.1.a reaches only administration and custody of negotiable securities, and NF 3/2014 art. 39
+is narrower still. The tool reports each paid-interest row without a savings group, sums them into
+`SUMMARY_RCM_INTEREST_PAID`, and leaves the RCM result untouched.
+
 ## Foreign-currency gains
 
 A currency conversion transfers a patrimonial element, so its result joins the **ganancias** group.
@@ -499,3 +507,30 @@ A `loss_carryforward` entry is older than the window. Remove it — it can no lo
 
 A conversion failure names the date and currency. It usually means the ECB published no reference
 rate for that date; check that the date is a TARGET business day.
+
+## Sources
+
+Retrieved 2026-08-11 unless noted.
+
+| Rule | Source |
+|---|---|
+| Gipuzkoa savings scale 2026 (art. 76.1), and that NF 1/2025 leaves art. 9.24 alone | NF 1/2025 full text (`primeralecturaediciones.com/documentos_diana/LEYES_2025/GUIPUZKOA/NF_1_2025_Gipuzkoa_IRPF.pdf`) |
+| Fungible-crypto FIFO wording in art. 47.2; art. 9.24 untouched | NF 2/2025 de 24 de noviembre (`primeralecturaediciones.com/documentos_diana/LEYES_2025/GUIPUZKOA/GIPUZKOA_NF2_2025.pdf`) |
+| €1,500 dividend exemption, art. 9.24, item 24 verbatim with its exclusions | Diputación Foral de Gipuzkoa, Modelo 109 "Exenciones", ejercicios [2023](https://www.gipuzkoa.eus/es/web/ogasuna/impuestos/modelo/109/2023/exenciones) / [2024](https://www.gipuzkoa.eus/es/web/ogasuna/impuestos/modelo/109/2024/exenciones) / [2025](https://www.gipuzkoa.eus/es/web/ogasuna/impuestos/modelo/109/2025/exenciones) — **OFFICIAL** |
+| Custody fees not deductible in Gipuzkoa (art. 39) | Manual de Renta, cap. 4 §4.5 (`gipuzkoa.eus/documents/2456431/80349127/04+-+Rend+capital+mobiliario.pdf`) — **OFFICIAL** |
+| Actualization coefficient tables (DF 58/2023, DF 61/2024, DF 27/2025) | Boletín Oficial de Gipuzkoa — **OFFICIAL** |
+| Común two-phase compensation order and the joint 25% allowance | AEAT Manual Práctico de Renta, cap. 12 |
+| The credit's rate limb takes **rentas netas** | TEAC resolución RG 00/08643/2023, 20-10-2025, unificación de criterio (binding per LGT art. 239.8) |
+| The average rate is expressed with two decimals and used rounded | NF 3/2014 art. 76.2 / LIRPF art. 80.2; AEAT Manual Renta cap. 18 worked example (16,60% × 6.000 € = 996 €) |
+| Fecha de transmisión = trade date | LIRPF art. 14.1.c / NF 3/2014 art. 57.1.b; DGT V0152-26 |
+| Valores homogéneos = same issue and same rights (so same ISIN) | RIRPF art. 8; DF 33/2014 art. 47; DGT V0796-26 |
+| Reintegration keyed to the recompra pool; releasing transfer must be definitive | DGT V0913-08; DGT V3282-18 |
+| Modelo 100 box numbers, ejercicio 2025 | Anexo I of the Orden HAC/277/2026 **consultation draft** — no enacted numbering exists yet |
+| State savings scales, LIRPF arts. 26, 33, 35, 37, 46, 49, 66, 76, 80 | BOE consolidated Ley 35/2006 — **OFFICIAL** |
+
+Two questions stay open and are marked in the code:
+
+- the keyword list that recognises a custody fee (art. 26.1.a names the *service*, not the wording a
+  broker uses) — an unrecognised fee is reported but not deducted;
+- whether the two-month window's endpoints are themselves inside it. Treated as inclusive, which
+  keeps the Código Civil art. 5.1 "de fecha a fecha" reading and defers more rather than less.
