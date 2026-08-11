@@ -16,6 +16,7 @@ use crate::tax_statement::fx_fifo::compute_fx_fifo;
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::taxes::{DeferredLossConfig, SpanishTaxConfig, TaxConfig};
+use crate::time::DateOptTime;
 use crate::types::{Date, Decimal};
 
 use super::wash_sale;
@@ -158,8 +159,22 @@ struct PricedSale {
     /// `None` when no actualization table is shipped for this sale's disposal year.
     fiscal_gain_loss: Option<Decimal>,
     lots: Vec<SpanishLotDetail>,
+    /// Lots consumed, in the split-normalized units the valores-homogéneos replay works in.
     consumed: Vec<(Date, Decimal)>,
+    /// `quantity` in those same normalized units.
+    normalized_quantity: Decimal,
     deferred_loss: Decimal,
+}
+
+/// Reference point every quantity the valores-homogéneos replay sees is expressed against.
+///
+/// A stock split re-expresses shares, so a raw acquisition count and a post-split disposal count are
+/// not comparable — matching them directly under-matches the deferral and mis-releases a blocked
+/// lot. Normalizing everything to the statement's last date puts acquisitions, disposals, consumed
+/// lots and blocked lots in one unit, and leaves the carry-out in the units next year's statement
+/// will report.
+fn split_reference(broker_statement: &BrokerStatement) -> DateOptTime {
+    DateOptTime::new_max_time(broker_statement.period.last_date())
 }
 
 /// Turn each qualifying sale into a capital-gain entry with per-lot actualization and the
@@ -306,6 +321,8 @@ fn price_sale(
         .map(|lot| lot.quantity * lot.multiplier)
         .sum();
 
+    let reference = split_reference(broker_statement);
+
     let mut lots = Vec::with_capacity(details.fifo.len());
     let mut consumed = Vec::with_capacity(details.fifo.len());
     let mut cost_eur = Decimal::ZERO;
@@ -343,7 +360,12 @@ fn price_sale(
 
         cost_eur += lot_cost_eur;
         actualized_cost_eur += lot_actualized_cost;
-        consumed.push((lot.conclusion_time.date, lot_quantity));
+
+        // `lot.multiplier` re-expresses the lot in the units of *this* sale; the replay needs one
+        // unit for the whole statement, so re-derive it against the common reference instead.
+        let normalized_multiplier = broker_statement.stock_splits.get_multiplier(
+            &trade.symbol, lot.conclusion_time, reference);
+        consumed.push((lot.conclusion_time.date, lot.quantity * normalized_multiplier));
 
         lots.push(SpanishLotDetail {
             acquisition_date: lot.conclusion_time.date,
@@ -380,6 +402,7 @@ fn price_sale(
         actualized_cost_eur,
         fiscal_gain_loss: priced.then_some(fiscal_gain_loss),
         lots,
+        normalized_quantity: consumed.iter().map(|&(_, quantity)| quantity).sum(),
         consumed,
         deferred_loss: Decimal::ZERO,
     })
@@ -423,6 +446,8 @@ fn apply_wash_sale_rule(
         key
     }
 
+    let reference = split_reference(broker_statement);
+
     let acquisitions: Vec<wash_sale::Acquisition> = broker_statement
         .stock_buys
         .iter()
@@ -430,7 +455,9 @@ fn apply_wash_sale_rule(
         .map(|buy| wash_sale::Acquisition {
             key: identify(&mut identities, instruments, &buy.symbol),
             date: buy.conclusion_time.date,
-            quantity: buy.quantity,
+            // `buy.quantity` is the count as traded; a split after it re-expresses those shares.
+            quantity: buy.quantity * broker_statement.stock_splits.get_multiplier(
+                &buy.symbol, buy.conclusion_time, reference),
         })
         .collect();
 
@@ -507,7 +534,7 @@ fn apply_wash_sale_rule(
         let outcome = engine.process(&wash_sale::Disposal {
             key: sale.key.clone(),
             date: sale.sale_date,
-            quantity: sale.quantity,
+            quantity: sale.normalized_quantity,
             fiscal_result: sale.fiscal_gain_loss,
             consumed: sale.consumed.clone(),
         });

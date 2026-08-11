@@ -836,6 +836,49 @@ fn a_multi_lot_repurchase_defers_and_releases_pro_rata() {
     assert_eq!(carried.acquisition_date, Date::from_ymd_opt(2026, 5, 5).unwrap());
 }
 
+/// A plain stock split re-expresses shares, and the valores-homogéneos matching has to see every
+/// quantity in the same units or it matches the wrong fraction of the loss.
+///
+/// Fixture: buy 100 @ $100 on 2026-01-05 (€9,000), buy 50 @ $120 on 2026-02-10 (€5,400), 2-for-1
+/// split on 2026-02-20, then sell 200 @ $45 on 2026-03-10 (€8,100). The sale consumes the whole
+/// first lot — 200 shares in post-split units — at a €900 loss. The second lot's **100** post-split
+/// shares sit inside the window, so half the loss defers, not a quarter.
+///
+/// Selling 50 of those 100 on 2026-11-15 then releases half the deferral, and the other half stays
+/// blocked: the blocked quantity has to survive the split too, or a partial disposal releases the
+/// lot in full.
+#[test]
+fn wash_sale_quantities_are_matched_in_post_split_units() {
+    let spain = run_pipeline("wash_sale_split", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    let loss = &spain.capital_gains[0];
+    assert_eq!(loss.sale_date, Date::from_ymd_opt(2026, 3, 10).unwrap());
+    assert_eq!(loss.quantity, dec!(200));
+    assert_eq!(loss.cost_eur, dec!(9000));
+    assert_eq!(loss.fiscal_gain_loss, dec!(-900));
+    // 900 × 100/200, not 900 × 50/200.
+    assert_eq!(loss.deferred_loss, dec!(450));
+    assert_eq!(loss.integrable_amount, dec!(-450));
+
+    // 50 of the 100 blocked shares go: €3,150 against half the €5,400 lot.
+    let later = &spain.capital_gains[1];
+    assert_eq!(later.quantity, dec!(50));
+    assert_eq!(later.fiscal_gain_loss, dec!(450));
+
+    assert_eq!(spain.wash_sale_reintegrations.len(), 1);
+    assert_eq!(spain.wash_sale_reintegrations[0].released_eur, dec!(225));
+
+    // The other 50 post-split shares still block the remaining €225.
+    assert_eq!(spain.deferred_losses_next.len(), 1);
+    let carried = &spain.deferred_losses_next[0];
+    assert_eq!(carried.blocked_quantity, dec!(50));
+    assert_eq!(carried.loss, dec!(225));
+    assert_eq!(carried.acquisition_date, Date::from_ymd_opt(2026, 2, 10).unwrap());
+
+    // −450 + 450 − 225.
+    assert_eq!(spain.gyp_net, dec!(-225));
+}
+
 /// A repurchase *before* the sale blocks only shares the sale did not itself consume.
 ///
 /// Buy 100 on 2026-01-10 and 50 more on 2026-02-15, then sell the first 100 @ $90 on 2026-03-10 at

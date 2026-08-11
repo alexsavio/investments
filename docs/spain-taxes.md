@@ -227,9 +227,15 @@ extends at least two months past year end, or re-run when one exists.
 - **Fungible crypto** (art. 43.i). Not implemented.
 - Homogeneity beyond a single ISIN — the statutory definition reaches different issues of the same
   issuer with the same rights, which a broker statement cannot express.
-- A deferral blocked by shares that later go through a stock split: the tool treats a corporate
-  action as re-expressing shares rather than acquiring or disposing of them, so the blocked lot is
-  not carried across the conversion. Check by hand if that happens.
+- Complex splits (those producing fractional stock, which the tool models as a synthetic sell + buy)
+  are still not carried across: a corporate action re-expresses shares rather than acquiring or
+  disposing of them, so its trades are excluded from the matching and a blocked lot does not survive
+  the conversion. Plain splits **are** handled — every quantity the rule sees is normalized to
+  post-split units as of the statement's last date, so a 2-for-1 between the loss and the repurchase
+  matches and releases the right fraction.
+- A `deferred_losses` entry carried in from a prior return is taken in the units that return
+  reported. A split between that acquisition and the current statement is not applied to it; adjust
+  the `blocked_quantity` by hand if one happened.
 
 ## Loss compensation and carryforward
 

@@ -89,6 +89,9 @@ pub struct BlockedLot {
 }
 
 /// An acquisition the window search can match against.
+///
+/// Every quantity in this module is in one unit — post-split shares as of the statement's last date
+/// — so acquisitions, disposals, consumed lots and blocked lots stay comparable across a split.
 pub struct Acquisition {
     pub key: String,
     pub date: Date,
@@ -99,7 +102,7 @@ pub struct Acquisition {
 pub struct Disposal {
     pub key: String,
     pub date: Date,
-    /// Shares disposed of, multiplier applied.
+    /// Shares disposed of, in post-split units.
     pub quantity: Decimal,
     /// Fiscal result after actualization. `None` when the disposal year has no coefficient table,
     /// in which case the sale can still release blocked lots but cannot create new ones.
