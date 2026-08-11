@@ -513,6 +513,40 @@ fn paid_margin_interest_does_not_reduce_the_rcm_result() {
     }
 }
 
+/// A reversal of interest already credited is a correction to income, not a financing cost. IB
+/// emits it as a **negative** "Broker Interest Received" accrual, so the sign alone cannot tell it
+/// from margin interest: taking the sign would leave the reversed income in the base and report a
+/// financing cost that was never incurred.
+///
+/// Fixture: €100 received, the same €100 reversed a month later, and €250 of genuine margin
+/// interest paid.
+#[rstest]
+#[case(SpanishTaxRegime::Gipuzkoa)]
+#[case(SpanishTaxRegime::Comun)]
+fn an_interest_reversal_nets_against_income_rather_than_being_paid_interest(
+    #[case] regime: SpanishTaxRegime,
+) {
+    let spain = run_pipeline("interest_reversal", 2026, regime);
+
+    assert_eq!(spain.interest.len(), 3, "{regime:?}");
+
+    let reversal = &spain.interest[1];
+    assert_eq!(reversal.gross_eur, dec!(-100), "{regime:?}");
+    assert!(reversal.taxable, "{regime:?}");
+    assert!(reversal.description.contains("reversal"), "{regime:?}");
+    assert!(reversal.notes.is_none(), "{regime:?}");
+
+    let paid = &spain.interest[2];
+    assert_eq!(paid.gross_eur, dec!(-250), "{regime:?}");
+    assert!(!paid.taxable, "{regime:?}");
+
+    // The reversal cancels the credit; only the genuine margin interest is reported as paid.
+    assert_eq!(spain.total_interest_income, dec!(0), "{regime:?}");
+    assert_eq!(spain.total_paid_interest, dec!(250), "{regime:?}");
+    assert_eq!(spain.rcm_net, dec!(0), "{regime:?}");
+    assert_eq!(spain.savings_base, dec!(0), "{regime:?}");
+}
+
 /// Gipuzkoa exempts the first €1,500 of dividends each year (NF 3/2014 art. 9.24). Territorio
 /// Común had the same relief until Ley 26/2014 repealed LIRPF art. 7.y with effect from 2015.
 ///

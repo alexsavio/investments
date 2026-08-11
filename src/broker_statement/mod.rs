@@ -54,7 +54,7 @@ pub use self::corporate_actions::{CorporateAction, CorporateActionType as Broker
 pub use self::dividends::Dividend;
 pub use self::fees::Fee;
 pub use self::grants::{CashGrant, StockGrant, process_grants};
-pub use self::interest::{IdleCashInterest, ForeignCashFlow};
+pub use self::interest::{IdleCashInterest, InterestKind, ForeignCashFlow};
 pub use self::merging::StatementsMergingStrategy;
 pub use self::other::config::Operation;
 pub use self::payments::Withholding;

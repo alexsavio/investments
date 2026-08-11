@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
 use crate::broker_statement::grants::StockGrant;
-use crate::broker_statement::interest::{IdleCashInterest, ForeignCashFlow};
+use crate::broker_statement::interest::{IdleCashInterest, InterestKind, ForeignCashFlow};
 use crate::broker_statement::partial::PartialBrokerStatement;
 use crate::broker_statement::trades::{StockBuy, StockSell};
 use crate::broker_statement::{Fee, Withholding};
@@ -821,7 +821,8 @@ fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, lin
             // Note: IB may withhold Irish tax (20%) which is NOT creditable for German taxpayers
             // Form 8-3-6 is needed for exemption/refund
             let amount = Cash::new(&line.currency, line.amount);
-            statement.idle_cash_interest.push(IdleCashInterest::new(date, amount));
+            statement.idle_cash_interest.push(
+                IdleCashInterest::new_typed(date, amount, InterestKind::Received));
             log::debug!("Credit interest: {} on {}", amount, date);
         }
         _ => {}
@@ -1028,8 +1029,15 @@ fn parse_cash_transaction(
             // Skip interest withholding taxes (handled differently)
         }
 
-        "Broker Interest Paid" | "Broker Interest Received" => {
-            statement.idle_cash_interest.push(IdleCashInterest::new(date, amount));
+        kind @ ("Broker Interest Paid" | "Broker Interest Received") => {
+            // Keep IB's own label: a negative "Received" row is a reversal of interest credited
+            // earlier, not a financing cost, and the sign cannot tell the two apart.
+            let kind = if kind == "Broker Interest Paid" {
+                InterestKind::Paid
+            } else {
+                InterestKind::Received
+            };
+            statement.idle_cash_interest.push(IdleCashInterest::new_typed(date, amount, kind));
         }
 
         "Deposits/Withdrawals" | "Deposits" | "Withdrawals" => {

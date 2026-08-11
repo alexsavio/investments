@@ -16,6 +16,9 @@ impl RecordParser for InterestParser {
         let currency = record.get_value("Currency")?;
         let date = record.parse_date("Date")?;
         let amount = record.parse_cash("Amount", currency, DecimalRestrictions::NonZero)?;
+        // The CSV activity statement folds credit and debit interest into one table with no type
+        // column — only a free-text description — so no label is recorded here and consumers fall
+        // back to the sign. The Flex XML export does carry the type.
         parser.statement.idle_cash_interest.push(IdleCashInterest::new(date, amount));
         Ok(())
     }

@@ -8,7 +8,7 @@ use log::warn;
 
 use crate::broker_statement::{
     BrokerCorporateActionType, BrokerStatement, FifoDetails, StockSell, StockSellType,
-    StockSourceDetails,
+    InterestKind, StockSourceDetails,
 };
 use crate::core::GenericResult;
 use crate::currency::Cash;
@@ -994,17 +994,29 @@ fn process_interest(
         let context = format!("Processing interest payment on {}", interest.date);
         let gross_eur = convert_to_eur(converter, interest.date, interest.amount, &context)?;
 
-        let taxable = gross_eur >= Decimal::ZERO;
+        // A negative accrual is either a financing cost or a reversal of interest credited
+        // earlier, and only the statement's own label can say which. A reversal is a correction to
+        // income: it nets against the interest received, exactly as the original credit added to
+        // it. Treating it as margin interest would leave the reversed income in the base and
+        // report a financing cost that was never incurred.
+        let taxable = match interest.kind {
+            Some(InterestKind::Received) => true,
+            Some(InterestKind::Paid) => false,
+            // Formats that carry no label leave only the sign to go on.
+            None => gross_eur >= Decimal::ZERO,
+        };
         if !taxable {
             paid_total -= gross_eur;
         }
 
         statement.interest.push(InterestEntry {
             date: interest.date,
-            description: if taxable {
-                "Broker interest received".to_string()
-            } else {
+            description: if !taxable {
                 "Broker interest paid (borrowed balance)".to_string()
+            } else if gross_eur < Decimal::ZERO {
+                "Broker interest received (reversal)".to_string()
+            } else {
+                "Broker interest received".to_string()
             },
             gross_eur,
             taxable,
