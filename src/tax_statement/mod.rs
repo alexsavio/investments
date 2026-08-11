@@ -282,15 +282,32 @@ fn generate_spanish_tax_statement(
         }
     }
 
-    if !statement.wash_sale_unchecked.is_empty() {
+    let deferred: Decimal = statement
+        .capital_gains
+        .iter()
+        .map(|entry| entry.deferred_loss)
+        .sum();
+    if deferred > Decimal::ZERO {
+        println!(
+            "Deferred under the valores-homogéneos rule: €{}",
+            eur::format_eur(deferred)
+        );
+    }
+
+    if !statement.wash_sale_unpriced_years.is_empty() {
         println!(
             "\n{}",
             Color::Yellow.paint(format!(
-                "WARNING: losses were realized on {} and the valores-homogéneos rule (NF 3/2014 \
-                 art. 43.g / LIRPF art. 33.5.f) is not yet applied. If homogeneous securities were \
-                 acquired within two months before or after any of those sales, the loss must be \
-                 deferred and the figures above overstate the deductible amount.",
-                statement.wash_sale_unchecked.join(", ")
+                "WARNING: sales in {} were not tested for the valores-homogéneos rule — no \
+                 actualization table is shipped for those disposal years, so their result could \
+                 not be priced. Set taxes.spain.coefficients.<year>, or carry the deferral in \
+                 taxes.spain.deferred_losses from that year's return.",
+                statement
+                    .wash_sale_unpriced_years
+                    .iter()
+                    .map(i32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ))
         );
     }

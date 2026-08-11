@@ -119,8 +119,6 @@ fn process_broker_statement(
     let has_fx = process_fx_gains(statement, broker_statement, params, converter)?;
     process_fees(statement, broker_statement, params, converter)?;
 
-    flag_unchecked_wash_sales(statement, broker_statement);
-
     // Short positions get no automatic treatment; surface them for manual review.
     statement.short_positions = broker_statement
         .short_positions
@@ -145,58 +143,38 @@ fn process_broker_statement(
     Ok(has_trades || has_dividends || has_interest || has_fx)
 }
 
-/// Name the loss-making disposals the valores-homogéneos rule could bite on.
-///
-/// The deferral itself is not computed yet, so a loss whose shares were repurchased inside the
-/// window is still deducted in full — the direction that **overstates** the deduction. Only losses
-/// where a homogeneous acquisition actually falls in the ±2-month window are named: flagging every
-/// loss would bury the ones that matter under sales the rule cannot reach.
-fn flag_unchecked_wash_sales(
-    statement: &mut SpanishTaxStatement,
-    broker_statement: &BrokerStatement,
-) {
-    let instruments = &broker_statement.instrument_info;
-    let mut flagged = BTreeSet::new();
-
-    for entry in &statement.capital_gains {
-        if entry.fiscal_gain_loss >= Decimal::ZERO {
-            continue;
-        }
-
-        let key = wash_sale::instrument_key(instruments, &entry.symbol);
-        let repurchased = broker_statement.stock_buys.iter().any(|buy| {
-            wash_sale::is_acquisition(buy)
-                && wash_sale::instrument_key(instruments, &buy.symbol) == key
-                && wash_sale::in_window(entry.sale_date, buy.conclusion_time.date)
-        });
-
-        if repurchased {
-            flagged.insert(entry.symbol.clone());
-        }
-    }
-
-    statement.wash_sale_unchecked = flagged.into_iter().collect();
-
-    if !statement.wash_sale_unchecked.is_empty() {
-        warn!(
-            "Homogeneous securities were acquired within two months of a loss-making sale of {}, \
-             and the valores-homogéneos rule (NF 3/2014 art. 43.g / LIRPF art. 33.5.f) is NOT yet \
-             applied. Those losses must be deferred, so the figures below overstate the deductible \
-             amount. Work them out by hand.",
-            statement.wash_sale_unchecked.join(", ")
-        );
-    }
+/// One disposal priced against its own disposal year, ready for the valores-homogéneos replay.
+struct PricedSale {
+    key: String,
+    symbol: String,
+    isin: String,
+    description: String,
+    sale_date: Date,
+    settle_date: Date,
+    quantity: Decimal,
+    proceeds_eur: Decimal,
+    cost_eur: Decimal,
+    actualized_cost_eur: Decimal,
+    /// `None` when no actualization table is shipped for this sale's disposal year.
+    fiscal_gain_loss: Option<Decimal>,
+    lots: Vec<SpanishLotDetail>,
+    consumed: Vec<(Date, Decimal)>,
+    deferred_loss: Decimal,
 }
 
-/// Turn each qualifying sale into a capital-gain entry with per-lot actualization.
+/// Turn each qualifying sale into a capital-gain entry with per-lot actualization and the
+/// valores-homogéneos deferral applied.
+///
+/// Every disposal in the statement is priced, not just the filing year's: a deferral created by one
+/// year's sale is released by another year's, and a repurchase two months after a December sale
+/// lands in the following year. The replay therefore walks the whole history in date order, and only
+/// the filing year's entries are emitted.
 fn process_trades(
     statement: &mut SpanishTaxStatement,
     broker_statement: &BrokerStatement,
     params: &SpanishTaxParams,
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
-    let mut has_income = false;
-
     // Spain files in EUR; build the jurisdiction once so the shared trade engine converts through
     // the ECB rates supplied by the caller.
     let country = crate::localities::spain(&TaxConfig {
@@ -204,95 +182,247 @@ fn process_trades(
         ..Default::default()
     });
 
+    let mut unpriced_years = BTreeSet::new();
+    let mut sales = Vec::new();
+
     for trade in &broker_statement.stock_sells {
-        if !produces_capital_gain(trade, params.year) {
+        if !matches!(trade.type_, StockSellType::Trade { .. }) || !trade.is_processed() {
             continue;
         }
+        sales.push(price_sale(
+            trade, broker_statement, &country, params, converter, &mut unpriced_years)?);
+    }
 
+    let replay = apply_wash_sale_rule(&mut sales, broker_statement);
+    statement.wash_sale_unpriced_years = unpriced_years.into_iter().collect();
+
+    let mut has_income = false;
+
+    for sale in sales {
+        if sale.sale_date.year() != params.year {
+            continue;
+        }
         has_income = true;
 
-        // Per-lot FIFO cost basis from the shared broker-statement engine: it consumes lots in
-        // acquisition order (art. 47.2 / art. 37.2, "los adquiridos en primer lugar") and folds in
-        // buy-side commissions. FX follows SellDetails conventions — revenue at settlement, each
-        // lot's purchase cost at its own settlement — a documented simplification.
-        let instrument = broker_statement.instrument_info.get_or_empty(&trade.symbol);
-        let details = trade.calculate(&country, &instrument, &[], converter)?;
-
-        let net_proceeds_eur = details.local_revenue.amount - details.local_commission.amount;
-        let total_quantity: Decimal = details
-            .fifo
-            .iter()
-            .map(|lot| lot.quantity * lot.multiplier)
-            .sum();
-
-        let mut lots = Vec::with_capacity(details.fifo.len());
-        let mut cost_eur = Decimal::ZERO;
-        let mut actualized_cost_eur = Decimal::ZERO;
-
-        for lot in &details.fifo {
-            let lot_cost_eur = lot_cost_basis_eur(broker_statement, lot, converter)?;
-
-            // The coefficient is a per-lot figure: it depends on when this lot was acquired, not
-            // on when the position as a whole was built.
-            let coefficient = params
-                .config
-                .actualization_coefficient(params.year, lot.conclusion_time.date)?;
-            let lot_actualized_cost = lot_cost_eur * coefficient;
-
-            let lot_quantity = lot.quantity * lot.multiplier;
-            let lot_proceeds = if total_quantity.is_zero() {
-                Decimal::ZERO
-            } else {
-                net_proceeds_eur * lot_quantity / total_quantity
-            };
-
-            cost_eur += lot_cost_eur;
-            actualized_cost_eur += lot_actualized_cost;
-
-            lots.push(SpanishLotDetail {
-                acquisition_date: lot.conclusion_time.date,
-                quantity: lot_quantity,
-                cost_eur: lot_cost_eur,
-                coefficient,
-                actualized_cost_eur: lot_actualized_cost,
-                proceeds_eur: lot_proceeds,
-                gain_eur: lot_proceeds - lot_actualized_cost,
-            });
-        }
-
-        // Summed from the lots rather than recomputed, so the entry total and the audit lines that
-        // justify it can never disagree.
-        let fiscal_gain_loss: Decimal = lots.iter().map(|lot| lot.gain_eur).sum();
-
-        let instrument_info = broker_statement.instrument_info.get(&trade.symbol);
-        let isin = instrument_info
-            .and_then(|info| info.isin.iter().next())
-            .map(|isin| isin.to_string())
-            .unwrap_or_default();
-        let description = broker_statement
-            .instrument_info
-            .get_name(&trade.symbol)
-            .to_string();
+        // A filing-year sale is always priced: `SpanishTaxParams::resolve` already errored if the
+        // filing year itself had no table.
+        let fiscal_gain_loss = sale.fiscal_gain_loss.expect("the filing year is always priced");
 
         statement.capital_gains.push(CapitalGainEntry {
-            symbol: trade.symbol.clone(),
-            isin,
-            description,
-            sale_date: trade.conclusion_time.date,
-            settle_date: trade.execution_date,
-            quantity: total_quantity,
-            proceeds_eur: net_proceeds_eur,
-            cost_eur,
-            actualized_cost_eur,
+            symbol: sale.symbol,
+            isin: sale.isin,
+            description: sale.description,
+            sale_date: sale.sale_date,
+            settle_date: sale.settle_date,
+            quantity: sale.quantity,
+            proceeds_eur: sale.proceeds_eur,
+            cost_eur: sale.cost_eur,
+            actualized_cost_eur: sale.actualized_cost_eur,
             fiscal_gain_loss,
-            deferred_loss: Decimal::ZERO,
-            integrable_amount: fiscal_gain_loss,
-            lots,
-            notes: None,
+            deferred_loss: sale.deferred_loss,
+            integrable_amount: fiscal_gain_loss + sale.deferred_loss,
+            lots: sale.lots,
+            notes: (sale.deferred_loss > Decimal::ZERO).then(|| format!(
+                "€{} of this loss is deferred: homogeneous securities were acquired within two \
+                 months of the sale (NF 3/2014 art. 43.g / LIRPF art. 33.5.f)",
+                super::format_eur(sale.deferred_loss))),
         });
     }
 
+    // Held back until the reintegration entries land, so a released amount is omitted from the base
+    // rather than double-counted. Omitting it overstates tax, the safe direction — but say so.
+    if replay.reintegrated > Decimal::ZERO {
+        let origins = replay
+            .reintegrated_origins
+            .iter()
+            .map(Date::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        warn!(
+            "€{} of losses deferred by the sales of {origins} were released when the shares \
+             blocking them were disposed of, and are NOT yet integrated into the savings base. The \
+             figures below therefore overstate the tax.",
+            replay.reintegrated
+        );
+    }
+
+    if replay.still_blocked > Decimal::ZERO {
+        warn!(
+            "€{} of losses are still deferred at the end of the statement, blocked by homogeneous \
+             securities acquired inside the two-month window and not yet disposed of. Carry them \
+             into next year's taxes.spain.deferred_losses by hand.",
+            replay.still_blocked
+        );
+    }
+
     Ok(has_income)
+}
+
+/// Price one disposal against its own disposal year's actualization table.
+#[allow(clippy::too_many_arguments)]
+fn price_sale(
+    trade: &StockSell,
+    broker_statement: &BrokerStatement,
+    country: &crate::localities::Country,
+    params: &SpanishTaxParams,
+    converter: &CurrencyConverter,
+    unpriced_years: &mut BTreeSet<i32>,
+) -> GenericResult<PricedSale> {
+    let sale_year = trade.conclusion_time.date.year();
+
+    // Per-lot FIFO cost basis from the shared broker-statement engine: it consumes lots in
+    // acquisition order (art. 47.2 / art. 37.2, "los adquiridos en primer lugar") and folds in
+    // buy-side commissions. FX follows SellDetails conventions — revenue at settlement, each
+    // lot's purchase cost at its own settlement — a documented simplification.
+    let instrument = broker_statement.instrument_info.get_or_empty(&trade.symbol);
+    let details = trade.calculate(country, &instrument, &[], converter)?;
+
+    let net_proceeds_eur = details.local_revenue.amount - details.local_commission.amount;
+    let total_quantity: Decimal = details
+        .fifo
+        .iter()
+        .map(|lot| lot.quantity * lot.multiplier)
+        .sum();
+
+    let mut lots = Vec::with_capacity(details.fifo.len());
+    let mut consumed = Vec::with_capacity(details.fifo.len());
+    let mut cost_eur = Decimal::ZERO;
+    let mut actualized_cost_eur = Decimal::ZERO;
+    let mut priced = true;
+
+    for lot in &details.fifo {
+        let lot_cost_eur = lot_cost_basis_eur(broker_statement, lot, converter)?;
+
+        // The coefficient is a per-lot figure keyed to that lot's acquisition year, and it is the
+        // *sale's* year that selects the table — a 2025 disposal actualizes by DF 61/2024 even when
+        // the return being filed is 2026.
+        let coefficient = match params
+            .config
+            .actualization_coefficient(sale_year, lot.conclusion_time.date)
+        {
+            Ok(coefficient) => coefficient,
+            // A disposal in a year the tool ships no table for cannot be priced. It still has to be
+            // replayed, because it consumes lots and may release earlier deferrals, but it can
+            // never create one.
+            Err(_) => {
+                priced = false;
+                unpriced_years.insert(sale_year);
+                Decimal::ONE
+            }
+        };
+        let lot_actualized_cost = lot_cost_eur * coefficient;
+
+        let lot_quantity = lot.quantity * lot.multiplier;
+        let lot_proceeds = if total_quantity.is_zero() {
+            Decimal::ZERO
+        } else {
+            net_proceeds_eur * lot_quantity / total_quantity
+        };
+
+        cost_eur += lot_cost_eur;
+        actualized_cost_eur += lot_actualized_cost;
+        consumed.push((lot.conclusion_time.date, lot_quantity));
+
+        lots.push(SpanishLotDetail {
+            acquisition_date: lot.conclusion_time.date,
+            quantity: lot_quantity,
+            cost_eur: lot_cost_eur,
+            coefficient,
+            actualized_cost_eur: lot_actualized_cost,
+            proceeds_eur: lot_proceeds,
+            gain_eur: lot_proceeds - lot_actualized_cost,
+        });
+    }
+
+    // Summed from the lots rather than recomputed, so the entry total and the audit lines that
+    // justify it can never disagree.
+    let fiscal_gain_loss: Decimal = lots.iter().map(|lot| lot.gain_eur).sum();
+
+    let isin = broker_statement
+        .instrument_info
+        .get(&trade.symbol)
+        .and_then(|info| info.isin.iter().next())
+        .map(|isin| isin.to_string())
+        .unwrap_or_default();
+
+    Ok(PricedSale {
+        key: wash_sale::instrument_key(&broker_statement.instrument_info, &trade.symbol),
+        symbol: trade.symbol.clone(),
+        isin,
+        description: broker_statement.instrument_info.get_name(&trade.symbol).to_string(),
+        sale_date: trade.conclusion_time.date,
+        settle_date: trade.execution_date,
+        quantity: total_quantity,
+        proceeds_eur: net_proceeds_eur,
+        cost_eur,
+        actualized_cost_eur,
+        fiscal_gain_loss: priced.then_some(fiscal_gain_loss),
+        lots,
+        consumed,
+        deferred_loss: Decimal::ZERO,
+    })
+}
+
+/// What the valores-homogéneos replay found, beyond the per-sale deferrals it wrote back.
+#[derive(Default)]
+struct ReplaySummary {
+    /// Deferred losses released by disposals of the shares that blocked them.
+    reintegrated: Decimal,
+    /// The loss-making sales those released amounts originally came from.
+    reintegrated_origins: BTreeSet<Date>,
+    /// Losses still blocked at the end of the statement.
+    still_blocked: Decimal,
+}
+
+/// Replay the whole statement through the valores-homogéneos engine and write each sale's deferral
+/// back onto it.
+fn apply_wash_sale_rule(
+    sales: &mut [PricedSale], broker_statement: &BrokerStatement,
+) -> ReplaySummary {
+    let instruments = &broker_statement.instrument_info;
+
+    let acquisitions = broker_statement
+        .stock_buys
+        .iter()
+        .filter(|buy| wash_sale::is_acquisition(buy))
+        .map(|buy| wash_sale::Acquisition {
+            key: wash_sale::instrument_key(instruments, &buy.symbol),
+            date: buy.conclusion_time.date,
+            quantity: buy.quantity,
+        });
+
+    let mut engine = wash_sale::WashSaleEngine::new(acquisitions, []);
+
+    // Date order, not statement order: the rule is about what happened when, and a deferral created
+    // by one sale is released by a later one.
+    let mut order: Vec<usize> = (0..sales.len()).collect();
+    order.sort_by_key(|&position| sales[position].sale_date);
+
+    let mut summary = ReplaySummary::default();
+
+    for position in order {
+        let sale = &sales[position];
+        let outcome = engine.process(&wash_sale::Disposal {
+            key: sale.key.clone(),
+            date: sale.sale_date,
+            quantity: sale.quantity,
+            fiscal_result: sale.fiscal_gain_loss,
+            consumed: sale.consumed.clone(),
+        });
+        sales[position].deferred_loss = outcome.deferred_loss;
+
+        for reintegration in outcome.reintegrations {
+            summary.reintegrated += reintegration.amount;
+            summary.reintegrated_origins.insert(reintegration.origin_sale_date);
+        }
+    }
+
+    summary.still_blocked = engine
+        .blocked_lots()
+        .map(|(_, lot)| lot.deferred_loss)
+        .sum();
+
+    summary
 }
 
 /// Acquisition cost of one FIFO lot in EUR.

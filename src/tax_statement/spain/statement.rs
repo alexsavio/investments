@@ -128,11 +128,11 @@ pub struct SpanishTaxStatement {
     /// only. Their treatment is not computed and needs manual review.
     pub short_positions: Vec<(String, Decimal)>,
 
-    /// Instruments disposed of at a loss this year, for which the valores-homogéneos deferral rule
-    /// (NF 3/2014 art. 43.g / LIRPF art. 33.5.f) has not been applied. Losses on these are reported
-    /// in full, so if homogeneous securities were repurchased within two months of the sale the
-    /// deductible loss is **overstated**. Empty once the rule is implemented.
-    pub wash_sale_unchecked: Vec<String>,
+    /// Disposal years the statement contains but the tool ships no actualization table for. Sales
+    /// in those years were replayed for the valores-homogéneos rule — they still consume lots and
+    /// release earlier deferrals — but their own result could not be priced, so a loss in one of
+    /// them was never tested for deferral.
+    pub wash_sale_unpriced_years: Vec<i32>,
 
     pub total_dividend_income: Decimal,
     pub total_interest_income: Decimal,
@@ -222,7 +222,7 @@ impl SpanishTaxStatement {
             fx_gains: Vec::new(),
             fx_borrowed_review: Vec::new(),
             short_positions: Vec::new(),
-            wash_sale_unchecked: Vec::new(),
+            wash_sale_unpriced_years: Vec::new(),
             total_dividend_income: Decimal::ZERO,
             total_interest_income: Decimal::ZERO,
             total_deductible_fees: Decimal::ZERO,

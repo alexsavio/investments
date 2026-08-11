@@ -595,22 +595,27 @@ impl CsvFormatter {
         writer: &mut W,
         statement: &SpanishTaxStatement,
     ) -> GenericResult<()> {
-        if !statement.wash_sale_unchecked.is_empty() {
+        if !statement.wash_sale_unpriced_years.is_empty() {
+            let years = statement
+                .wash_sale_unpriced_years
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
             writeln!(writer)?;
             writeln!(
                 writer,
-                "# WARNING: the valores-homogéneos deferral rule (NF 3/2014 art. 43.g / LIRPF art."
+                "# WARNING: sales in {years} were not tested for the valores-homogéneos rule: no"
             )?;
             writeln!(
                 writer,
-                "# 33.5.f) was NOT applied to losses on: {}. If homogeneous securities were acquired",
-                statement.wash_sale_unchecked.join(", ")
+                "# actualization table is shipped for those disposal years, so their result could"
             )?;
             writeln!(
                 writer,
-                "# within two months before or after those sales, the deductible loss above is"
+                "# not be priced. Set taxes.spain.coefficients.<year>, or carry the deferral in"
             )?;
-            writeln!(writer, "# OVERSTATED. Check those windows by hand.")?;
+            writeln!(writer, "# taxes.spain.deferred_losses from that year's return.")?;
         }
 
         if !statement.short_positions.is_empty() {

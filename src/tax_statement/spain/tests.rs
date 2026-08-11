@@ -519,24 +519,81 @@ fn a_flat_rate_realizes_a_zero_fx_result() {
     assert_eq!(spain.savings_quota, dec!(0));
 }
 
-/// The valores-homogéneos deferral is not computed yet, and its absence overstates deductible
-/// losses — so a loss the rule can actually reach must be flagged. Only those: a loss with no
-/// homogeneous acquisition in the ±2-month window is not affected by the rule at all, and flagging
-/// it too would bury the ones that matter.
+/// A loss on shares bought back inside the +2-month window is deferred, not deducted.
+///
+/// Buy 100 @ $100 on 2026-01-05 (€9,000), sell them @ $90 on 2026-03-10 (€8,100) at a €900 loss,
+/// then buy 40 back @ $80 on 2026-04-20 — inside the window, which runs 2026-01-10 to 2026-05-10.
+/// 40 of the 100 sold shares are matched, so 900 × 40/100 = €360 is deferred and €540 stays
+/// deductible. The 2026-01-05 acquisition is five days too early to block anything.
 #[test]
-fn only_losses_with_a_repurchase_in_the_window_are_flagged() {
-    // Sold 2026-03-10 at a loss, bought again 2026-04-20 — inside the +2-month window.
-    let repurchased = run_pipeline("wash_sale_after", 2026, SpanishTaxRegime::Gipuzkoa);
-    assert_eq!(repurchased.wash_sale_unchecked, vec!["AAPL".to_string()]);
+fn a_repurchase_inside_the_window_defers_the_matched_share_of_the_loss() {
+    let spain = run_pipeline("wash_sale_after", 2026, SpanishTaxRegime::Gipuzkoa);
 
-    // The `loss` fixture buys 2025-03-10 and sells 2026-06-10: the window opens on 2026-04-10, so
-    // the acquisition is more than a year outside it and the rule cannot bite.
-    let untouched = run_pipeline("loss", 2026, SpanishTaxRegime::Gipuzkoa);
-    assert!(untouched.wash_sale_unchecked.is_empty());
+    let sale = &spain.capital_gains[0];
+    assert_eq!(sale.sale_date, Date::from_ymd_opt(2026, 3, 10).unwrap());
+    assert_eq!(sale.fiscal_gain_loss, dec!(-900));
+    assert_eq!(sale.deferred_loss, dec!(360));
+    assert_eq!(sale.integrable_amount, dec!(-540));
+    assert!(sale.notes.as_deref().unwrap().contains("art. 43.g"));
+
+    // The 2026-11-15 sale of 25 blocked shares: proceeds €2,250 against a cost of
+    // €2,880 × 25/40 = €1,800, actualized at 1.000 because the lot was acquired in the disposal
+    // year itself.
+    let later = &spain.capital_gains[1];
+    assert_eq!(later.fiscal_gain_loss, dec!(450));
+    assert_eq!(later.deferred_loss, dec!(0));
+
+    // The €225 those 25 shares released is not integrated yet, so the group sits at −540 + 450.
+    // Integrating it takes it to −315.
+    assert_eq!(spain.gyp_net, dec!(-90));
+}
+
+/// A repurchase *before* the sale blocks only shares the sale did not itself consume.
+///
+/// Buy 100 on 2026-01-10 and 50 more on 2026-02-15, then sell the first 100 @ $90 on 2026-03-10 at
+/// a €900 loss. Both acquisitions sit inside the window, but the 100 the sale consumed are gone —
+/// only the 50 still held can block. So half the loss defers. Counting the consumed lot as well
+/// would defer the whole €900 and wipe out a deduction the filer is entitled to.
+#[test]
+fn a_repurchase_before_the_sale_blocks_only_the_shares_still_held() {
+    let spain = run_pipeline("wash_sale_before", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    let sale = &spain.capital_gains[0];
+    assert_eq!(sale.fiscal_gain_loss, dec!(-900));
+    assert_eq!(sale.deferred_loss, dec!(450));
+    assert_eq!(sale.integrable_amount, dec!(-450));
+
+    assert_eq!(spain.gyp_net, dec!(-450));
+    assert_eq!(spain.gyp_ledger_next.balances()[&2026], dec!(450));
+}
+
+/// A loss with no homogeneous acquisition in the window is deducted in full: the rule only reaches
+/// losses a repurchase actually followed.
+#[test]
+fn a_loss_without_a_repurchase_is_deducted_in_full() {
+    // The `loss` fixture buys 2025-03-10 and sells 2026-06-10; the window opens on 2026-04-10, so
+    // the acquisition is more than a year outside it.
+    let spain = run_pipeline("loss", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(spain.capital_gains[0].deferred_loss, dec!(0));
+    assert_eq!(spain.capital_gains[0].integrable_amount, dec!(-9360));
 
     // A year with only gains has nothing to defer either.
     let gains = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
-    assert!(gains.wash_sale_unchecked.is_empty());
+    assert!(gains.capital_gains.iter().all(|entry| entry.deferred_loss.is_zero()));
+}
+
+/// Every disposal year the statement carries must have an actualization table, or the sales in it
+/// cannot be priced and their losses are never tested for deferral. That gap is reported rather
+/// than silently swallowed.
+#[test]
+fn disposal_years_without_a_coefficient_table_are_reported() {
+    // The `fifo` fixture disposes only in 2026, which ships a table.
+    let spain = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert!(spain.wash_sale_unpriced_years.is_empty());
+
+    // Under Territorio Común the coefficient is 1 for every year, so no year is ever unpriced.
+    let comun = run_pipeline("fifo", 2026, SpanishTaxRegime::Comun);
+    assert!(comun.wash_sale_unpriced_years.is_empty());
 }
 
 /// The 25% cross-group offset end to end. The `income` fixture under Común deducts the €45 custody
