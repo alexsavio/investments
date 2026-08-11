@@ -200,12 +200,16 @@ fn generate_spanish_tax_statement(
         return Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker));
     }
 
-    if output_path.is_some() {
+    if let Some(path) = output_path {
+        let file = File::create(path)
+            .map_err(|e| format!("Failed to create output file {path:?}: {e}"))?;
+        let mut writer = BufWriter::new(file);
+
+        spain::CsvFormatter::write(&statement, &mut writer)?;
+
         println!(
             "{}",
-            Color::Yellow.paint(
-                "CSV output is not available for the Spanish statement yet; printing the summary."
-            )
+            Color::Green.paint(format!("Spanish tax statement written to {path:?}"))
         );
     }
 
