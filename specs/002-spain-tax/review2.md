@@ -24,18 +24,18 @@ Reviewer-verified-correct (do not restructure): the Común two-phase compensatio
 
 ## Phase F1 — Correctness (mediums)
 
-- **F3 — Interest reversals are income corrections, not margin interest.** Status: TODO
+- **F3 — Interest reversals are income corrections, not margin interest.** Status: ✅ Done (`b0d505c4`)
   `processor.rs:975` classifies paid-vs-received by sign alone; IB emits reversals of previously credited interest as negative "Broker Interest Received", which R1 then excludes from income (overstates RCM) and mislabels as margin interest. The ingestion layer (`flex_query.rs:1031`, `ib/interest.rs`) discards the type. Do: carry the distinction through `IdleCashInterest` minimally (additive field; German path must be behaviorally untouched — its processor sums signed amounts regardless); in the Spanish processor, a negative RECEIVED-type entry nets against interest income; a PAID-type entry keeps the R1 informational treatment. Where the statement format genuinely lacks the type, keep the sign heuristic and say so in a comment.
   Tests: fixture with received €100 + reversal −€100 + paid −€250 ⇒ `total_interest_income` 0, `total_paid_interest` 250.
   Commit: `fix(spain-tax): net interest reversals instead of treating them as margin interest`
-- **F4 — Disjoint compensation reporting.** Status: TODO
+- **F4 — Disjoint compensation reporting.** Status: ✅ Done (`870881b9`)
   `SUMMARY_RCM_LOSSES_APPLIED` includes the Fase 2ª-2º crossed amount that `SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP` also reports (AEAT example: €200 printed twice; a filer transcribing both claims €400). Do: make the own-group row exclude the crossed subset (rows become disjoint; their sum is the ledger consumption); update labels/contract/docs so the relationship is explicit. Ledger arithmetic itself is verified correct — reporting only.
   Commit: `fix(spain-tax): report own-group and crossed compensation amounts disjointly`
-- **F5 — Wash-sale definitiveness measured on the blocked shares.** Status: TODO
+- **F5 — Wash-sale definitiveness measured on the blocked shares.** Status: ✅ Done (`ff8b2e5a`)
   `wash_sale.rs:228-255` applies `matched_total / disposal.quantity` uniformly, so selling 40 blocked + 60 unblocked shares with 40 repurchased releases €216 of a €360 deferral even though every blocked share was replaced. Do: attribute the window match to the blocked shares first — the re-attached fraction is `min(matched, blocked_consumed) / blocked_consumed` for the deferred amount (document this attribution choice in the code and docs: V3282-18 gives no allocation rule; blocked-first is the conservative reading).
   Tests: the 40+60/40 scenario ⇒ full €360 re-attached, €0 integrated; mirror partial case.
   Commit: `fix(spain-tax): measure wash-sale definitiveness on the blocked shares`
-- **F6 — Anti-abuse clause: homogeneity key + unlisted-variant disclosure.** Status: TODO
+- **F6 — Anti-abuse clause: homogeneity key + unlisted-variant disclosure.** Status: ✅ Done (`802039f4`)
   (a) `processor.rs:930-947` (`dividend_is_washed` and the exemption anti-abuse) match on raw ticker; everything else uses `wash_sale::instrument_key` (ISIN-preferred) — a rename or dual line defeats the check. Route both through `instrument_key`.
   (b) The statute's fourth limb (1-**year** acquire/transfer window for securities not admitted on Directive 2014/65 regulated markets) is unimplemented and undisclosed. IB instruments are listed, but note honestly (code comment + `docs/spain-taxes.md` + `TODO(verify)`) that: the 1-year variant is not modelled, and strictly the 2014/65 "regulated market" definition covers EEA venues — whether US-listed shares fall under the 2-month or 1-year rule rests on equivalence doctrine; the tool applies 2 months to all statement instruments.
   Commit: `fix(spain-tax): match the dividend anti-abuse rule on the homogeneity key`
