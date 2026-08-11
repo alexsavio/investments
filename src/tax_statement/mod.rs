@@ -21,6 +21,7 @@ use crate::currency::converter::CurrencyConverter;
 use crate::db;
 use crate::localities::Jurisdiction;
 use crate::taxes::TaxCalculator;
+use crate::taxes::spain::carryforward::CARRYFORWARD_YEARS;
 use crate::telemetry::TelemetryRecordBuilder;
 use crate::types::Decimal;
 
@@ -299,8 +300,10 @@ fn generate_spanish_tax_statement(
             println!(
                 "{}",
                 Color::Yellow.paint(format!(
-                    "€{} of pending {group} losses expired unused (four-year window).",
-                    eur::format_eur(expired)
+                    "€{} of pending {group} losses expired unused: a negative savings-base \
+                     balance may be offset only in the {} following years.",
+                    eur::format_eur(expired),
+                    CARRYFORWARD_YEARS
                 ))
             );
         }
@@ -575,7 +578,8 @@ fn generate_german_tax_statement(
         println!(
             "{}",
             Color::Yellow
-                .paint("Income found but no output file specified. Use --output to save CSV.")
+                .paint("Income found but no output file specified. Pass a file path after the \
+                        year to save the CSV.")
         );
         println!("\nCapital gains: {} entries", statement.capital_gains.len());
         println!("Dividends: {} entries", statement.dividends.len());

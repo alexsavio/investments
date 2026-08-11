@@ -129,7 +129,7 @@ pub fn compensate_savings_base(
         if expired > zero {
             warn!(
                 "€{expired} of pending {group} losses from {expired_origin} expired unused: a \
-                 negative savings-base balance may only be offset in the {CARRYFORWARD_YEARS} \
+                 negative savings-base balance may be offset only in the {CARRYFORWARD_YEARS} \
                  following years, and {filing_year} was the last."
             );
         }

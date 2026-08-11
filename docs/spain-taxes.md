@@ -68,7 +68,7 @@ investments tax-statement ib 2026 spanish-tax-2026.csv
 
 The command reads every statement in the portfolio, replays the whole trade history through FIFO and
 the valores-homogéneos rule, computes the year's savings base, and writes the CSV plus a console
-summary. The `--output` argument is optional: without it you get the summary alone.
+summary. The output path is an optional positional argument: without it you get the summary alone.
 
 Currency conversion uses **ECB reference rates**, selected automatically from the jurisdiction.
 
@@ -226,11 +226,17 @@ in that case:
 
 ```text
 taxes.spain.deferred_losses entry for AAPL names a loss-making sale on 2026-03-10 that this
-statement already contains, so the tool computes that deferral itself. Keeping both would deduct
-the loss twice — remove the config entry
+statement already contains and prices, so the tool computes that deferral itself. Keeping both
+would deduct the loss twice — remove the config entry. …
 ```
 
-The entries to carry in are the ones whose loss-making sale predates the statement.
+The guard only fires against a sale the tool could actually **price**. A disposal in a year no
+actualization table is shipped for is replayed but never priced, so it can never compute a deferral
+of its own — there the carried-in entry is the only record of one and is accepted. The alternative is
+to ship that year's table under `taxes.spain.coefficients.<year>` and let the replay do the work.
+
+The entries to carry in are the ones whose loss-making sale predates the statement, or falls in a
+year the tool cannot price.
 
 ### Statement-window caveat
 
@@ -332,8 +338,13 @@ all and must be reclaimed from the source state.
 
 The two limbs measure **different bases**:
 
-- The treaty limb caps what the *source* state may levy, so it runs on the **gross** that state
-  taxed.
+- The treaty limb caps what the *source* state may levy, so it runs on the gross that state taxed —
+  but **per payment**, and only on the slice of it Spain actually taxes. Per payment because a
+  treaty caps each payment separately: pooling the year's withholding against the year's gross would
+  let a dividend withheld at 0% lend its unused headroom to one withheld at 30%. Only on the taxed
+  slice because income Spain exempts bears no Spanish tax, so it carries no credit — the Gipuzkoa
+  €1,500 exemption is spread pro rata across the payments eligible for it and comes off their gross
+  before the cap is applied.
 - The rate limb caps the *Spanish* tax on that income, so it runs on the **net that actually reaches
   the base liquidable**. TEAC resolución RG 00/08643/2023 (20-10-2025, unificación de criterio,
   binding on the administration per LGT art. 239.8) settles this: the income counts "una vez
@@ -348,16 +359,29 @@ two decimals as a *percentage*, four as a fraction — and that is operative, no
 AEAT Manual Práctico de Renta cap. 18 works its example from the rounded rate: `16,60% × 6.000 € =
 996 €`. The tool rounds before multiplying.
 
-US dividend example — gross €1,000, €300 withheld (30%), savings base €10,000 under Gipuzkoa 2026,
-nothing deductible and no compensation:
+Two worked examples, both on a single US dividend of gross €1,000 with €300 withheld (30%), nothing
+deductible and no compensation.
 
-- Treaty limb: `1,000 × 15% = €150`
-- Rate limb: average rate `1,925 / 10,000 = 19.25%`, so `1,000 × 0.1925 = €192.50`
-- **Credit: €150.** The other €150 is over-withholding; reclaim it from the IRS with a W-8BEN and
-  Form 1040-NR, not through the Spanish return.
+**Gipuzkoa** — the dividend is below the €1,500 annual exemption, so the whole €1,000 is exempt:
 
-The credit is a year-level figure — its cap depends on the average rate, which only exists once the
-whole base is known. The per-row `treaty_capped_credit_eur` column is informational.
+- Taxed slice of the payment: €0, so the treaty limb is `min(300, 0 × 15%) = €0`
+- Rate limb: `0 × average rate = €0`
+- **Credit: €0.** The Spanish return never taxed this income, so there is no Spanish tax for the
+  foreign tax to be credited against. The whole €300 is reclaimed from the IRS — file a W-8BEN so
+  only 15% is withheld next time, and claim the €150 already over-withheld on Form 1040-NR.
+
+**Territorio Común** — no exemption, and a savings base of €10,000:
+
+- Taxed slice of the payment: €1,000, so the treaty limb is `min(300, 1,000 × 15%) = €150`
+- Rate limb: the 2026 state scale gives `6,000 × 19% + 4,000 × 21% = €1,980`, an average rate of
+  `1,980 / 10,000 = 19.80%`, so `1,000 × 0.1980 = €198`
+- **Credit: €150.** The treaty limb binds; the other €150 is over-withholding and is reclaimed from
+  the IRS, not through the Spanish return.
+
+The credit is a year-level figure — its rate limb depends on the average rate, which only exists once
+the whole base is known. The per-row `treaty_capped_credit_eur` column is a different figure: it is
+measured on the **full** gross, because that is what a reclaim from the source state is measured
+against, so its column does not sum to the credit's first limb wherever an exemption applies.
 
 ### The treaty rate is hard-coded at 15% for dividends
 
@@ -413,8 +437,8 @@ This is the sharpest split between the regimes.
   ch. 4 §4.5.
 
 A broker statement carries only a free-text description, so the tool matches on keywords (custody,
-safekeeping, administration, custodia, administración). An unrecognised fee is **reported but not
-deducted** — that overstates tax rather than understating it. Trading commissions are not affected
+safekeeping, administration, custodia, administración, administracion). An unrecognised fee is
+**reported but not deducted** — that overstates tax rather than understating it. Trading commissions are not affected
 either way: they are already inside the FIFO cost basis.
 
 ### Interest paid on a margin loan

@@ -7,7 +7,7 @@
 
 ## Overview
 
-The CSV written by `investments tax-statement --output <path>` when `taxes.jurisdiction: spain`. It
+The CSV written by `investments tax-statement <portfolio> <year> <path>` when `taxes.jurisdiction: spain`. It
 covers both regimes — Gipuzkoa (Norma Foral 3/2014) and Territorio Común (Ley 35/2006) — and the
 regime is named in the summary block, because the same trades produce different numbers under each.
 

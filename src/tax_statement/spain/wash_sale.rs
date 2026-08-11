@@ -39,8 +39,11 @@ pub const WINDOW_MONTHS: u32 = 2;
 /// looks back to 31 January and forward to 31 May, and a 30 April sale looks back to 29 February in
 /// a leap year and 28 February otherwise.
 // TODO(verify): whether the endpoints themselves are inside the window. Neither text says whether
-// "dos meses anteriores" includes the day exactly two months back. Inclusive is the conservative
-// reading — it defers more, which understates the deductible loss rather than overstating it.
+// "dos meses anteriores" includes the day exactly two months back. Código Civil art. 5.1 computes a
+// period fixed in months "de fecha a fecha", which puts the same day-of-month two months out at the
+// edge of the period rather than past it, so inclusive is the reading that follows from it — and it
+// is also the conservative one, deferring more and so understating the deductible loss rather than
+// overstating it.
 pub fn window(sale_date: Date) -> (Date, Date) {
     // The fallbacks are unreachable for any date a broker statement can carry; they only exist so
     // the window degrades to "unbounded" instead of panicking at chrono's representable limits.

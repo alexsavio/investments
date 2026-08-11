@@ -1337,8 +1337,9 @@ fn disposal_years_without_a_coefficient_table_are_reported() {
 /// Buy 100 @ $200 on 2026-01-15 (€18,000), sell them @ $100 on 2026-06-15 (€9,000) for a €9,000
 /// loss, and collect an $8,000 dividend (€7,200). Under Común the loss reaches the RCM balance but
 /// only up to a quarter of it: min(9,000, 25% × 7,200) = €1,800, leaving €5,400 taxable and €7,200
-/// of the loss pending. Under Gipuzkoa the groups integrate "exclusivamente entre sí", so the whole
-/// €7,200 is taxed and the whole €9,000 carries forward.
+/// of the loss pending. Under Gipuzkoa the groups integrate "exclusivamente entre sí", so the loss
+/// never reaches the dividend and the whole €9,000 carries forward — and of the dividend itself only
+/// €5,700 is taxed, because NF 3/2014 art. 9.24 exempts the first €1,500.
 ///
 /// The 2026-01-15 acquisition is outside the sale's window (2026-04-15 to 2026-08-15), so no part of
 /// the loss is deferred and the cross-offset is the only thing separating the two runs.

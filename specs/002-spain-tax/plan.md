@@ -421,7 +421,11 @@ numbers are not evidence.
 
 ## Feature status
 
-All twenty tasks are complete. Branch `002-spain-tax`, 27 commits on top of `1a5c0e7b`.
+All twenty tasks are complete, and two review rounds have run on top of them: the remediation
+plan in [`remediation.md`](./remediation.md) and the second-round fix plan in
+[`review2.md`](./review2.md), each of which records its own task list, commits and closing
+numbers. For the branch as it actually stands, read those two files and `git log 1a5c0e7b..HEAD`
+rather than a commit count that goes stale on every push.
 
 **Correctness gaps that remain loud rather than silent** — each emits a `warn!`, a console warning
 and a `# WARNING` line in the CSV, because each would otherwise produce a plausible wrong number:
