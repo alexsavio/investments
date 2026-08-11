@@ -331,6 +331,24 @@ fn generate_spanish_tax_statement(
         );
     }
 
+    for review in &statement.wash_sale_venue_reviews {
+        println!(
+            "{}",
+            Color::Yellow.paint(format!(
+                "WARNING: the {} loss of {} is deducted in full, but that turns on which \
+                 valores-homogéneos window {} takes: homogeneous securities were bought back inside \
+                 the year and outside the two months, so the one-year limb (NF 3/2014 art. 43.h / \
+                 LIRPF art. 33.5.g) would defer €{} of it. DGT V0778-25 and V0951-25 settle the \
+                 two-month limb only for venues covered by an in-force MiFID II equivalence \
+                 decision. See the open-interpretations register in docs/spain-taxes.md.",
+                review.symbol,
+                review.sale_date,
+                review.venue.as_deref().unwrap_or("an unnamed listing venue"),
+                eur::format_eur(review.loss_eur)
+            ))
+        );
+    }
+
     if !statement.wash_sale_unpriced_years.is_empty() {
         println!(
             "\n{}",

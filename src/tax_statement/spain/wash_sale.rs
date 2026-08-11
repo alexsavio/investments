@@ -10,14 +10,27 @@
 //! Out of scope, both deliberately: art. 43.h (unlisted securities, one-year window) and art. 43.i
 //! (fungible crypto). Both need a different window and neither is reachable from an IB statement
 //! the tool supports.
-// TODO(verify): which of the two windows a US-listed share falls under. The two-month limb is
-// written for securities "admitidos a negociación en alguno de los mercados regulados de valores
-// definidos en la Directiva 2014/65/UE"; that directive defines a regulated market as an EEA venue,
-// so a literal reading puts NYSE and Nasdaq under the one-**year** limb instead. Practice and the
-// AEAT manual treat equivalent third-country markets as covered, and no consulta reachable settles
-// it. The tool applies **two months to every instrument in the statement**, which is the shorter
-// window and therefore defers less; a filer holding US lines who wants the conservative reading has
-// to widen it by hand.
+//!
+//! **Which window a third-country listing takes is settled for equivalence-decision venues.** The
+//! two-month limb is written for securities "admitidos a negociación en alguno de los mercados
+//! regulados de valores definidos en la Directiva 2014/65/UE", and the DGT reads that as reaching a
+//! third-country market covered by an in-force Commission equivalence decision under MiFID II art.
+//! 25(4)(a): CV V0778-25 (05-05-2025) answers it for NYSE, Nasdaq and CME by name, and V0951-25
+//! (30-05-2025) generalizes to "los mercados de valores de Estados Unidos", both conditioned on the
+//! decision standing — "mientras dicha decisión de equivalencia no haya sido objeto de derogación".
+//! US venues are equivalent per Commission Implementing Decision (EU) 2017/2320, Australia per
+//! 2017/2318 and Hong Kong per 2017/2319. Switzerland's decisions lapsed on 30-06-2019 and were
+//! never renewed, so a SIX-only line falls to the one-year limb, as does any venue with no decision
+//! at all. Following published DGT criteria also shields the filer from penalties (LGT art.
+//! 179.2.d).
+//!
+//! Gipuzkoa: NF 3/2014 art. 43.g clones the state wording and interprets the same EU concept, but no
+//! foral pronouncement exists — DGT criteria are persuasive there, not formally binding.
+//!
+//! [`venue_takes_the_two_month_window`] classifies the statement's listing venues against that
+//! table. The engine's window does **not** change with it: two months applies to every instrument,
+//! and a loss that only the one-year limb would defer is reported for review instead
+//! ([`DisposalOutcome::wider_window_loss`]).
 
 use std::collections::BTreeMap;
 
@@ -44,14 +57,70 @@ pub const WINDOW_MONTHS: u32 = 2;
 // edge of the period rather than past it, so inclusive is the reading that follows from it — and it
 // is also the conservative one, deferring more and so understating the deductible loss rather than
 // overstating it.
+/// Months either side under the limb for securities **not** admitted to a regulated market.
+///
+/// NF 3/2014 art. 43.h / LIRPF art. 33.5.g. The engine never defers on this window; it only measures
+/// what would be deferred if a venue turned out not to be covered by the two-month limb.
+pub const WIDER_WINDOW_MONTHS: u32 = 12;
+
+/// Venues whose listings take the **two-month** limb, as the broker names them.
+///
+/// EEA venues are regulated markets under Directive 2014/65 itself. The third-country venues below
+/// are covered by an in-force Commission equivalence decision under MiFID II art. 25(4)(a) — (EU)
+/// 2017/2320 for the United States, 2017/2318 for Australia, 2017/2319 for Hong Kong — which DGT CV
+/// V0778-25 and V0951-25 read into art. 33.5.f. Anything not listed here is treated as unsettled,
+/// **not** as excluded: OTC/pink venues are genuinely not regulated markets, Switzerland's decisions
+/// lapsed on 30-06-2019, and the United Kingdom, Canada and Japan have no decision in force.
+const TWO_MONTH_WINDOW_VENUES: &[&str] = &[
+    // United States, Annex of (EU) 2017/2320.
+    "AMEX", "ARCA", "BATS", "BYX", "BZX", "CBOE", "EDGA", "EDGX", "IEX", "NASDAQ", "NYSE",
+    "NYSENAT", "PSE", "PHLX",
+    // EEA regulated markets IB reports for stocks.
+    "AEB", "BM", "BVL", "BVME", "CPH", "ENEXT.BE", "FWB", "GETTEX", "HEX", "IBIS", "IBIS2", "ICEX",
+    "MIL", "OSE", "SBF", "SFB", "SWB", "TGATE", "VSE", "WSE",
+    // Australia, (EU) 2017/2318; Hong Kong, (EU) 2017/2319.
+    "ASX", "CHIXAU", "SEHK",
+];
+
+/// Whether a listing venue is settled as taking the two-month window.
+///
+/// `None` when the statement names no venue for the instrument: unknown is not the same as excluded,
+/// and both cases are reported rather than acted on.
+pub fn venue_takes_the_two_month_window<'a>(
+    venues: impl IntoIterator<Item = &'a str>,
+) -> Option<bool> {
+    let mut known = false;
+
+    for venue in venues {
+        known = true;
+        if !TWO_MONTH_WINDOW_VENUES
+            .iter()
+            .any(|equivalent| equivalent.eq_ignore_ascii_case(venue))
+        {
+            return Some(false);
+        }
+    }
+
+    known.then_some(true)
+}
+
 pub fn window(sale_date: Date) -> (Date, Date) {
+    months_window(sale_date, WINDOW_MONTHS)
+}
+
+/// The one-year window of the unlisted limb, on the same arithmetic as [`window`].
+pub fn wider_window(sale_date: Date) -> (Date, Date) {
+    months_window(sale_date, WIDER_WINDOW_MONTHS)
+}
+
+fn months_window(sale_date: Date, months: u32) -> (Date, Date) {
     // The fallbacks are unreachable for any date a broker statement can carry; they only exist so
     // the window degrades to "unbounded" instead of panicking at chrono's representable limits.
     let start = sale_date
-        .checked_sub_months(Months::new(WINDOW_MONTHS))
+        .checked_sub_months(Months::new(months))
         .unwrap_or(Date::MIN);
     let end = sale_date
-        .checked_add_months(Months::new(WINDOW_MONTHS))
+        .checked_add_months(Months::new(months))
         .unwrap_or(Date::MAX);
     (start, end)
 }
@@ -140,6 +209,12 @@ pub struct DisposalOutcome {
     pub deferred_loss: Decimal,
     /// Earlier deferrals this sale released.
     pub reintegrations: Vec<Reintegration>,
+    /// Loss the **one-year** limb would defer on top of `deferred_loss`, as a positive magnitude.
+    ///
+    /// Non-zero only when homogeneous securities were acquired inside the year but outside the two
+    /// months. It never changes what this sale defers; it is what the caller reports when the
+    /// instrument's listing venue is not one the two-month limb is settled for.
+    pub wider_window_loss: Decimal,
 }
 
 /// Shares acquired on one date, and how much of them the replay has seen disposed of.
@@ -236,12 +311,21 @@ impl WashSaleEngine {
             return outcome;
         }
 
-        let (matched, matched_total) = match_window(state, disposal);
+        let (matched, matched_total) = match_window(state, disposal, window(disposal.date));
         let blocked_fraction = if disposal.quantity > Decimal::ZERO {
             matched_total / disposal.quantity
         } else {
             Decimal::ZERO
         };
+
+        // What the unlisted limb would add, measured but never applied. The engine defers on two
+        // months for every instrument; whether a given listing venue is entitled to that limb is a
+        // question about the venue, not about this sale, so the caller decides what to do with it.
+        if own_loss > Decimal::ZERO && disposal.quantity > Decimal::ZERO {
+            let (_, wider_total) = match_window(state, disposal, wider_window(disposal.date));
+            outcome.wider_window_loss =
+                own_loss * (wider_total - matched_total) / disposal.quantity;
+        }
 
         // Definitiveness is measured on the **blocked** shares, not on the whole disposal: the
         // window match is attributed to them first. Selling 40 blocked plus 60 unblocked shares and
@@ -346,9 +430,9 @@ fn release(
 /// Each acquired share blocks at most one sold share, so the match is capped at the disposal's own
 /// quantity. An acquisition already consumed — by this sale or an earlier one — or already blocking
 /// cannot block again: those shares are gone or spoken for.
-fn match_window(state: &InstrumentState, disposal: &Disposal) -> (Vec<(Date, Decimal)>, Decimal) {
-    let (start, end) = window(disposal.date);
-
+fn match_window(
+    state: &InstrumentState, disposal: &Disposal, (start, end): (Date, Date),
+) -> (Vec<(Date, Decimal)>, Decimal) {
     let mut matched: Vec<(Date, Decimal)> = Vec::new();
     let mut matched_total = Decimal::ZERO;
 
@@ -434,6 +518,60 @@ mod tests {
         #[case] expected_end: Date,
     ) {
         assert_eq!(window(sale), (expected_start, expected_end));
+    }
+
+    /// Venues covered by an in-force equivalence decision take the two-month limb; everything else
+    /// is unsettled, including a statement that names no venue at all.
+    #[rstest]
+    #[case(&["NASDAQ"], Some(true))]
+    #[case(&["NYSE"], Some(true))]
+    // EEA venues are regulated markets under Directive 2014/65 itself.
+    #[case(&["IBIS"], Some(true))]
+    // Switzerland's equivalence decisions lapsed on 30-06-2019 and were never renewed.
+    #[case(&["EBS"], Some(false))]
+    // The United Kingdom has no decision in force post-Brexit.
+    #[case(&["LSE"], Some(false))]
+    // A dual listing is only settled if every venue is.
+    #[case(&["NASDAQ", "EBS"], Some(false))]
+    #[case(&[], None)]
+    fn venue_equivalence_follows_the_commission_decisions(
+        #[case] venues: &[&str],
+        #[case] expected: Option<bool>,
+    ) {
+        assert_eq!(
+            venue_takes_the_two_month_window(venues.iter().copied()),
+            expected
+        );
+    }
+
+    /// A repurchase outside the two months but inside the year defers nothing, and the engine says
+    /// how much the one-year limb would defer instead. A repurchase inside the two months is already
+    /// deferred, so there is nothing left for the wider window to add.
+    #[rstest]
+    // Three months after the sale: outside the two-month window, inside the year.
+    #[case(date!(2026, 6, 10), dec!(0), dec!(900))]
+    // One month after the sale: deferred by the window the tool applies.
+    #[case(date!(2026, 4, 10), dec!(900), dec!(0))]
+    // Thirteen months after the sale: outside both windows.
+    #[case(date!(2027, 4, 10), dec!(0), dec!(0))]
+    fn the_wider_window_is_measured_but_never_applied(
+        #[case] repurchase: Date,
+        #[case] expected_deferred: Decimal,
+        #[case] expected_wider: Decimal,
+    ) {
+        let mut engine = WashSaleEngine::new(
+            [
+                acquisition(date!(2026, 1, 5), dec!(100)),
+                acquisition(repurchase, dec!(100)),
+            ],
+            [],
+        );
+
+        let outcome = engine.process(&disposal(
+            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+
+        assert_eq!(outcome.deferred_loss, expected_deferred);
+        assert_eq!(outcome.wider_window_loss, expected_wider);
     }
 
     /// Identity prefers the ISIN, because tickers get reused and renamed while an ISIN does not.

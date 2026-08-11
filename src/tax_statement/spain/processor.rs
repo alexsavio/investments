@@ -25,7 +25,7 @@ use super::wash_sale;
 use super::statement::{
     CapitalGainEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry,
     SpanishLotDetail, SpanishTaxStatement, StockGrantEntry, WashSaleReintegrationEntry,
-    WashSaleWindowGap,
+    WashSaleVenueReview, WashSaleWindowGap,
 };
 
 /// Everything about the filer's regime and tax year that the per-income processors need, resolved
@@ -393,6 +393,22 @@ fn process_trades(
         .filter(|&year| year <= params.year)
         .collect();
     statement.deferred_losses_next = replay.carry_out;
+    statement.wash_sale_venue_reviews = replay.venue_reviews;
+
+    for review in &statement.wash_sale_venue_reviews {
+        warn!(
+            "The {} loss of {} is deducted in full, but that turns on which valores-homogéneos \
+             window {} takes: homogeneous securities were bought back inside the year and outside \
+             the two months, so the one-year limb (NF 3/2014 art. 43.h / LIRPF art. 33.5.g) would \
+             defer €{} of it. DGT V0778-25 and V0951-25 settle the two-month limb only for venues \
+             covered by an in-force MiFID II equivalence decision. See the open-interpretations \
+             register in docs/spain-taxes.md.",
+            review.symbol,
+            review.sale_date,
+            review.venue.as_deref().unwrap_or("an unnamed listing venue"),
+            super::format_eur(review.loss_eur)
+        );
+    }
 
     // Only the filing year's releases are this year's income; the rest belong to the returns their
     // disposals fall in.
@@ -602,6 +618,9 @@ struct ReplayResult {
     reintegrations: Vec<WashSaleReintegrationEntry>,
     /// Blocked lots still standing when the statement ends, in next year's config shape.
     carry_out: Vec<DeferredLossConfig>,
+    /// Losses whose deferral would change under the unlisted limb, on venues the two-month limb is
+    /// not settled for.
+    venue_reviews: Vec<WashSaleVenueReview>,
 }
 
 /// Replay the whole statement through the valores-homogéneos engine and write each sale's deferral
@@ -750,6 +769,22 @@ fn apply_wash_sale_rule(
                 origin_sale_date: reintegration.origin_sale_date,
                 released_eur: reintegration.amount,
             });
+        }
+
+        if outcome.wider_window_loss > Decimal::ZERO && sale.sale_date.year() == params.year {
+            let venues: Vec<&str> = instruments
+                .get(&sale.symbol)
+                .map(|info| info.listing_venues.iter().map(String::as_str).collect())
+                .unwrap_or_default();
+
+            if wash_sale::venue_takes_the_two_month_window(venues.iter().copied()) != Some(true) {
+                result.venue_reviews.push(WashSaleVenueReview {
+                    symbol: sale.symbol.clone(),
+                    sale_date: sale.sale_date,
+                    venue: (!venues.is_empty()).then(|| venues.join(", ")),
+                    loss_eur: outcome.wider_window_loss,
+                });
+            }
         }
 
         sales[position].deferred_loss = outcome.deferred_loss;

@@ -83,6 +83,21 @@ pub struct WashSaleWindowGap {
     pub loss_eur: Decimal,
 }
 
+/// A loss whose deferral turns on which of the statute's two windows the listing venue takes.
+///
+/// Only raised when homogeneous securities were acquired inside the year but outside the two months
+/// — the two-month limb defers nothing there, the one-year limb would — and the venue is not one the
+/// DGT has settled the two-month limb for.
+#[derive(Clone, Debug)]
+pub struct WashSaleVenueReview {
+    pub symbol: String,
+    pub sale_date: Date,
+    /// Listing venue as the statement names it, or `None` when it names none.
+    pub venue: Option<String>,
+    /// Loss the one-year limb would defer on top of what was deferred, as a positive magnitude.
+    pub loss_eur: Decimal,
+}
+
 /// A dividend, taxed as rendimiento del capital mobiliario.
 #[derive(Clone, Debug)]
 pub struct DividendEntry {
@@ -225,6 +240,10 @@ pub struct SpanishTaxStatement {
     /// date, so a repurchase that would defer the loss cannot be seen yet.
     pub wash_sale_window_gaps: Vec<WashSaleWindowGap>,
 
+    /// Filing-year losses whose deferral would change under the one-year limb, on an instrument
+    /// whose listing venue the two-month limb is not settled for.
+    pub wash_sale_venue_reviews: Vec<WashSaleVenueReview>,
+
     /// Loss deferred by this year's disposals, as a positive magnitude.
     pub total_deferred_loss: Decimal,
     /// Deferred loss this year's disposals released, as a positive magnitude.
@@ -353,6 +372,7 @@ impl SpanishTaxStatement {
             wash_sale_reintegrations: Vec::new(),
             deferred_losses_next: Vec::new(),
             wash_sale_window_gaps: Vec::new(),
+            wash_sale_venue_reviews: Vec::new(),
             total_deferred_loss: Decimal::ZERO,
             total_reintegrated_loss: Decimal::ZERO,
             total_dividend_income: Decimal::ZERO,

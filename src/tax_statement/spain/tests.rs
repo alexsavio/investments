@@ -1134,6 +1134,31 @@ fn a_malformed_opening_deferred_loss_is_rejected(
     assert!(error.contains("positive magnitude"), "{error}");
 }
 
+/// A repurchase outside the two months but inside the year is flagged when — and only when — the
+/// listing venue is not one the two-month limb is settled for.
+///
+/// Both lines in the fixture are bought on 2026-01-05, sold at a €900 loss on 2026-03-10 and bought
+/// back on 2026-06-10, three months later. Neither deferral changes: the tool applies two months to
+/// every instrument. The Swiss line is flagged because Switzerland's MiFID II equivalence decisions
+/// lapsed on 30-06-2019, so its listing may fall under the one-year limb; the NYSE line is settled
+/// by DGT V0778-25 and says nothing.
+#[test]
+fn a_repurchase_outside_the_window_is_flagged_on_an_unsettled_venue() {
+    let spain = run_pipeline("wash_sale_venue", 2026, SpanishTaxRegime::Comun);
+
+    for sale in &spain.capital_gains {
+        assert_eq!(sale.fiscal_gain_loss, dec!(-900));
+        assert_eq!(sale.deferred_loss, dec!(0), "{} defers nothing", sale.symbol);
+    }
+
+    assert_eq!(spain.wash_sale_venue_reviews.len(), 1);
+    let review = &spain.wash_sale_venue_reviews[0];
+    assert_eq!(review.symbol, "SWCH");
+    assert_eq!(review.sale_date, Date::from_ymd_opt(2026, 3, 10).unwrap());
+    assert_eq!(review.venue.as_deref(), Some("EBS"));
+    assert_eq!(review.loss_eur, dec!(900));
+}
+
 /// A repurchase after the statement's last date cannot be seen, so a loss whose window is still
 /// open when the statement ends is deducted in full and flagged rather than silently settled.
 #[test]

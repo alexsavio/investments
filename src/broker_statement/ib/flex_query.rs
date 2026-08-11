@@ -147,6 +147,10 @@ pub struct StatementOfFundsLine {
     #[serde(rename = "@assetCategory", default)]
     pub asset_category: String,
 
+    /// Venue the instrument is listed on, as IB names it. See [`Trade::listing_exchange`].
+    #[serde(rename = "@listingExchange", default)]
+    pub listing_exchange: String,
+
     #[serde(rename = "@amount", default)]
     pub amount: Decimal,
 
@@ -199,6 +203,11 @@ pub struct Trade {
 
     #[serde(rename = "@assetCategory")]
     pub asset_category: String,
+
+    /// Venue the instrument is listed on, as IB names it (`NASDAQ`, `NYSE`, `SEHK`, …). Empty on
+    /// currency rows and on statements exported without the field.
+    #[serde(rename = "@listingExchange", default)]
+    pub listing_exchange: String,
 
     #[serde(rename = "@dateTime")]
     pub date_time: String,
@@ -751,6 +760,7 @@ fn parse_statement_of_funds_trade(
     let conclusion_time: DateOptTime = date.into();
 
     register_instrument_isin(statement, symbol, &line.isin);
+    register_listing_venue(statement, symbol, &line.listing_exchange);
 
     match line.buy_sell.as_str() {
         "BUY" => {
@@ -913,6 +923,7 @@ fn parse_trade(
     let conclusion_time: DateOptTime = date.into();
 
     register_instrument_isin(statement, symbol, &trade.isin);
+    register_listing_venue(statement, symbol, &trade.listing_exchange);
 
     match trade.buy_sell.as_str() {
         "BUY" => {
@@ -953,6 +964,15 @@ fn register_instrument_isin(statement: &mut PartialBrokerStatement, symbol: &str
             log::warn!("Ignoring invalid ISIN {isin:?} for {symbol}: {e}");
         }
     }
+}
+
+/// Attach the row's listing exchange to the instrument. Empty values are ignored, so an instrument
+/// only ever carries venues the statement actually named.
+fn register_listing_venue(statement: &mut PartialBrokerStatement, symbol: &str, venue: &str) {
+    if venue.is_empty() {
+        return;
+    }
+    statement.instrument_info.get_or_add(symbol).add_listing_venue(venue);
 }
 
 /// Which income types the CashTransactions section carries. Used to dedup against the StmtFunds
@@ -1286,6 +1306,7 @@ mod tests {
             isin: String::new(),
             description: symbol.to_string(),
             asset_category: asset_category.to_string(),
+            listing_exchange: "NASDAQ".to_string(),
             date_time: "20240110;100000".to_string(),
             settle_date: "20240112".to_string(),
             quantity: dec!(1),

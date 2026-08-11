@@ -859,6 +859,48 @@ impl CsvFormatter {
             }
         }
 
+        if !statement.wash_sale_venue_reviews.is_empty() {
+            writeln!(writer)?;
+            writeln!(
+                writer,
+                "# WARNING: the deduction below turns on which valores-homogéneos window the listing"
+            )?;
+            writeln!(
+                writer,
+                "# venue takes. Homogeneous securities were bought back inside the year but outside"
+            )?;
+            writeln!(
+                writer,
+                "# the two months, so the one-year limb (NF 3/2014 art. 43.h / LIRPF art. 33.5.g)"
+            )?;
+            writeln!(
+                writer,
+                "# would defer the amount shown. DGT V0778-25 / V0951-25 settle the two-month limb"
+            )?;
+            writeln!(
+                writer,
+                "# only for venues covered by an in-force MiFID II equivalence decision. The loss is"
+            )?;
+            writeln!(
+                writer,
+                "# deducted in FULL — see the open-interpretations register in docs/spain-taxes.md."
+            )?;
+            for review in &statement.wash_sale_venue_reviews {
+                let label = format!(
+                    "{} sold {} — listed on {}",
+                    review.symbol,
+                    Self::format_date(review.sale_date),
+                    review.venue.as_deref().unwrap_or("an unnamed venue")
+                );
+                writeln!(
+                    writer,
+                    "WASH_SALE_VENUE_REVIEW,{},{}",
+                    Self::escape_csv(&label),
+                    Self::format_decimal(review.loss_eur)
+                )?;
+            }
+        }
+
         if statement.total_dividend_exemption > Decimal::ZERO {
             writeln!(writer)?;
             writeln!(

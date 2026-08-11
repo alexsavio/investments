@@ -117,6 +117,7 @@ at full precision.
 | `CARRYFORWARD_<GROUP>_EXPIRED` | Balance that ran out of its four-year window this year |
 | `DEFERRED_LOSS_<n>` | One surviving wash-sale block: symbol, blocked quantity, sale date, loss |
 | `WASH_SALE_WINDOW_OPEN` | One loss whose repurchase window reaches past the statement's last date |
+| `WASH_SALE_VENUE_REVIEW` | One loss whose deferral turns on which of the statute's two windows the listing venue takes: the value is what the one-year limb would defer on top of what was deferred |
 | `SHORT_POSITION` | One open short position and its quantity |
 
 `<GROUP>` is `RCM` or `GYP`. The `CARRYFORWARD_*` rows sit under a
@@ -176,6 +177,7 @@ Comment lines start with `#`. A consumer must skip them.
 | `# WARNING: these are the ejercicio-2025 box numbers, read from Anexo I of the…` | Regime is `comun`, always, before the box rows |
 | `# WARNING: the €<x> withheld abroad is NOT a Spanish retención and does NOT go in…` | The year's foreign withholding is **non-zero** (under whichever regime's box block) |
 | `# WARNING: valores-homogéneos window still open when the statement ends. A…` | A loss sale's +2-month repurchase window reaches beyond the statement's last date, so a repurchase that would defer the loss cannot be seen yet |
+| `# WARNING: the deduction below turns on which valores-homogéneos window the listing…` | A filing-year loss had homogeneous securities bought back outside the two months but inside the year, on a venue no in-force MiFID II equivalence decision covers (or one the statement does not name) |
 | `# WARNING: €<x> of dividends were exempted under NF 3/2014 art. 9.24. The exemption…` | The Gipuzkoa exemption was applied to anything (it cannot tell a fund distribution from a company dividend) |
 | `# WARNING: sales in <years> were not tested for the valores-homogéneos rule: no…` | The statement contains disposals **up to the filing year** in a year with no shipped actualization table. Disposals in later years are excluded: they belong to the next return and can only release deferrals here |
 | `# SHORT POSITIONS — no tax is computed for these; they need manual review.` | Open short positions exist |

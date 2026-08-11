@@ -189,12 +189,37 @@ admitted to trading on a regulated market as defined in Directive 2014/65/UE —
 one **year** either side, not two months. The tool does not implement it, and applies two months to
 every instrument in the statement.
 
-That matters more than it looks. Directive 2014/65 defines a regulated market as an EEA venue, so on
-a literal reading NYSE and Nasdaq lines fall under the one-year limb. Practice and the AEAT manual
-treat equivalent third-country markets as covered by the two-month limb, but no consulta reachable
-settles it, and two months is the shorter window — it defers less loss, so the tool's reading is the
-one that grants the deduction earlier. A filer who wants the conservative treatment for US lines has
-to widen the window by hand.
+For US listings that is now the tax authority's own reading, not a guess. **DGT CV V0778-25**
+(05-05-2025) answers the question for NYSE, Nasdaq and CME by name, and **V0951-25** (30-05-2025)
+generalizes it to "los mercados de valores de Estados Unidos": a third-country market covered by an
+**in-force Commission equivalence decision** under MiFID II art. 25(4)(a) is inside art. 33.5.f, and
+stays inside it "mientras dicha decisión de equivalencia no haya sido objeto de derogación". US
+venues are equivalent under Commission Implementing Decision **(EU) 2017/2320**, Australia under
+**2017/2318**, Hong Kong under **2017/2319**. Following a published DGT criterion also shields the
+filer from penalties (LGT art. 179.2.d). NF 3/2014 art. 43.g clones the state wording and interprets
+the same EU concept, but no foral pronouncement exists: for a Gipuzkoa filer these criteria are
+persuasive, not formally binding.
+
+Two consequences the tool acts on:
+
+- **Switzerland's decisions lapsed on 30-06-2019** and were never renewed, and the United Kingdom,
+  Canada and Japan have none. A line listed only on such a venue may fall under the one-year limb.
+- Where a repurchase lands **outside the two months but inside the year**, the deferral therefore
+  turns on the venue. The tool still defers nothing there — the window does not change — but it
+  reports the amount at stake, using the listing exchange the statement names for the instrument:
+
+  ```text
+  # WARNING: the deduction below turns on which valores-homogéneos window the listing venue takes.
+  WASH_SALE_VENUE_REVIEW,SWCH sold 2026-03-10 — listed on EBS,900.00
+  ```
+
+  Equivalent venues (US, EEA, ASX, SEHK) say nothing. A statement that names no venue for the
+  instrument is reported too: unknown is not the same as settled.
+
+**Dual listings and ADRs.** DGT CV **V1872-25** (14-10-2025) holds that two lines of the same class
+listed in different markets and currencies *are* homogeneous, which is what matching on the ISIN
+does. It expressly declines to answer whether an ADR is homogeneous with the underlying ordinary
+share; those carry different ISINs, so the tool treats them as different securities.
 
 Worked example — sell 100 shares on 2026-03-10 at a €900 loss, buy 40 back on 2026-04-20:
 

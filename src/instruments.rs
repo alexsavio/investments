@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::collections::{BTreeSet, HashMap, HashSet, hash_map::Entry};
 use std::default::Default;
 use std::fmt::{self, Display};
 
@@ -320,6 +320,12 @@ pub struct Instrument {
     pub isin: HashSet<ISIN>,
     cusip: HashSet<CUSIP>,
     pub exchanges: Exchanges,
+    /// Venues the broker statement names as the instrument's listing exchange, verbatim.
+    ///
+    /// Kept as the broker's own strings rather than mapped onto [`Exchange`]: that enum is a coarse
+    /// quote-source classification (US / LSE / other), while a listing venue has to distinguish
+    /// NYSE from SIX for the Spanish valores-homogéneos window.
+    pub listing_venues: BTreeSet<String>,
 }
 
 impl Instrument {
@@ -330,6 +336,7 @@ impl Instrument {
             isin:      HashSet::new(),
             cusip:     HashSet::new(),
             exchanges: Exchanges::new_empty(),
+            listing_venues: BTreeSet::new(),
         }
     }
 
@@ -343,6 +350,12 @@ impl Instrument {
 
     pub fn add_cusip(&mut self, cusip: CUSIP) {
         self.cusip.insert(cusip);
+    }
+
+    pub fn add_listing_venue(&mut self, venue: &str) {
+        if !venue.is_empty() {
+            self.listing_venues.insert(venue.to_owned());
+        }
     }
 
     pub fn get_taxation_type(&self, date: Date, broker_jurisdiction: Jurisdiction) -> GenericResult<IssuerTaxationType> {
@@ -411,6 +424,7 @@ impl Instrument {
         self.isin.extend(other.isin);
         self.cusip.extend(other.cusip);
         self.exchanges.merge(other.exchanges);
+        self.listing_venues.extend(other.listing_venues);
     }
 }
 
