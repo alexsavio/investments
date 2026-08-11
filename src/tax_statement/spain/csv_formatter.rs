@@ -27,10 +27,30 @@ use super::statement::{
 mod modelo_109 {
     pub const RCM_GROSS: &str = "06+16";
     pub const RCM_EXPENSES: &str = "17";
+    /// Retenciones practicadas **en España**. Nothing the tool computes belongs here: an IB
+    /// statement's withholding is foreign, and foreign tax is relieved through the deducción por
+    /// doble imposición, never as a retención. Named so the warning can point at it.
     pub const RCM_WITHHOLDING: &str = "07+22";
     pub const CAPITAL_GAINS: &str = "28";
     pub const SAVINGS_BASE: &str = "33";
     pub const NET_QUOTA: &str = "64";
+}
+
+/// Modelo 100 box numbers for ejercicio 2025.
+///
+/// Read from Anexo I of the Orden HAC/277/2026 consultation draft — the AEAT form for a filing year
+/// is published in the spring of the following one, so these are the newest numbers that exist and
+/// they are a draft, not the enacted order.
+mod modelo_100 {
+    pub const INTEREST: &str = "0027";
+    pub const DIVIDENDS: &str = "0029";
+    pub const RCM_EXPENSES: &str = "0037";
+    /// Ganancias y pérdidas por transmisión de acciones cotizadas: an itemized block, not one box.
+    pub const LISTED_CAPITAL_GAINS: &str = "0326_0340";
+    pub const SAVINGS_BASE: &str = "0460";
+    pub const FOREIGN_TAX_CREDIT: &str = "0588";
+    /// Retenciones del capital mobiliario — Spanish withholding only. See `modelo_109::RCM_WITHHOLDING`.
+    pub const RCM_WITHHOLDING: &str = "0597";
 }
 
 /// CSV formatter for Spanish tax statements.
@@ -601,18 +621,13 @@ impl CsvFormatter {
                         statement.total_deductible_fees,
                     ),
                     (
-                        modelo_109::RCM_WITHHOLDING,
-                        "Retenciones del capital mobiliario",
-                        statement.total_foreign_withholding,
-                    ),
-                    (
                         modelo_109::CAPITAL_GAINS,
                         "Ganancias y pérdidas patrimoniales (base del ahorro)",
                         statement.gyp_net,
                     ),
                     (
                         modelo_109::SAVINGS_BASE,
-                        "Base imponible del ahorro",
+                        "Base liquidable del ahorro (tras compensación)",
                         statement.savings_base,
                     ),
                     (
@@ -629,6 +644,8 @@ impl CsvFormatter {
                         Self::format_decimal(value)
                     )?;
                 }
+
+                Self::write_withholding_warning(writer, statement, modelo_109::RCM_WITHHOLDING)?;
 
                 writeln!(
                     writer,
@@ -648,56 +665,98 @@ impl CsvFormatter {
                 writeln!(writer, "# MODELO 100 — declaración del IRPF (AEAT)")?;
                 writeln!(
                     writer,
-                    "# WARNING: Modelo 100's box layout was not verified for this tool, so no casilla"
+                    "# WARNING: these are the ejercicio-2025 box numbers, read from Anexo I of the"
                 )?;
                 writeln!(
                     writer,
-                    "# numbers are given. Match each label against the AEAT form for your filing year."
+                    "# Orden HAC/277/2026 CONSULTATION DRAFT — the AEAT publishes a filing year's"
+                )?;
+                writeln!(
+                    writer,
+                    "# form in the spring of the following one, so no enacted numbering exists yet."
+                )?;
+                writeln!(
+                    writer,
+                    "# Verify every casilla against your filing year's own form before entering it."
                 )?;
 
                 let boxes = [
                     (
-                        "RCM_GROSS",
-                        "Rendimientos íntegros del capital mobiliario",
-                        statement.total_dividend_income + statement.total_interest_income,
+                        modelo_100::INTEREST,
+                        "Intereses de cuentas y depósitos (rendimientos del capital mobiliario)",
+                        statement.total_interest_income,
                     ),
                     (
-                        "RCM_EXPENSES",
+                        modelo_100::DIVIDENDS,
+                        "Dividendos y participaciones en beneficios",
+                        statement.total_dividend_income,
+                    ),
+                    (
+                        modelo_100::RCM_EXPENSES,
                         "Gastos de administración y depósito (art. 26.1.a)",
                         statement.total_deductible_fees,
                     ),
                     (
-                        "RCM_WITHHOLDING",
-                        "Retenciones practicadas en el extranjero",
-                        statement.total_foreign_withholding,
-                    ),
-                    (
-                        "CAPITAL_GAINS",
-                        "Ganancias y pérdidas patrimoniales (base del ahorro)",
+                        modelo_100::LISTED_CAPITAL_GAINS,
+                        "Ganancias y pérdidas por transmisión de acciones cotizadas \
+                         (casillas 0326-0340)",
                         statement.gyp_net,
                     ),
                     (
-                        "SAVINGS_BASE",
-                        "Base liquidable del ahorro",
+                        modelo_100::SAVINGS_BASE,
+                        "Base liquidable del ahorro (tras compensación)",
                         statement.savings_base,
                     ),
                     (
-                        "FOREIGN_TAX_CREDIT",
+                        modelo_100::FOREIGN_TAX_CREDIT,
                         "Deducción por doble imposición internacional",
                         statement.total_foreign_tax_credit,
                     ),
-                    ("NET_QUOTA", "Cuota líquida del ahorro", statement.net_tax_due),
                 ];
 
-                for (key, label, value) in boxes {
+                for (casilla, label, value) in boxes {
                     writeln!(
                         writer,
-                        "MODELO_100_{key},{label} (casilla unverified),{}",
+                        "MODELO_100_{casilla},{label},{}",
                         Self::format_decimal(value)
                     )?;
                 }
+
+                Self::write_withholding_warning(writer, statement, modelo_100::RCM_WITHHOLDING)?;
             }
         }
+
+        Ok(())
+    }
+
+    /// Say where the foreign withholding does **not** go.
+    ///
+    /// A retención is Spanish tax already paid on the filer's account; foreign tax is relieved only
+    /// through the deducción por doble imposición internacional. Entering the same figure in both
+    /// places claims it twice, and the retenciones casilla is where a filer reading an IB statement
+    /// would naturally put it — so no row is emitted for it and the trap is named instead.
+    fn write_withholding_warning<W: Write>(
+        writer: &mut W,
+        statement: &SpanishTaxStatement,
+        casilla: &str,
+    ) -> GenericResult<()> {
+        if statement.total_foreign_withholding.is_zero() {
+            return Ok(());
+        }
+
+        writeln!(
+            writer,
+            "# WARNING: the €{} withheld abroad is NOT a Spanish retención and does NOT go in",
+            Self::format_decimal(statement.total_foreign_withholding)
+        )?;
+        writeln!(
+            writer,
+            "# casilla {casilla}, which is for tax withheld in Spain. It is claimed only through the"
+        )?;
+        writeln!(
+            writer,
+            "# deducción por doble imposición internacional below; entering both claims it twice."
+        )?;
 
         Ok(())
     }
@@ -813,6 +872,8 @@ impl CsvFormatter {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
     use crate::taxes::spain::carryforward::LossLedger;
     use crate::taxes::spain::scale::SavingsScale;
@@ -1214,6 +1275,88 @@ mod tests {
         assert!(comun.contains("# MODELO 100"));
         assert!(comun.contains("# WARNING"));
         assert!(!comun.contains("MODELO_109"));
+    }
+
+    fn with_foreign_withholding(regime: SpanishTaxRegime) -> SpanishTaxStatement {
+        let mut spain = statement(regime);
+        spain.dividends.push(DividendEntry {
+            symbol: "AAPL".to_string(),
+            isin: "US0378331005".to_string(),
+            description: "AAPL CASH DIVIDEND".to_string(),
+            date: date(),
+            gross_eur: dec!(900),
+            withheld_eur: dec!(270),
+            treaty_capped_credit: dec!(135),
+        });
+        spain.calculate_totals();
+        spain
+    }
+
+    /// Foreign withholding is not a Spanish **retención**. It is claimed only through the deducción
+    /// por doble imposición internacional; putting it in the retenciones casilla as well would
+    /// claim the same tax twice on the same form.
+    #[rstest]
+    #[case(SpanishTaxRegime::Gipuzkoa)]
+    #[case(SpanishTaxRegime::Comun)]
+    fn foreign_withholding_never_reaches_a_retenciones_casilla(#[case] regime: SpanishTaxRegime) {
+        let spain = with_foreign_withholding(regime);
+        assert_eq!(spain.total_foreign_withholding, dec!(270));
+
+        let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
+
+        for row in output.lines().filter(|line| !line.starts_with('#')) {
+            assert!(
+                !row.to_lowercase().contains("retenci"),
+                "foreign withholding must not be mapped to a retenciones casilla: {row}"
+            );
+            assert!(
+                !row.ends_with(",270.00"),
+                "the withheld total leaked into a form box: {row}"
+            );
+        }
+
+        // The Gipuzkoa retenciones casilla and the Modelo 100 one are both named in the warning so
+        // a filer knows which box the figure does *not* belong in.
+        assert!(output.contains("07+22") || output.contains("0597"), "{output}");
+        // ...and the amount is still claimed, through the double-taxation deduction.
+        assert!(output.contains("doble imposición"), "{output}");
+    }
+
+    /// Modelo 100 rows carry the ejercicio-2025 box numbers, under a warning naming their source.
+    #[test]
+    fn modelo_100_carries_the_2025_box_numbers() {
+        let output =
+            render(|w| CsvFormatter::write_modelo_boxes(w, &statement(SpanishTaxRegime::Comun)));
+
+        for key in [
+            "MODELO_100_0027",
+            "MODELO_100_0029",
+            "MODELO_100_0037",
+            "MODELO_100_0326_0340",
+            "MODELO_100_0460",
+            "MODELO_100_0588",
+        ] {
+            assert!(output.contains(key), "missing {key}: {output}");
+        }
+
+        assert!(output.contains("2025"), "{output}");
+        assert!(output.contains("HAC/277/2026"), "{output}");
+        assert!(!output.contains("casilla unverified"), "{output}");
+    }
+
+    /// Casilla 33 carries the base **liquidable** — the figure after group compensation — so the
+    /// label must say so rather than calling it the base imponible.
+    #[test]
+    fn the_savings_base_casilla_is_labelled_as_liquidable() {
+        let output = render(|w| {
+            CsvFormatter::write_modelo_boxes(w, &statement(SpanishTaxRegime::Gipuzkoa))
+        });
+        let row = output
+            .lines()
+            .find(|line| line.starts_with("MODELO_109_CASILLA_33,"))
+            .expect("casilla 33 present");
+        assert!(row.contains("liquidable"), "{row}");
+        assert!(!row.contains("imponible"), "{row}");
     }
 
     /// Pending balances are printed keyed by origin year, because the four-year window is measured

@@ -97,8 +97,15 @@ crypto section, both of which plausibly renumbered boxes. The casilla for the de
 imposición internacional is not published anywhere reachable, for any year, and is emitted without a
 number. Treat every number as indicative and verify against the year's own form.
 
-For Territorio Común the rows carry labels but no casilla numbers: Modelo 100's box layout was not
-verified during this feature's legal-research phase.
+Territorio Común rows carry the ejercicio-2025 numbers from Anexo I of the Orden HAC/277/2026
+consultation draft: `MODELO_100_0027` interest, `0029` dividends, `0037` gastos de administración y
+depósito, `0326_0340` ganancias por transmisión de acciones cotizadas, `0460` base liquidable del
+ahorro, `0588` deducción por doble imposición internacional.
+
+**No retenciones row is emitted for either form.** Foreign withholding is not a Spanish retención; it
+is relieved only through the deducción por doble imposición internacional. A `# WARNING:` names the
+casilla the figure does not belong in (109: `07+22`, 100: `0597`), because entering it in both places
+claims the same tax twice.
 
 ## Warning lines
 
