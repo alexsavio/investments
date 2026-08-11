@@ -11,7 +11,7 @@ Helps you with managing your investments:
 * **Bank deposits control:** view opened bank deposits all in one place and get notified about upcoming deposit closures.
 * **Metrics:** exports analysis results in Prometheus format.
 
-Targeted for Russian investors who use [Firstrade](https://www.firstrade.com/), [Interactive Brokers](https://interactivebrokers.com/), [БКС](https://broker.ru/), [Сбер](https://sberbank.ru/) or [Т-Банк](https://www.tbank.ru/).
+Targeted for Russian investors who use [Firstrade](https://www.firstrade.com/), [Interactive Brokers](https://interactivebrokers.com/), [БКС](https://broker.ru/), [Сбер](https://sberbank.ru/), [Т-Банк](https://www.tbank.ru/) or non-exchange-traded unit investment funds.
 
 # Installation
 
@@ -82,6 +82,10 @@ See [instructions for tax statement generation and recommendations for interacti
 Here is an example of [Grafana](https://grafana.com/) dashboard which displays aggregated statistics and investment results for multiple portfolios opened in different brokers:
 
 [![Investments Grafana dashboard](https://user-images.githubusercontent.com/217795/105888583-320e1080-601e-11eb-8a47-97774479e0f7.gif)](https://youtu.be/fMUxBDY3AUg)
+
+## Non-exchange-traded unit investment funds
+
+There is a support for non-exchange-traded unit investment funds. The program doesn't support specific fund providers along with their statements, but allows to manually specify all operations in the configuration file.
 
 ## Deposits
 

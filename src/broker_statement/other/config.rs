@@ -17,7 +17,7 @@ pub struct BuyOperation {
     #[serde(deserialize_with = "deserialize_date")]
     pub date: Date,
     #[serde(default, deserialize_with = "deserialize_optional_date")]
-    pub settle_date: Option<Date>,
+    pub execution_date: Option<Date>,
 
     pub symbol: String,
     pub quantity: Decimal,
@@ -32,7 +32,7 @@ pub struct SellOperation {
     #[serde(deserialize_with = "deserialize_date")]
     pub date: Date,
     #[serde(default, deserialize_with = "deserialize_optional_date")]
-    pub settle_date: Option<Date>,
+    pub execution_date: Option<Date>,
 
     pub symbol: String,
     pub quantity: Decimal,

@@ -172,6 +172,22 @@ portfolios:
     # symbol_remapping:
     #   - {from: TMOS@, to: TMOS, exchange: MOEX, when: post}
 
+  # A special broker type for non-exchange-traded unit investment funds.
+  #
+  # All buy operations produce implicit cash deposit operations and all sell operations produce implicit cash withdrawal
+  # operations. It is required to use fund's ISIN as a symbol. You can use custom or static quotes provider to provide
+  # quotes for your fund.
+  - name: sfn
+    broker: other
+    operations:
+      # Современный 8 (https://www.sfn-am.ru/funds/fond-sovremennyi-8)
+      - {date: 2026.03.16, execution_date: 2026.03.23, type: buy, symbol: RU000A1078J7, quantity: 945.972756, price: 109.38, amount: 103470.50}
+      - {date: 2026.04.14, type: dividend, symbol: RU000A1078J7, gross_amount: 2183.96, tax_withheld: 284, net_amount: 1899.96}
+      - {date: 2026.08.07, type: sell, symbol: RU000A1078J7, quantity: 945.972756, price: 109.57, net_amount: 103627.23, tax_withheld: 23}
+
+    instrument_names:
+      RU000A1078J7: СФН - Современный 8
+
 # Starting from 2021 progressive tax rate has replaced the fixed one in Russia. Here you can specify your non-investment
 # income by year to make investments calculate tax rate taking into account this tax base.
 #

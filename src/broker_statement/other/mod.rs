@@ -67,7 +67,7 @@ impl<'a> StatementParser<'a> {
         self.on_symbol(&trade.symbol)?;
 
         let conclusion_time = trade.date.into();
-        let execution_date = trade.settle_date.unwrap_or(trade.date);
+        let execution_date = trade.execution_date.unwrap_or(trade.date);
 
         let quantity = util::validate_named_decimal("quantity", trade.quantity, DecimalRestrictions::StrictlyPositive)?;
         let price = util::validate_named_cash("price", self.currency, trade.price, DecimalRestrictions::StrictlyPositive)?;
@@ -93,7 +93,7 @@ impl<'a> StatementParser<'a> {
         self.on_symbol(&trade.symbol)?;
 
         let conclusion_time = trade.date.into();
-        let execution_date = trade.settle_date.unwrap_or(trade.date);
+        let execution_date = trade.execution_date.unwrap_or(trade.date);
 
         let quantity = util::validate_named_decimal("quantity", trade.quantity, DecimalRestrictions::StrictlyPositive)?;
         let price = util::validate_named_cash("price", self.currency, trade.price, DecimalRestrictions::StrictlyPositive)?;
