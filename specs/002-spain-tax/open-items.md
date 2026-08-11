@@ -50,10 +50,10 @@ Source: Hacienda Foral de Gipuzkoa "Propuesta de autoliquidación" specimen PDFs
   Replace the single 2019 map with per-ejercicio Hoja tables (V4): savings-relevant rows keyed to Hoja numbers (28, 29, 30, 31, 33, 38, and DDI 60/70, cuota líquida 64/74 by year); the DDI row LOSES `CASILLA_UNKNOWN` for 2023–2025 (real numbers) and 2026 emits the 2025 layout with a "2025-layout, 2026 form unpublished" warning. Keep the Anexo-3 rows (`06+16`, `17`) for ejercicios ≤2024 only, with keys renamed to say the sheet (`MODELO_109_ANEXO3_...` vs `MODELO_109_HOJA_...`); for ≥2025 emit the Hoja rows only plus a warning that Anexo-level internals are unverified post-reform. Cite the specimen-PDF sources + retrieval date in the code comment and contract. Update the CSV contract (key shapes, per-year mapping table) and `docs/spain-taxes.md`.
   Tests: formatter tests pinning the 2024 vs 2025 vs 2026 mappings (DDI 60 vs 70 vs 70+warning).
   Commit: `feat(spain-tax): map Modelo 109 boxes per ejercicio from the official specimens`
-- **O5 — "Open interpretations" documentation section.** Status: TODO
+- **O5 — "Open interpretations" documentation section.** Status: ✅ Done (`7ad7e081`)
   New section in `docs/spain-taxes.md` — one entry per item, each with: status (SETTLED / SETTLED-WITH-EDGE-CASES / OPEN), the authority (consulta/sentencia/specimen with URL + retrieval date), the tool's implemented reading, the exact warning text the tool emits when the case arises, and what the filer should do on seeing it. Entries: venue equivalence (incl. Switzerland lapse, ADR question), window endpoints (incl. the two boundary warn-cases), fee types (per-type table, two warn-types, foreign-broker note), Modelo 109 casillas (Hoja verified 2023–2025, Anexo ≥2025 unverified, 2026 unpublished), and the carried items with their existing warnings (IIC distributions inside the €1,500 exemption; borrowed-balance FX; fecha de transmisión trade-vs-settlement; deferred-loss quantities across splits; Modelo 100 numbers from the consultation draft). Cross-link every runtime warning to its entry. Update `review2.md`/`remediation.md` marker inventories (fee + endpoint + casilla markers now resolved; venue marker resolved for equivalent venues, residual warn-case documented).
   Commit: `docs(spain-tax): add the open-interpretations register`
-- **O6 — Gate, smoke, close-out.** Status: TODO
+- **O6 — Gate, smoke, close-out.** Status: ✅ Done — see the close-out at the end of this file.
   Full gate; re-run the real-statement smoke test (`--config /private/tmp/claude-501/-Users-alexandre-projects-alexsavio-investments/864d554e-7895-4b99-9187-48e9e68b5156/scratchpad/es-smoke`, `ibkr-miren` 2025): totals must stay €17.32 / €3.46; expected diffs are ONLY the Modelo rows (Hoja numbering: cuota líquida 74, DDI 70, sheet-labeled keys, Anexo-3 warning) — explain anything else. NVDA/GOOG/STRC are NYSE/NASDAQ → no venue warnings expected. Append a close-out section here (what settled, what warns, final numbers).
   Commit: `docs(spain-tax): close the open-items round`
 
@@ -61,3 +61,81 @@ Source: Hacienda Foral de Gipuzkoa "Propuesta de autoliquidación" specimen PDFs
 - No behavior change to the deferral engine from venue classification (warn-only; a config- or metadata-driven 1-year mode can be a future feature if a non-equivalent-venue holding ever appears in the user's statements).
 - ADR↔ordinary homogeneity stays open (V1872-25 expressly declined it); docs only.
 - Anexo 3 post-2024 numbers unverifiable until a 2025 return is generated in Zergabidea (~April 2026 campaign artifacts); warning stands.
+
+## Close-out (O6)
+
+**Date**: 2026-08-11 · Branch `002-spain-tax`, five tasks on top of `c0bc4f6b`.
+
+### Commits
+
+| Task | Commit |
+|---|---|
+| O1 venue-aware wash-sale disclosure | `d97b88e2` |
+| O2 endpoint citations + boundary warnings | `e894a33e` |
+| O3 doctrine-based fee classifier | `88a15f72` |
+| O4 per-ejercicio Modelo 109 casillas | `1a16e565` |
+| O5 open-interpretations register | `7ad7e081` |
+
+Plus two `docs(plan)` status commits and this one.
+
+### Gate
+
+| Check | Result |
+|---|---|
+| `cargo check --lib --all-targets` | clean |
+| `cargo test spain --lib` | **267 passed / 0 failed** (226 at the start of this round, +41) |
+| `cargo test --lib` | **733 passed / 33 failed** — every failure is a pre-existing `broker_statement::*::parse_real` case from the private, empty `testdata/` submodule; the count is unchanged and filtering for anything that is not a `parse_real` case yields 0 rows |
+| `cargo test --no-fail-fast` (all targets) | lib as above; `tests/generate.rs` 1 passed; binary target has no tests |
+| `./check` (clippy, dev + release, `-Dwarnings`) | the same **4 pre-existing errors** in untouched files: `portfolio/rebalancing.rs`, `quotes/cbr/mod.rs`, `analysis/performance/statistics.rs`, `formats/xls/table.rs`. No new lint at any commit |
+
+### Real-statement smoke test
+
+`cargo run -- --config <scratch>/es-smoke tax-statement ibkr-miren 2025 <scratch>/es-openitems.csv`,
+Gipuzkoa 2025. Every filed figure is **unchanged**: base liquidable €17.32, cuota íntegra €3.46,
+credit €0.00, cuota líquida €3.46, ganancias y pérdidas €16.18.
+
+The CSV diff against the previous round is confined to the Modelo block, exactly as predicted:
+
+- the AÑO-2019 provenance banner is replaced by the ejercicio-2025 specimen banner plus the Anexo-3
+  post-2024 warning;
+- `MODELO_109_CASILLA_06+16` / `_17` are gone (Anexo 3, unverified from 2025) and the Hoja rows are
+  keyed `MODELO_109_HOJA_<n>`: 28 rendimiento neto 1.14, 29 and 31 compensation 0.00, 30 ganancias
+  16.18, 33 base 17.32, 38 cuota íntegra 3.46, **70 DDI 0.00**, **74 cuota líquida 3.46**;
+- the withholding warning names casilla **77 (hoja)** instead of Anexo 3's `07+22`, since that sheet
+  is not emitted for 2025;
+- `MODELO_109_CASILLA_UNKNOWN` and its "not published anywhere reachable" warning are gone: the DDI
+  casilla is a real number now.
+
+No other line moved. No venue review (NVDA/GOOG/STRC are NASDAQ-listed, settled by V0778-25), no
+boundary review (no repurchase lands on a window edge), no fee review (Gipuzkoa deducts nothing, and
+the statement carries no fee rows anyway). The three pre-existing warnings — open NVDA window, the
+€82.23 exemption payer list, the €-17.18 borrowed-balance FX — print unchanged.
+
+### What is settled now
+
+- **Venue equivalence**: two months is the DGT's own criterion for equivalence-decision venues
+  (V0778-25, V0951-25; Decisions (EU) 2017/2320, 2017/2318, 2017/2319). Behaviour unchanged; a
+  warn-only `WASH_SALE_VENUE_REVIEW` fires when a repurchase falls in the (2 months, 1 year] zone on
+  a venue with no decision in force, or one the statement does not name.
+- **Window endpoints**: CC art. 5.1 de fecha a fecha with STS 552/2022 and its line; month-end clamp
+  per Ley 39/2015 art. 30.4. Behaviour unchanged; a warning fires when a deferral is decided by the
+  terminal day itself, by the day just outside it, or by a clamped edge.
+- **Fee types**: per-type DGT doctrine (V2117-19, V2629-13, V1047-16, consulta 03-04-1998, AEAT
+  Manual cap. 5). Común behaviour changed: market-data, cash-movement and management fees now carry
+  their citation, dividend-collection fees are deducted, and three types with no doctrine are flagged
+  rather than silently denied. Gipuzkoa is bit-identical — nothing is deductible, every row
+  informational, no warning.
+- **Modelo 109 casillas**: Hoja numbering verified from the official per-ejercicio specimens, with the
+  NF 1/2025 renumbering of the deduction block. No casilla is guessed any more.
+
+### Left open
+
+- The three flagged fee types (inactivity/maintenance, standalone FX conversion, traspaso), Anexo 3
+  internals from ejercicio 2025, the 2026 form, the ADR↔ordinary homogeneity question, and the
+  carried items (IIC distributions, borrowed-balance FX, split-adjusted carried-in deferrals, Modelo
+  100 draft numbers). All catalogued in the open-interpretations register in `docs/spain-taxes.md`,
+  each with the warning text that surfaces it.
+- No `TODO(verify)` marker remains anywhere in the Spanish feature. The two left in `src/` are
+  German (`tax_statement/germany/csv_formatter.rs`, `tax_statement/germany/statement.rs`) and out of
+  scope for this branch.
+- The pre-existing 33 `parse_real` failures and 4 clippy errors in untouched files.
