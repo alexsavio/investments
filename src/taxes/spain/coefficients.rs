@@ -181,6 +181,18 @@ pub fn validate_overrides(overrides: &BTreeMap<i32, BTreeMap<i32, Decimal>>) -> 
     Ok(())
 }
 
+/// Whether a coefficient table exists for disposals in `disposal_year`.
+///
+/// Lets a caller tell "the tool ships no table for that year" — a disposal it can replay but not
+/// price — from a real error such as an acquisition dated after its own disposal, which must never
+/// be swallowed.
+pub fn has_table(
+    disposal_year: i32,
+    overrides: &BTreeMap<i32, BTreeMap<i32, Decimal>>,
+) -> bool {
+    shipped_table(disposal_year).is_some() || overrides.contains_key(&disposal_year)
+}
+
 pub fn gipuzkoa_coefficient(
     disposal_year: i32,
     acquisition_date: Date,

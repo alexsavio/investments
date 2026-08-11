@@ -47,13 +47,13 @@ pub fn window(sale_date: Date) -> (Date, Date) {
 
 /// Identity for "valores homogéneos": the ISIN when the statement carries one, the ticker otherwise.
 ///
-/// The ISIN is preferred because tickers get reused and renamed, and two lines of the same issue
-/// under different tickers are still homogeneous securities. This is narrower than the statutory
-/// definition — homogeneity also covers different issues of the same issuer with the same rights —
-/// but a broker statement carries nothing that would let the tool decide that.
-// TODO(verify): NF 3/2014 art. 43 defers to the RD 1704/1999 / RIRPF definition of "valores
-// homogéneos", which reaches beyond a single ISIN. Same-ISIN is the only test a Flex statement
-// supports; a filer holding several homogeneous issues must check those by hand.
+/// Same-ISIN is the right test. RIRPF art. 8 and DF 33/2014 art. 47 define valores homogéneos as
+/// securities of the same issuer forming part of a single operation of issue **and** carrying the
+/// same rights — which is what an ISIN identifies. DGT V0796-26 confirms the consequences: different
+/// share classes of the same issuer are **not** homogeneous, and neither are two ETFs of different
+/// issuers tracking the same index. The ISIN is preferred over the ticker because tickers get reused
+/// and renamed while two lines of the same issue under different tickers are still the same
+/// securities.
 pub fn instrument_key(instrument_info: &InstrumentInfo, symbol: &str) -> String {
     instrument_info
         .get(symbol)
@@ -270,13 +270,14 @@ impl WashSaleEngine {
 /// Release the deferrals blocked by shares acquired on `lot_date` that this sale just consumed.
 ///
 /// Oldest deferral first, and pro rata to the share of the blocked lot consumed.
-// TODO(verify): both statutes key reintegration to the disposal of "los activos que permanezcan en
-// el patrimonio de la persona contribuyente" (NF 3/2014 art. 43 closing ¶ / LIRPF art. 33.5 closing
-// ¶) — the securities *remaining in the estate*, which is broader than the repurchased lot this
-// implementation attaches the deferral to. Under FIFO with a single instrument the two readings
-// coincide in the common case; they diverge when untouched pre-existing lots are held alongside the
-// repurchased ones. This also settles, by assumption, which shares of a partly-blocked acquisition
-// date a sale consumes first: the blocked ones.
+///
+/// Both statutes word reintegration as the disposal of "los activos que permanezcan en el patrimonio
+/// de la persona contribuyente" (NF 3/2014 art. 43 closing ¶ / LIRPF art. 33.5 closing ¶), but the
+/// DGT reads that as keyed to the **recompra pool** — the securities whose acquisition blocked the
+/// loss — and applies FIFO within it: V0913-08 sets the pool, V3282-18 adds that the releasing
+/// transfer must itself be definitive. Attaching the deferral to the blocking lots and releasing it
+/// as those lots are consumed is exactly that reading, and it settles which shares of a
+/// partly-blocked acquisition date a sale consumes first: the blocked ones.
 fn release(
     state: &mut InstrumentState,
     lot_date: Date,

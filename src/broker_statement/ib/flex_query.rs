@@ -501,6 +501,9 @@ impl FlexStatement {
         }
 
         // Parse trades from Trades section (preferred if it has content).
+        // Non-stock instruments are dropped with one warning each rather than one per row: a
+        // statement holding hundreds of option legs would otherwise bury everything else.
+        let mut skipped_instruments = HashSet::new();
         let mut trades_found = false;
         if let Some(ref trades) = self.trades {
             // A "BUY (Ca.)" / "SELL (Ca.)" row cancels an earlier trade referenced by origTradeID;
@@ -535,7 +538,7 @@ impl FlexStatement {
                 }
                 // Only count the section as populated once a trade is actually ingested, so a
                 // section holding nothing but skipped non-stock rows still falls back to StmtFunds.
-                if parse_trade(&mut statement, trade)? {
+                if parse_trade(&mut statement, trade, &mut skipped_instruments)? {
                     trades_found = true;
                 }
             }
@@ -545,7 +548,7 @@ impl FlexStatement {
         if !trades_found {
             if let Some(ref stmtfunds) = self.statement_of_funds {
                 for line in &stmtfunds.lines {
-                    parse_statement_of_funds_trade(&mut statement, line)?;
+                    parse_statement_of_funds_trade(&mut statement, line, &mut skipped_instruments)?;
                 }
             }
         }
@@ -688,7 +691,23 @@ impl FlexStatement {
 }
 
 /// Parse a trade line from Statement of Funds section
-fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: &StatementOfFundsLine) -> EmptyResult {
+/// Name a non-stock instrument the parser dropped, once per instrument.
+///
+/// The parser is shared by every jurisdiction, so the message names no tax code: derivatives are out
+/// of scope for the tool, not for one country's return. Repeating it per row buries the rest of the
+/// output when a statement holds hundreds of option legs.
+fn warn_skipped_instrument(symbol: &str, asset_category: &str, warned: &mut HashSet<String>) {
+    if warned.insert(symbol.to_owned()) {
+        log::warn!(
+            "Skipping non-stock instrument {symbol} (assetCategory {asset_category}): the tool \
+             computes taxes for stocks only, so derivatives and other categories are out of scope.");
+    }
+}
+
+fn parse_statement_of_funds_trade(
+    statement: &mut PartialBrokerStatement, line: &StatementOfFundsLine,
+    warned: &mut HashSet<String>,
+) -> EmptyResult {
     // Skip base currency summary lines (these are conversions, not actual trades)
     // Real trades have levelOfDetail="Currency", base currency summaries have "BaseCurrency"
     if line.level_of_detail == "BaseCurrency" {
@@ -704,11 +723,7 @@ fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: 
     // Keep only stocks; warn on skipped derivative trade rows (FR-016).
     if line.asset_category != "STK" {
         if !line.symbol.is_empty() {
-            log::warn!(
-                "Skipping non-stock trade {} (assetCategory {}); German tax handling of \
-                 derivatives is out of scope.",
-                line.symbol, line.asset_category
-            );
+            warn_skipped_instrument(&line.symbol, &line.asset_category, warned);
         }
         return Ok(());
     }
@@ -872,15 +887,13 @@ fn build_foreign_cash_flows(stmtfunds: &StatementOfFunds) -> GenericResult<Vec<F
 
 /// Ingest a stock trade. Returns `true` if a trade was recorded, `false` if the row was skipped as
 /// a non-stock instrument. Cancellation rows are filtered out by the caller before this is reached.
-fn parse_trade(statement: &mut PartialBrokerStatement, trade: &Trade) -> GenericResult<bool> {
+fn parse_trade(
+    statement: &mut PartialBrokerStatement, trade: &Trade, warned: &mut HashSet<String>,
+) -> GenericResult<bool> {
     // Keep only stocks; warn on every skipped derivative/non-stock category (FR-016). Asset-category
     // filtering here replaces the old symbol-pattern guess that dropped real tickers like GLW/WST.
     if trade.asset_category != "STK" {
-        log::warn!(
-            "Skipping non-stock instrument {} (assetCategory {}); German tax handling of \
-             derivatives is out of scope.",
-            trade.symbol, trade.asset_category
-        );
+        warn_skipped_instrument(&trade.symbol, &trade.asset_category, warned);
         return Ok(false);
     }
 
@@ -1287,11 +1300,11 @@ mod tests {
         let mut statement = PartialBrokerStatement::new(&[Exchange::Us], false);
 
         let stock = trade_row("GLW", "STK");
-        assert!(parse_trade(&mut statement, &stock).unwrap());
+        assert!(parse_trade(&mut statement, &stock, &mut HashSet::new()).unwrap());
         assert_eq!(statement.stock_buys.len(), 1);
 
         let option = trade_row("AAPL  240119C00150000", "OPT");
-        assert!(!parse_trade(&mut statement, &option).unwrap());
+        assert!(!parse_trade(&mut statement, &option, &mut HashSet::new()).unwrap());
         assert_eq!(statement.stock_buys.len(), 1, "option must not be ingested");
     }
 }

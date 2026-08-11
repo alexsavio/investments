@@ -9,6 +9,8 @@
 
 use std::path::PathBuf;
 
+use rstest::rstest;
+
 use crate::broker_statement::{BrokerStatement, ReadingStrictness};
 use crate::brokers::Broker;
 use crate::config::Config;
@@ -977,16 +979,25 @@ fn the_carry_out_is_snapshotted_at_the_filing_year_end() {
 
 /// A configured deferral that is not a positive loss against a positive number of shares is a
 /// config error, not something to quietly apply.
-#[test]
-fn a_malformed_opening_deferred_loss_is_rejected() {
+///
+/// A zero loss in particular must be rejected rather than treated as a harmless no-op: the entry
+/// still reserves its shares, so it would block a deferral the statement's own sale was entitled to.
+#[rstest]
+#[case(dec!(600), dec!(0))]
+#[case(dec!(0), dec!(40))]
+#[case(dec!(0), dec!(0))]
+fn a_malformed_opening_deferred_loss_is_rejected(
+    #[case] loss: Decimal,
+    #[case] blocked_quantity: Decimal,
+) {
     let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
     config.spain.as_mut().unwrap().deferred_losses = vec![DeferredLossConfig {
         symbol: "AAPL".to_string(),
         isin: None,
-        loss: dec!(600),
-        blocked_quantity: dec!(0),
+        loss,
+        blocked_quantity,
         acquisition_date: Date::from_ymd_opt(2026, 4, 20).unwrap(),
-        sale_date: Date::from_ymd_opt(2026, 3, 10).unwrap(),
+        sale_date: Date::from_ymd_opt(2025, 12, 10).unwrap(),
     }];
 
     let statement = read_fixture("wash_sale_after");
@@ -994,7 +1005,7 @@ fn a_malformed_opening_deferred_loss_is_rejected() {
     let error = super::compute_tax_year(&statement, 2026, &converter, &config)
         .unwrap_err()
         .to_string();
-    assert!(error.contains("blocked quantity"), "{error}");
+    assert!(error.contains("positive magnitude"), "{error}");
 }
 
 /// A repurchase after the statement's last date cannot be seen, so a loss whose window is still

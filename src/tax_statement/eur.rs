@@ -12,10 +12,11 @@ use crate::types::Decimal;
 
 /// Format a EUR amount to two places, half away from zero.
 ///
-/// Half away from zero is German tax-form practice for per-line amounts.
-// TODO(verify): Spanish forms (Modelo 109 / Modelo 100) are assumed to use the same two-decimal,
-// half-away-from-zero convention for per-line amounts. Neither the foral nor the state instructions
-// reachable during S1 state the rounding mode explicitly.
+/// Half away from zero is German tax-form practice for per-line amounts, and it is also what the
+/// AEAT's own boilerplate prescribes: its form instructions round the second decimal up when the
+/// third is 5 or more ("se redondeará por exceso"). The foral instructions are silent, so Gipuzkoa
+/// follows the same convention — a sub-cent difference either way, and the direction that never
+/// truncates a cent off a declared amount.
 pub(crate) fn format_eur(value: Decimal) -> String {
     let mut value = round_eur(value);
     value.rescale(2);

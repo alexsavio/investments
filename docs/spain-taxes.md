@@ -334,6 +334,20 @@ nothing deductible and no compensation:
 The credit is a year-level figure — its cap depends on the average rate, which only exists once the
 whole base is known. The per-row `treaty_capped_credit_eur` column is informational.
 
+### The treaty rate is hard-coded at 15% for dividends
+
+That is the portfolio-dividend rate in Spain's treaties with the **US, Germany, Ireland, the
+Netherlands, France and Switzerland**. Three caveats, none of which the tool detects:
+
+| Case | Rate | Consequence |
+|---|---|---|
+| UK portfolio dividends | **10%** | The tool credits up to 15%; reduce it by hand. 15% applies only to REIT PIDs |
+| US REIT, holder above a 10% stake | **no treaty benefit** | The full 30% stands and none of the excess is creditable in Spain |
+| Interest | 0-10%, never 15% | Moot in practice: IB's interest accruals carry no withholding field, so the tool never credits interest withholding at all |
+
+Neither NF 3/2014 art. 91 nor LIRPF art. 80 mentions a treaty cap — the limit comes from the treaty
+itself. Check yours if the source state is not one of the six above.
+
 ## The Gipuzkoa €1,500 dividend exemption
 
 Gipuzkoa exempts the first **€1,500** of dividends and participaciones en beneficios each year

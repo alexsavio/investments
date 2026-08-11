@@ -103,6 +103,18 @@ impl SpanishTaxConfig {
         spain::coefficients::validate_overrides(&self.coefficients)
     }
 
+    /// Whether a disposal in `year` can be priced at all.
+    ///
+    /// Always true under Territorio Común, where the coefficient is 1 for every year.
+    pub fn has_actualization_table(&self, year: i32) -> bool {
+        match self.regime {
+            spain::SpanishTaxRegime::Gipuzkoa => {
+                spain::coefficients::has_table(year, &self.coefficients)
+            }
+            spain::SpanishTaxRegime::Comun => true,
+        }
+    }
+
     /// The coefficient a FIFO lot's acquisition cost is actualized by before the gain is computed.
     ///
     /// Always 1 under Territorio Común: Ley 26/2014 deleted LIRPF art. 35.2 with effect from 2015,

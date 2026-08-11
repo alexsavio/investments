@@ -34,10 +34,19 @@ struct SpanishTaxParams<'a> {
     regime: SpanishTaxRegime,
     year: i32,
     scale: SavingsScale,
-    /// Cap the source state may levy on a dividend under the applicable double-taxation treaty.
-    // TODO(verify): 15% is the dividend rate in the Spain-US and Spain-Germany treaties and in most
-    // of Spain's network, but it is treaty-specific and neither NF 3/2014 art. 91 nor LIRPF art. 80
-    // mentions a cap at all — the limit comes from the treaty itself.
+    /// Cap the source state may levy on a **dividend** under the applicable double-taxation treaty.
+    ///
+    /// 15% is the portfolio-dividend rate in Spain's treaties with the US, Germany, Ireland, the
+    /// Netherlands, France and Switzerland. It is not universal, and three caveats matter:
+    ///
+    /// - the **UK** treaty caps portfolio dividends at **10%**; 15% applies only to REIT PIDs;
+    /// - a **US REIT** distribution to a holder of more than 10% of the REIT gets no treaty benefit
+    ///   at all, so the full 30% stands and none of the excess is creditable here;
+    /// - **interest** is 0-10% under most of the network, never 15% — and the tool never credits it,
+    ///   because IB's interest accruals carry no withholding field.
+    ///
+    /// Neither NF 3/2014 art. 91 nor LIRPF art. 80 mentions a treaty cap: the limit comes from the
+    /// treaty itself, so a filer on a different treaty must adjust the credit by hand.
     treaty_rate: Decimal,
     /// Whether custody and administration fees reduce the RCM result.
     custody_fees_deductible: bool,
@@ -84,10 +93,11 @@ impl<'a> SpanishTaxParams<'a> {
 
 /// Whether a sale produces a ganancia/pérdida patrimonial in `year`.
 ///
-/// The tax year is keyed off the conclusion date, not settlement.
-// TODO(verify): whether the "fecha de transmisión" for listed securities is the trade date or the
-// settlement date was not resolvable from the foral or state texts consulted. The conclusion date
-// is used, matching the German treatment and the economic reality of the transfer.
+/// The tax year is keyed off the **conclusion (trade) date**, not settlement. LIRPF art. 14.1.c
+/// imputes a ganancia o pérdida patrimonial to the period in which "tenga lugar la alteración
+/// patrimonial", and DGT V0152-26 places that alteration on the trade date for listed securities:
+/// the transfer is agreed then, and settlement is only its execution. NF 3/2014 art. 57.1.b carries
+/// the same wording.
 pub fn produces_capital_gain(trade: &StockSell, year: i32) -> bool {
     trade.conclusion_time.date.year() == year && matches!(trade.type_, StockSellType::Trade { .. })
 }
@@ -391,9 +401,15 @@ fn process_trades(
         }
         has_income = true;
 
-        // A filing-year sale is always priced: `SpanishTaxParams::resolve` already errored if the
-        // filing year itself had no table.
-        let fiscal_gain_loss = sale.fiscal_gain_loss.expect("the filing year is always priced");
+        // A filing-year sale should always be priced, but say so rather than panicking: an
+        // unpriced disposal reaching this point would mean the year has no actualization table, and
+        // a statement is not worth a crash when a named error will do.
+        let Some(fiscal_gain_loss) = sale.fiscal_gain_loss else {
+            return Err!(
+                "Cannot price the {} disposal of {} on {}: no Gipuzkoa actualization table is \
+                 known for {} disposals. Set `taxes.spain.coefficients.{}`",
+                params.year, sale.symbol, sale.sale_date, params.year, params.year);
+        };
 
         statement.capital_gains.push(CapitalGainEntry {
             symbol: sale.symbol,
@@ -498,19 +514,18 @@ fn price_sale(
         // The coefficient is a per-lot figure keyed to that lot's acquisition year, and it is the
         // *sale's* year that selects the table — a 2025 disposal actualizes by DF 61/2024 even when
         // the return being filed is 2026.
-        let coefficient = match params
-            .config
-            .actualization_coefficient(sale_year, lot.conclusion_time.date)
-        {
-            Ok(coefficient) => coefficient,
-            // A disposal in a year the tool ships no table for cannot be priced. It still has to be
-            // replayed, because it consumes lots and may release earlier deferrals, but it can
-            // never create one.
-            Err(_) => {
-                priced = false;
-                unpriced_years.insert(sale_year);
-                Decimal::ONE
-            }
+        // A disposal in a year the tool ships no table for cannot be priced. It still has to be
+        // replayed, because it consumes lots and may release earlier deferrals, but it can never
+        // create one. Everything else the lookup can fail on — an acquisition dated after its own
+        // disposal, a partial override table — is a real fault and propagates.
+        let coefficient = if params.config.has_actualization_table(sale_year) {
+            params
+                .config
+                .actualization_coefficient(sale_year, lot.conclusion_time.date)?
+        } else {
+            priced = false;
+            unpriced_years.insert(sale_year);
+            Decimal::ONE
         };
         let lot_actualized_cost = lot_cost_eur * coefficient;
 
@@ -630,7 +645,9 @@ fn apply_wash_sale_rule(
 
     let mut opening = Vec::new();
     for deferred in &params.config.deferred_losses {
-        if deferred.loss < Decimal::ZERO || deferred.blocked_quantity <= Decimal::ZERO {
+        // A zero loss is rejected rather than accepted as a no-op: the entry would still reserve
+        // its shares, blocking a real deferral the statement's own sale was entitled to.
+        if deferred.loss <= Decimal::ZERO || deferred.blocked_quantity <= Decimal::ZERO {
             return Err!(
                 "taxes.spain.deferred_losses entry for {} is invalid: record the loss as a positive \
                  magnitude and the blocked quantity as a positive number of shares",
