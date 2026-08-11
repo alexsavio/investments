@@ -64,7 +64,7 @@ Reviewer-verified-correct (do not restructure): the Común two-phase compensatio
   (g) `SUMMARY_GYP_CAPITAL_GAINS` / `SUMMARY_GYP_FX` read from stored statement fields instead of recomputing in the formatter; unify the `net_tax_due` label ("Cuota líquida del ahorro") across console, CSV and sell-simulation; deduplicate the regime display strings into one place;
   (h) sharpen the `eur.rs` rounding comment: name the negative-exact-half-cent divergence between the cited "por exceso" text and `MidpointAwayFromZero`, and same note on the 4-dp rate rounding (`scale.rs:146`).
   Commit: `chore(spain-tax): close the second-review low-severity findings`
-- **F10 — Gate, smoke, close-out.** Status: TODO — full `./check` + `cargo test spain`; re-run the real-statement smoke test (`--config /private/tmp/claude-501/-Users-alexandre-projects-alexsavio-investments/864d554e-7895-4b99-9187-48e9e68b5156/scratchpad/es-smoke`, portfolio `ibkr-miren`, year 2025): expect base €17.32 / net €3.46 unchanged (credit already 0 there — F1 must not move it) and the exemption warning payer list deduplicated; append a close-out section here (fixed/accepted list, final numbers); update memory-worthy statuses in `plan.md`/`remediation.md` if any cross-references changed.
+- **F10 — Gate, smoke, close-out.** Status: ✅ Done — see the close-out at the end of this file. Task text: full `./check` + `cargo test spain`; re-run the real-statement smoke test (`--config /private/tmp/claude-501/-Users-alexandre-projects-alexsavio-investments/864d554e-7895-4b99-9187-48e9e68b5156/scratchpad/es-smoke`, portfolio `ibkr-miren`, year 2025): expect base €17.32 / net €3.46 unchanged (credit already 0 there — F1 must not move it) and the exemption warning payer list deduplicated; append a close-out section here (fixed/accepted list, final numbers); update memory-worthy statuses in `plan.md`/`remediation.md` if any cross-references changed.
   Commit: `docs(spain-tax): close the second review round`
 
 ## Accepted as-is (record, don't fix)
@@ -74,3 +74,83 @@ Reviewer-verified-correct (do not restructure): the Común two-phase compensatio
 - Console prints fewer rows than the CSV (summary-vs-audit split) — by design; F4/F9(g) fix only the double-count and recomputation.
 - Carried-in `deferred_losses` quantities not split-adjusted across statements — documented limitation.
 - YAML-equivalent one-line vs two-line carry-out block formatting; unquoted-YAML-floats convention note.
+
+## Close-out (F10)
+
+**Date**: 2026-08-11 · Branch `002-spain-tax`, ten tasks on top of `b5138036`.
+
+### Commits
+
+| Task | Commit |
+|---|---|
+| F1 per-dividend treaty limb, net of the exemption | `f015b348` |
+| F2 carried-in deferrals vs unpriced statement years | `47ce1b56` |
+| F3 interest reversals net against income | `b0d505c4` |
+| F4 disjoint own-group / crossed compensation rows | `870881b9` |
+| F5 wash-sale definitiveness on the blocked shares | `ff8b2e5a` |
+| F6 anti-abuse rule on the homogeneity key | `802039f4` |
+| F7 documentation corrections | `543d9de5` |
+| F8 CSV contract refresh | `4ddfe82f` |
+| F9 low-severity batch | `4e93a094` |
+
+Plus three `docs(plan)` status commits, one per phase.
+
+### Gate
+
+| Check | Result |
+|---|---|
+| `cargo check --lib --all-targets` | clean |
+| `cargo test spain --lib` | **226 passed / 0 failed** (215 at the start of this round) |
+| `cargo test --lib` | **692 passed / 33 failed** — every failure is a pre-existing `broker_statement::*::parse_real` case from the private, empty `testdata/` submodule; filtering the failure list for anything that is not a `parse_real` case yields 0 rows, and the count is unchanged |
+| `cargo test --no-fail-fast` (all targets) | lib as above; `tests/generate.rs` 1 passed; binary target has no tests |
+| `./check` (clippy, dev + release, `-Dwarnings`) | the same **4 pre-existing errors** in untouched files: `portfolio/rebalancing.rs`, `quotes/cbr/mod.rs`, `analysis/performance/statistics.rs`, `formats/xls/table.rs`. No new lint at any commit |
+
+### Real-statement smoke test
+
+`cargo run -- --config <scratch>/es-smoke tax-statement ibkr-miren 2025 <scratch>/es-review2.csv`,
+Gipuzkoa 2025. Every filed figure is **unchanged**: base liquidable €17.32, cuota íntegra €3.46,
+credit €0.00, cuota líquida €3.46, ganancias y pérdidas €16.18. F1 could not move the credit there
+because every dividend on that statement is exempt, so the treaty limb runs on a taxed slice of zero
+and the credit was already 0.
+
+A diff of the CSV against the pre-round output shows three changed lines, all labels, no numbers:
+the two `SUMMARY_*_LOSSES_APPLIED` rows now say "aplicados al propio grupo … fase 2ª-1º" (F4) and
+casilla 64 is relabelled "Cuota líquida del ahorro" (F9g). The exemption warning's payer list is now
+`GOOG, NVDA, STRC` — sorted and fully deduplicated, against `STRC, GOOG, NVDA, STRC` before (F9a) —
+and the FX-borrowed `warn!` prints `€-17.18` through `format_eur`, matching its console twin (F9c).
+
+### Numbers
+
+F1's acceptance numbers reproduce exactly as the reviewer hand-computed them:
+
+- `dividend_exemption` (Gipuzkoa): the €1,500 exemption lands wholly on AAPL, the only eligible
+  payer, so the treaty limb is `min(270, 300 × 15%) + min(67.50, 450 × 15%) = 45 + 67.50 = 112.50`
+  against a rate limb of `750 × 19% = 142.50` ⇒ **credit €112.50**, net tax `228 − 112.50 =` **€115.50**.
+- `mixed_withholding` (Común, new fixture): `min(300, 1,000 × 15%) + min(0, 1,000 × 15%) = 150`
+  against a rate limb of `2,000 × 19% = 380` ⇒ **credit €150**, where the pooled cap would have
+  allowed €300.
+
+### Deviations from the letter of the plan
+
+- **F2** also requires the clashing sale to be a **loss** before the overlap guard fires, on top of
+  the specified instrument / date / quantity-compatibility match. A gain never creates a deferral, so
+  a same-day same-instrument gain cannot be the sale a carried-in entry describes; the extra
+  condition only removes false rejections and cannot admit a double deduction.
+- **F1** leaves the per-row `treaty_capped_credit_eur` column measured on the **full** gross rather
+  than overwriting it with the post-exemption limb. That column is what an over-withholding reclaim
+  from the source state is measured against, and the `income` fixture pins it as such. The
+  divergence is documented in the field doc, in the CSV contract and in `docs/spain-taxes.md`.
+- **F6**'s fixture is `dividend_homogeneity`, a dual-line rename where both tickers appear in the
+  statement. A dividend-only ticker cannot carry an ISIN: the Flex reader registers ISINs from trade
+  rows and statement-of-funds lines, not from cash transactions, so an instrument that never trades
+  falls back to its ticker as its homogeneity key.
+
+### Left open
+
+- The four `TODO(verify)` markers: the custody-fee keyword list (`processor.rs`), the window
+  endpoints (`wash_sale.rs`, now carrying the Código Civil art. 5.1 "de fecha a fecha" basis), the
+  Modelo 109 casillas (`csv_formatter.rs`), and the new one F6 added — whether a US-listed share
+  falls under the two-month or the one-year limb under Directive 2014/65's EEA-only definition of a
+  regulated market. The tool applies two months to every instrument and says so in the docs.
+- Everything under "Accepted as-is" above, unchanged.
+- The pre-existing 33 `parse_real` failures and 4 clippy errors in untouched files.
