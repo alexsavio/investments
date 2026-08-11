@@ -313,3 +313,134 @@ fn rcm_and_gyp_enter_the_base_as_separate_groups() {
     // 990 sits entirely in the first bracket: 990 × 19%.
     assert_eq!(spain.savings_quota, dec!(188.10));
 }
+
+/// A loss-making disposal produces no taxable base and carries forward labelled with the filing
+/// year. Buy 100 @ $200 in 2025 (€18,000), sell 100 @ $100 in 2026 (€9,000); the 2025 acquisition
+/// actualizes at 1.020, so the cost becomes €18,360 and the loss is €9,360.
+///
+/// Actualization therefore *enlarges* a loss. That is the foral practice: art. 45.2 actualizes the
+/// acquisition value unconditionally, with no clause restricting it to gains.
+#[test]
+fn a_loss_carries_forward_and_actualization_enlarges_it() {
+    let spain = run_pipeline("loss", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    let sale = &spain.capital_gains[0];
+    assert_eq!(sale.cost_eur, dec!(18000));
+    assert_eq!(sale.lots[0].coefficient, dec!(1.020));
+    assert_eq!(sale.actualized_cost_eur, dec!(18360));
+    assert_eq!(sale.fiscal_gain_loss, dec!(-9360));
+
+    assert_eq!(spain.gyp_net, dec!(-9360));
+    assert_eq!(spain.gyp_taxable, dec!(0));
+    assert_eq!(spain.savings_base, dec!(0));
+    assert_eq!(spain.savings_quota, dec!(0));
+    assert_eq!(spain.net_tax_due, dec!(0));
+
+    // Carried into the following return, labelled 2026 so its own four-year window starts now.
+    assert_eq!(spain.gyp_ledger_next.balances()[&2026], dec!(9360));
+
+    // Without actualization the same trade would carry only €9,000 forward.
+    let comun = run_pipeline("loss", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.gyp_net, dec!(-9000));
+    assert_eq!(comun.gyp_ledger_next.balances()[&2026], dec!(9000));
+}
+
+/// Prior-year pending balances reduce their own group's result, oldest vintage first.
+#[test]
+fn prior_year_losses_are_applied_oldest_first() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    let spain_cfg = config.spain.as_mut().unwrap();
+    spain_cfg.loss_carryforward.gyp.insert(2023, dec!(4000));
+    spain_cfg.loss_carryforward.gyp.insert(2025, dec!(1000));
+
+    let spain = run_pipeline_with_config("fifo", 2026, &config);
+
+    assert_eq!(spain.gyp_net, dec!(19692));
+    assert_eq!(spain.gyp_applied.used_total, dec!(5000));
+    assert_eq!(spain.gyp_applied.used_by_year[&2023], dec!(4000));
+    assert_eq!(spain.gyp_applied.used_by_year[&2025], dec!(1000));
+    assert_eq!(spain.gyp_taxable, dec!(14692));
+    assert_eq!(spain.savings_base, dec!(14692));
+    // 1,425 + (14,692 − 7,500) × 20%.
+    assert_eq!(spain.savings_quota, dec!(2863.40));
+    assert!(spain.gyp_ledger_next.is_empty());
+}
+
+/// A balance in its fourth and final year that the year's income cannot absorb is dropped rather
+/// than carried, so next year's config does not claim an offset the tax office will refuse.
+#[test]
+fn balances_expire_at_the_end_of_the_four_year_window() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    // Filing 2026, so 2022 is in its final year.
+    config
+        .spain
+        .as_mut()
+        .unwrap()
+        .loss_carryforward
+        .gyp
+        .insert(2022, dec!(25000));
+
+    let spain = run_pipeline_with_config("fifo", 2026, &config);
+
+    assert_eq!(spain.gyp_applied.used_total, dec!(19692));
+    assert_eq!(spain.gyp_taxable, dec!(0));
+    // 25,000 − 19,692 could not be used and is now out of time.
+    assert_eq!(spain.gyp_expired, dec!(5308));
+    assert!(spain.gyp_ledger_next.is_empty());
+}
+
+/// A balance older than the window is a config error, not something to silently ignore.
+#[test]
+fn expired_config_balances_are_rejected() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    config
+        .spain
+        .as_mut()
+        .unwrap()
+        .loss_carryforward
+        .gyp
+        .insert(2021, dec!(1000));
+
+    let statement = read_fixture("fifo");
+    let converter = converter();
+    let error = super::compute_tax_year(&statement, 2026, &converter, &config)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("expired"), "{error}");
+}
+
+/// The year-level double-taxation credit. The `income` fixture's base is €990, taxed at 19%
+/// throughout, so the average savings rate is 0.19 and the credit's limbs are €135 (treaty) and
+/// €171 (0.19 × €900). The treaty limb binds.
+#[test]
+fn foreign_tax_credit_is_computed_at_year_level() {
+    let spain = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert_eq!(spain.savings_base, dec!(990));
+    assert_eq!(spain.savings_quota, dec!(188.10));
+    assert_eq!(spain.average_savings_rate, dec!(0.19));
+    assert_eq!(spain.total_foreign_tax_credit, dec!(135));
+    // 188.10 − 135.
+    assert_eq!(spain.net_tax_due, dec!(53.10));
+}
+
+/// The credit can never turn into a refund of foreign tax through the Spanish return.
+#[test]
+fn the_credit_never_makes_the_tax_due_negative() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    // A large prior-year balance wipes out the base, so there is no Spanish tax to credit against.
+    config
+        .spain
+        .as_mut()
+        .unwrap()
+        .loss_carryforward
+        .rcm
+        .insert(2025, dec!(50000));
+
+    let spain = run_pipeline_with_config("income", 2026, &config);
+
+    assert_eq!(spain.savings_base, dec!(0));
+    assert_eq!(spain.savings_quota, dec!(0));
+    assert_eq!(spain.total_foreign_tax_credit, dec!(0));
+    assert_eq!(spain.net_tax_due, dec!(0));
+}

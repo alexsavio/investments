@@ -34,6 +34,8 @@ struct SpanishTaxParams<'a> {
     treaty_rate: Decimal,
     /// Whether custody and administration fees reduce the RCM result.
     custody_fees_deductible: bool,
+    /// Fraction of the other group's positive balance a negative one may offset.
+    cross_offset_fraction: Decimal,
 }
 
 impl<'a> SpanishTaxParams<'a> {
@@ -51,6 +53,12 @@ impl<'a> SpanishTaxParams<'a> {
             custody_fees_deductible: match config.regime {
                 SpanishTaxRegime::Gipuzkoa => false,
                 SpanishTaxRegime::Comun => true,
+            },
+            // Gipuzkoa integrates the two groups "exclusivamente entre sí"; Territorio Común lets
+            // a negative balance in one reach 25% of the other's positive (LIRPF art. 49.1).
+            cross_offset_fraction: match config.regime {
+                SpanishTaxRegime::Gipuzkoa => Decimal::ZERO,
+                SpanishTaxRegime::Comun => dec!(0.25),
             },
         })
     }
@@ -77,7 +85,17 @@ pub fn compute_tax_year(
     tax_config: &TaxConfig,
 ) -> GenericResult<(SpanishTaxStatement, bool)> {
     let params = SpanishTaxParams::resolve(tax_config, year)?;
-    let mut statement = SpanishTaxStatement::new(year, params.regime, params.scale.clone());
+    let (rcm_ledger, gyp_ledger) = params.config.loss_ledgers(year)?;
+
+    let mut statement = SpanishTaxStatement::new(
+        year,
+        params.regime,
+        params.scale.clone(),
+        rcm_ledger,
+        gyp_ledger,
+        params.cross_offset_fraction,
+        params.treaty_rate,
+    );
 
     let has_income = process_broker_statement(&mut statement, broker_statement, &params, converter)?;
     statement.calculate_totals();

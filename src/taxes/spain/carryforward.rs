@@ -156,6 +156,13 @@ impl LossLedger {
             .copied()
             .unwrap_or(Decimal::ZERO)
     }
+
+    /// Drop every vintage that can no longer be offset after `filing_year`, so the ledger handed to
+    /// the following return contains only balances that return will actually accept.
+    pub fn drop_expired(&mut self, filing_year: i32) {
+        self.balances
+            .retain(|&origin, _| origin > filing_year - CARRYFORWARD_YEARS);
+    }
 }
 
 #[cfg(test)]

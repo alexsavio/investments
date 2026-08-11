@@ -233,7 +233,49 @@ fn generate_spanish_tax_statement(
         "Cuota íntegra del ahorro: €{}",
         eur::format_eur(statement.savings_quota)
     );
+    if statement.total_foreign_withholding > Decimal::ZERO {
+        println!(
+            "Foreign withholding: €{} → creditable €{}",
+            eur::format_eur(statement.total_foreign_withholding),
+            eur::format_eur(statement.total_foreign_tax_credit)
+        );
+    }
     println!("Net tax due: €{}", eur::format_eur(statement.net_tax_due));
+
+    if !statement.rcm_ledger_next.is_empty() || !statement.gyp_ledger_next.is_empty() {
+        println!("\n{}", Color::Cyan.paint("=== Next year's taxes.spain config ==="));
+        println!("    loss_carryforward:");
+        for (group, ledger) in [
+            ("rcm", &statement.rcm_ledger_next),
+            ("gyp", &statement.gyp_ledger_next),
+        ] {
+            if ledger.is_empty() {
+                continue;
+            }
+            let entries = ledger
+                .balances()
+                .iter()
+                .map(|(origin, amount)| format!("{origin}: '{}'", eur::format_eur(*amount)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("      {group}: {{{entries}}}");
+        }
+    }
+
+    for (group, expired) in [
+        ("RCM", statement.rcm_expired),
+        ("ganancias", statement.gyp_expired),
+    ] {
+        if expired > Decimal::ZERO {
+            println!(
+                "{}",
+                Color::Yellow.paint(format!(
+                    "€{} of pending {group} losses expired unused (four-year window).",
+                    eur::format_eur(expired)
+                ))
+            );
+        }
+    }
 
     if !statement.short_positions.is_empty() {
         println!(

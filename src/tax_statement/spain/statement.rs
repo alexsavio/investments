@@ -1,6 +1,9 @@
 //! The Spanish tax statement model and its year-level totals.
 
 use crate::taxes::spain::SpanishTaxRegime;
+use crate::taxes::spain::carryforward::{LedgerApplication, LossLedger};
+use crate::taxes::spain::compensation::compensate_savings_base;
+use crate::taxes::spain::credit::double_taxation_credit;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::types::{Date, Decimal};
 
@@ -116,19 +119,71 @@ pub struct SpanishTaxStatement {
     pub rcm_net: Decimal,
     /// Net ganancias y pérdidas patrimoniales before compensation.
     pub gyp_net: Decimal,
+
+    /// Each group after compensation; these sum to the savings base.
+    pub rcm_taxable: Decimal,
+    pub gyp_taxable: Decimal,
+
+    /// Prior-year pending balances brought in, and what this year consumed of them.
+    pub rcm_ledger_prior: LossLedger,
+    pub gyp_ledger_prior: LossLedger,
+    pub rcm_applied: LedgerApplication,
+    pub gyp_applied: LedgerApplication,
+
+    /// Current-year negative of one group set against the other (Territorio Común only).
+    pub cross_offset_rcm_to_gyp: Decimal,
+    pub cross_offset_gyp_to_rcm: Decimal,
+
+    /// Balances to carry into next year's config, and those lost to the four-year window.
+    pub rcm_ledger_next: LossLedger,
+    pub gyp_ledger_next: LossLedger,
+    pub rcm_expired: Decimal,
+    pub gyp_expired: Decimal,
+
+    pub total_foreign_tax_credit: Decimal,
+
     pub savings_base: Decimal,
     pub savings_quota: Decimal,
     /// Tipo medio de gravamen del ahorro, the cap on the double-taxation credit.
     pub average_savings_rate: Decimal,
     pub net_tax_due: Decimal,
+
+    /// Fraction of the other group's positive balance a negative one may offset: 0 under Gipuzkoa,
+    /// 0.25 under Territorio Común.
+    cross_offset_fraction: Decimal,
+    /// Treaty cap on the source state's withholding, used for the credit's first limb.
+    treaty_rate: Decimal,
 }
 
 impl SpanishTaxStatement {
-    pub fn new(year: i32, regime: SpanishTaxRegime, scale: SavingsScale) -> SpanishTaxStatement {
+    pub fn new(
+        year: i32,
+        regime: SpanishTaxRegime,
+        scale: SavingsScale,
+        rcm_ledger: LossLedger,
+        gyp_ledger: LossLedger,
+        cross_offset_fraction: Decimal,
+        treaty_rate: Decimal,
+    ) -> SpanishTaxStatement {
         SpanishTaxStatement {
             year,
             regime,
             scale,
+            cross_offset_fraction,
+            treaty_rate,
+            rcm_ledger_prior: rcm_ledger.clone(),
+            gyp_ledger_prior: gyp_ledger.clone(),
+            rcm_ledger_next: rcm_ledger,
+            gyp_ledger_next: gyp_ledger,
+            rcm_taxable: Decimal::ZERO,
+            gyp_taxable: Decimal::ZERO,
+            rcm_applied: LedgerApplication::default(),
+            gyp_applied: LedgerApplication::default(),
+            cross_offset_rcm_to_gyp: Decimal::ZERO,
+            cross_offset_gyp_to_rcm: Decimal::ZERO,
+            rcm_expired: Decimal::ZERO,
+            gyp_expired: Decimal::ZERO,
+            total_foreign_tax_credit: Decimal::ZERO,
             capital_gains: Vec::new(),
             dividends: Vec::new(),
             interest: Vec::new(),
@@ -179,12 +234,52 @@ impl SpanishTaxStatement {
             .map(|entry| entry.integrable_amount)
             .sum();
 
-        // Each group is integrated "exclusivamente entre sí": a negative balance in one does not
-        // reduce the other, it carries forward.
-        self.savings_base = std::cmp::max(Decimal::ZERO, self.rcm_net)
-            + std::cmp::max(Decimal::ZERO, self.gyp_net);
+        let compensation = compensate_savings_base(
+            self.year,
+            self.rcm_net,
+            self.gyp_net,
+            self.rcm_ledger_prior.clone(),
+            self.gyp_ledger_prior.clone(),
+            self.cross_offset_fraction,
+        );
+
+        self.rcm_taxable = compensation.rcm_taxable;
+        self.gyp_taxable = compensation.gyp_taxable;
+        self.rcm_applied = compensation.rcm_applied;
+        self.gyp_applied = compensation.gyp_applied;
+        self.cross_offset_rcm_to_gyp = compensation.cross_offset_rcm_to_gyp;
+        self.cross_offset_gyp_to_rcm = compensation.cross_offset_gyp_to_rcm;
+        self.rcm_ledger_next = compensation.rcm_ledger_next;
+        self.gyp_ledger_next = compensation.gyp_ledger_next;
+        self.rcm_expired = compensation.rcm_expired;
+        self.gyp_expired = compensation.gyp_expired;
+
+        self.savings_base = compensation.savings_base;
         self.savings_quota = self.scale.tax(self.savings_base);
         self.average_savings_rate = self.scale.average_rate(self.savings_base);
-        self.net_tax_due = self.savings_quota;
+
+        // The credit is computed once on the year's aggregates. Its second limb is the average
+        // savings rate, which does not exist until the whole base is known, so the per-row
+        // `treaty_capped_credit` figures are informational only.
+        self.total_foreign_tax_credit = double_taxation_credit(
+            self.total_foreign_withholding,
+            self.foreign_taxed_income(),
+            self.treaty_rate,
+            self.average_savings_rate,
+        );
+
+        self.net_tax_due = std::cmp::max(
+            Decimal::ZERO,
+            self.savings_quota - self.total_foreign_tax_credit,
+        );
+    }
+
+    /// Foreign-source income the double-taxation credit is measured against.
+    // TODO(verify): only dividends carry foreign withholding in the supported statements, so this
+    // is their gross sum. NF 3/2014 art. 91.b applies the average rate to "la renta obtenida en el
+    // extranjero" and LIRPF art. 80.1.b to "la parte de base liquidable gravada en el extranjero";
+    // whether that is gross or net of attributable expenses is not settled by either text.
+    fn foreign_taxed_income(&self) -> Decimal {
+        self.dividends.iter().map(|entry| entry.gross_eur).sum()
     }
 }
