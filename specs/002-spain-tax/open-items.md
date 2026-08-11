@@ -31,13 +31,13 @@ Source: Hacienda Foral de Gipuzkoa "Propuesta de autoliquidación" specimen PDFs
 
 ## Tasks
 
-- **O1 — Venue-aware wash-sale disclosure.** Status: TODO
+- **O1 — Venue-aware wash-sale disclosure.** Status: ✅ Done (`d97b88e2`)
   (a) Upgrade the marker + docs from "unresolved" to CONFIRMED-2-months for equivalence-decision venues, citing V0778-25/V0951-25, Decision 2017/2320 (+2318/2319), the in-force condition, and the foral persuasive-not-binding note. The engine's 2-month window is now the DGT's own criterion — behavior unchanged.
   (b) NEW runtime warning: using the instrument's listing-exchange metadata where the Flex statement provides it (SecurityInfo listing exchange; fall back to "unknown"), classify venues against a hardcoded equivalent-set table (US 2017/2320 list, EEA venues, ASX, SEHK; sourced comment). For every loss whose homogeneous repurchases fall ONLY in the (2-months, 1-year] zone AND whose venue is non-equivalent or unknown-non-US, emit a warning (log + console + CSV `WASH_SALE_VENUE_REVIEW` row) quantifying the loss that the 1-year limb would defer. Equivalent-venue instruments in that zone need no warning (settled). Do NOT change deferral behavior — warn-only, documented as such.
   (c) ADR note in docs (V1872-25: dual-listed same-class homogeneous; ADR↔ordinary open; ISIN matching aligns with the consulta).
   Tests: fixture or unit tests with a fabricated non-equivalent-venue instrument (repurchase at 3 months → warning; at 1 month → normal deferral, no warning) and an NYSE instrument (no warning either way).
   Commit: `feat(spain-tax): warn when the wash-sale window turns on venue equivalence`
-- **O2 — Endpoint citations + boundary warnings.** Status: TODO
+- **O2 — Endpoint citations + boundary warnings.** Status: ✅ Done (`e894a33e`)
   (a) Replace the `wash_sale.rs:33` marker with the settled basis (CC 5.1; STS 552/2022 RC 1874/2021; STS 287/2009; Ley 39/2015 art. 30.4; OnTax worked dates). Behavior unchanged (inclusive, last-day clamp).
   (b) NEW warnings when an outcome actually turns on residual arithmetic ambiguity: a repurchase landing EXACTLY on the anterior/posterior boundary ordinal that causes a deferral (or is the nearest miss just outside), and any window whose boundary was month-end CLAMPED where a repurchase falls within the clamp-affected span. Emit log + console + CSV note on the affected sale row; message names the two dates and the euro amount at stake.
   Tests: rstest boundary cases (repurchase on D+2-months exactly → deferred + warned; sale 31-12 with repurchase 28-02 → clamp warning; mid-window repurchase → no warning).
