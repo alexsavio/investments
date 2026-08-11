@@ -210,6 +210,55 @@ fn comun_does_not_actualize() {
     assert_eq!(spain.gyp_net, dec!(22500));
 }
 
+/// Territorio Común end to end: the state savings scale, not just the missing coefficient.
+///
+/// The `fifo` trades yield €22,500 of ganancias under Común. LIRPF arts. 66.1.1º + 76 tax that at
+/// 19% to 6,000 and 21% thereafter: 1,140 + 16,500 × 21% = 4,605. The Gipuzkoa run of the same
+/// trades pays 3,957.24 — a different base *and* a different scale, so neither figure can be
+/// derived from the other.
+#[test]
+fn comun_taxes_the_base_on_the_state_scale() {
+    let comun = run_pipeline("fifo", 2026, SpanishTaxRegime::Comun);
+
+    assert_eq!(comun.regime, SpanishTaxRegime::Comun);
+    assert_eq!(comun.gyp_net, dec!(22500));
+    assert_eq!(comun.savings_base, dec!(22500));
+    assert_eq!(comun.savings_quota, dec!(4605));
+    assert_eq!(comun.net_tax_due, dec!(4605));
+
+    let gipuzkoa = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.savings_quota, dec!(3957.24));
+}
+
+/// The RCM path under Común: the custody fee is deductible, so the base is €945, and the
+/// double-taxation credit is computed against the state scale's average rate.
+#[test]
+fn comun_credits_foreign_withholding_against_the_state_scale() {
+    let comun = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
+
+    assert_eq!(comun.rcm_net, dec!(945));
+    assert_eq!(comun.savings_base, dec!(945));
+    // Entirely inside the 19% first bracket, which both regimes happen to share at this level.
+    assert_eq!(comun.savings_quota, dec!(179.55));
+    assert_eq!(comun.average_savings_rate, dec!(0.19));
+    // Treaty limb €135 against a rate limb of 0.19 × €900 = €171.
+    assert_eq!(comun.total_foreign_tax_credit, dec!(135));
+    assert_eq!(comun.net_tax_due, dec!(44.55));
+}
+
+/// A loss under Común carries forward at its nominal amount: actualization was abolished for 2015
+/// onwards by Ley 26/2014, and never applied to securities even before that.
+#[test]
+fn comun_carries_a_loss_forward_without_actualizing_it() {
+    let comun = run_pipeline("loss", 2026, SpanishTaxRegime::Comun);
+
+    assert_eq!(comun.capital_gains[0].lots[0].coefficient, dec!(1));
+    assert_eq!(comun.capital_gains[0].actualized_cost_eur, dec!(18000));
+    assert_eq!(comun.gyp_net, dec!(-9000));
+    assert_eq!(comun.savings_quota, dec!(0));
+    assert_eq!(comun.gyp_ledger_next.balances()[&2026], dec!(9000));
+}
+
 /// The two regimes must differ on these trades by **exactly** the actualization effect and nothing
 /// else, which is what proves the coefficient is the only thing the regime switch changed here.
 #[test]
