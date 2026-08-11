@@ -419,7 +419,9 @@ fn grant_lot_cost_basis_eur(
         .find(|grant| grant.symbol == lot.original_symbol && grant.date == vest_date)
     else {
         warn!(
-            "Stock grant lot for {} vested {} has no matching grant record; using €0 cost basis.",
+            "Stock grant lot for {} vested {} has no matching grant record; using a €0 cost basis, \
+             which taxes the whole disposal proceeds as gain. Supply the vest-date FMV and correct \
+             the figure by hand — see the open-interpretations section of docs/germany-taxes.md.",
             lot.original_symbol, vest_date
         );
         return Ok(dec!(0));
@@ -427,7 +429,9 @@ fn grant_lot_cost_basis_eur(
 
     let Some(fmv) = grant.fmv_per_share else {
         warn!(
-            "Stock grant {} vested {}: vest-date FMV unavailable; using €0 cost basis (overstates gain).",
+            "Stock grant {} vested {}: vest-date FMV unavailable; using a €0 cost basis, which \
+             taxes the whole disposal proceeds as gain. Correct the figure by hand — see the \
+             open-interpretations section of docs/germany-taxes.md.",
             lot.original_symbol, vest_date
         );
         return Ok(dec!(0));

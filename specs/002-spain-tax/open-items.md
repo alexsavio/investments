@@ -137,5 +137,5 @@ the statement carries no fee rows anyway). The three pre-existing warnings — o
   each with the warning text that surfaces it.
 - No `TODO(verify)` marker remains anywhere in the Spanish feature. The two left in `src/` are
   German (`tax_statement/germany/csv_formatter.rs`, `tax_statement/germany/statement.rs`) and out of
-  scope for this branch.
+  scope for this branch. They were closed in a later round — see `specs/001-germany-tax/open-items.md`.
 - The pre-existing 33 `parse_real` failures and 4 clippy errors in untouched files.
