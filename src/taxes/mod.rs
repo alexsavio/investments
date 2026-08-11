@@ -5,6 +5,7 @@ mod net_calculator;
 mod payment_day;
 mod rates;
 pub mod remapping;
+pub mod spain;
 
 use std::collections::BTreeMap;
 
@@ -36,6 +37,8 @@ pub enum TaxJurisdiction {
     Russia,
     #[serde(alias = "Germany")]
     Germany,
+    #[serde(alias = "Spain")]
+    Spain,
 }
 
 /// Year-boundary redemption prices (EUR per unit) for a fund, used to compute the Vorabpauschale
@@ -55,6 +58,17 @@ pub struct FundNav {
     pub acquired_month: Option<u32>,
 }
 
+/// Spanish IRPF configuration. Required when `jurisdiction: spain`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpanishTaxConfig {
+    /// Which regime the filer is subject to. Deliberately has no default: the regimes differ in
+    /// the savings scale, in whether acquisition costs are actualized, in whether the two
+    /// savings-base groups may offset each other, and in whether custody fees are deductible, so a
+    /// guessed default would silently file under the wrong tax code.
+    pub regime: spain::SpanishTaxRegime,
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaxConfig {
@@ -67,6 +81,10 @@ pub struct TaxConfig {
     /// Kirchensteuer (church tax) rate for Germany (8% or 9%), default 0
     #[serde(default)]
     pub church_tax_rate: Option<Decimal>,
+    /// Spanish IRPF settings. Nested per-jurisdiction block (the flat `german_*` fields above are
+    /// the older pattern; nesting is the pattern for jurisdictions added since).
+    #[serde(default)]
+    pub spain: Option<SpanishTaxConfig>,
     /// Festgestellter Verlustvortrag for the stock pot (Verlustverrechnungstopf Aktien, §20(6)
     /// S.4 EStG) as of Dec 31 of the prior year, in EUR. Offsets only future share-sale gains.
     #[serde(default)]
@@ -102,6 +120,19 @@ pub struct TaxConfig {
 }
 
 impl TaxConfig {
+    /// Regime driving the `localities::spain` analysis approximation.
+    ///
+    /// Falls back to Gipuzkoa when the `taxes.spain` block is absent, because the analysis and
+    /// rebalancing views must still produce a rate rather than fail. The filing path does not share
+    /// this leniency: it reads the block directly and errors when it is missing, so a real
+    /// statement is never generated under a guessed regime.
+    pub fn spanish_regime(&self) -> spain::SpanishTaxRegime {
+        self.spain
+            .as_ref()
+            .map(|spain| spain.regime)
+            .unwrap_or(spain::SpanishTaxRegime::Gipuzkoa)
+    }
+
     /// Get the ETF classification for a given ISIN, defaulting to None (no exemption)
     pub fn get_etf_classification(&self, isin: &str) -> EtfClassification {
         self.etf_classification.get(isin).copied().unwrap_or_default()
