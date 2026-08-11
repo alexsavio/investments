@@ -39,6 +39,10 @@ pub fn generate_tax_statement(
         return generate_german_tax_statement(config, portfolio_name, year, tax_statement_path);
     }
 
+    if country.jurisdiction == Jurisdiction::Spain {
+        return generate_spanish_tax_statement(config, portfolio_name, year, tax_statement_path);
+    }
+
     let broker_statement = BrokerStatement::load(config, portfolio,
         ReadingStrictness::TRADE_SETTLE_DATE | ReadingStrictness::OTC_INSTRUMENTS | ReadingStrictness::TAX_EXEMPTIONS |
         ReadingStrictness::REPO_TRADES | ReadingStrictness::GRANTS)?;
@@ -135,6 +139,114 @@ pub fn generate_tax_statement(
         println!(
             "{}",
             Color::Green.paint("There is no any income to declare.")
+        );
+    }
+
+    Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker))
+}
+
+/// Generate a Spanish tax statement.
+fn generate_spanish_tax_statement(
+    config: &Config,
+    portfolio_name: &str,
+    year: Option<i32>,
+    output_path: Option<&Path>,
+) -> GenericResult<TelemetryRecordBuilder> {
+    let year = year.ok_or("Tax year must be specified for the Spanish tax statement")?;
+    let portfolio = config.get_portfolio(portfolio_name)?;
+    let broker = portfolio
+        .broker
+        .get_info(config, portfolio.plan.as_deref())?;
+
+    let broker_statement = BrokerStatement::read(
+        broker,
+        portfolio.statements_path()?,
+        &portfolio.symbol_remapping,
+        &portfolio.instrument_internal_ids,
+        &portfolio.instrument_names,
+        portfolio.get_tax_remapping()?,
+        &portfolio.tax_exemptions,
+        &portfolio.corporate_actions,
+        ReadingStrictness::TRADE_SETTLE_DATE
+            | ReadingStrictness::OTC_INSTRUMENTS
+            | ReadingStrictness::TAX_EXEMPTIONS
+            | ReadingStrictness::REPO_TRADES
+            | ReadingStrictness::GRANTS,
+    )?;
+
+    broker_statement.check_period_against_tax_year(year)?;
+
+    // Spanish tax authorities accept ECB reference rates, so the converter comes from the
+    // jurisdiction rather than from the command being run.
+    let database = db::connect(&config.db_path)?;
+    let converter = CurrencyConverter::for_jurisdiction(
+        config.get_tax_country().jurisdiction, database, None, true);
+
+    // The same year-level computation the sell simulation prices its disposals against, so a
+    // simulated trim and the filed statement can never disagree about the base or the scale.
+    let (statement, has_income) = spain::compute_tax_year(
+        &broker_statement,
+        year,
+        &converter,
+        &config.taxes,
+    )?;
+
+    if !has_income {
+        println!(
+            "{}",
+            Color::Green.paint("There is no income to declare for Spanish taxes.")
+        );
+        return Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker));
+    }
+
+    if output_path.is_some() {
+        println!(
+            "{}",
+            Color::Yellow.paint(
+                "CSV output is not available for the Spanish statement yet; printing the summary."
+            )
+        );
+    }
+
+    println!("\n{}", Color::Cyan.paint("=== Spanish Tax Statement Summary ==="));
+    println!("Year: {year}");
+    println!(
+        "Regime: {}",
+        match statement.regime {
+            crate::taxes::spain::SpanishTaxRegime::Gipuzkoa => "Gipuzkoa (Norma Foral 3/2014)",
+            crate::taxes::spain::SpanishTaxRegime::Comun => "Territorio Común (Ley 35/2006)",
+        }
+    );
+    println!(
+        "Ganancias y pérdidas patrimoniales entries: {}",
+        statement.capital_gains.len()
+    );
+    println!(
+        "Net ganancias y pérdidas: €{}",
+        eur::format_eur(statement.gyp_net)
+    );
+    println!(
+        "Base liquidable del ahorro: €{}",
+        eur::format_eur(statement.savings_base)
+    );
+    println!(
+        "Cuota íntegra del ahorro: €{}",
+        eur::format_eur(statement.savings_quota)
+    );
+    println!("Net tax due: €{}", eur::format_eur(statement.net_tax_due));
+
+    if !statement.short_positions.is_empty() {
+        println!(
+            "\n{}",
+            Color::Yellow.paint(format!(
+                "Short positions are not tax-computed and need manual review: {}",
+                statement
+                    .short_positions
+                    .iter()
+                    .map(|(symbol, quantity)| format!("{symbol}: {quantity}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
         );
     }
 

@@ -1,0 +1,260 @@
+//! Turns a broker statement into a Spanish tax statement.
+
+use chrono::Datelike;
+
+use log::warn;
+
+use crate::broker_statement::{
+    BrokerStatement, FifoDetails, StockSell, StockSellType, StockSourceDetails,
+};
+use crate::core::GenericResult;
+use crate::currency::Cash;
+use crate::currency::converter::CurrencyConverter;
+use crate::taxes::spain::SpanishTaxRegime;
+use crate::taxes::spain::scale::SavingsScale;
+use crate::taxes::{SpanishTaxConfig, TaxConfig};
+use crate::types::Decimal;
+
+use super::statement::{CapitalGainEntry, SpanishLotDetail, SpanishTaxStatement};
+
+/// Everything about the filer's regime and tax year that the per-income processors need, resolved
+/// once so no processor re-matches the regime enum and risks the two disagreeing.
+struct SpanishTaxParams<'a> {
+    config: &'a SpanishTaxConfig,
+    regime: SpanishTaxRegime,
+    year: i32,
+    scale: SavingsScale,
+}
+
+impl<'a> SpanishTaxParams<'a> {
+    fn resolve(tax_config: &'a TaxConfig, year: i32) -> GenericResult<SpanishTaxParams<'a>> {
+        let config = tax_config.spanish()?;
+        Ok(SpanishTaxParams {
+            config,
+            regime: config.regime,
+            year,
+            scale: config.savings_scale(year)?,
+        })
+    }
+}
+
+/// Whether a sale produces a ganancia/pérdida patrimonial in `year`.
+///
+/// The tax year is keyed off the conclusion date, not settlement.
+// TODO(verify): whether the "fecha de transmisión" for listed securities is the trade date or the
+// settlement date was not resolvable from the foral or state texts consulted. The conclusion date
+// is used, matching the German treatment and the economic reality of the transfer.
+pub fn produces_capital_gain(trade: &StockSell, year: i32) -> bool {
+    trade.conclusion_time.date.year() == year && matches!(trade.type_, StockSellType::Trade { .. })
+}
+
+/// Compute a Spanish tax year from a broker statement.
+///
+/// Returns the statement and whether any income was found, mirroring the German entry point so the
+/// filing path and the sell simulation price the same year the same way.
+pub fn compute_tax_year(
+    broker_statement: &BrokerStatement,
+    year: i32,
+    converter: &CurrencyConverter,
+    tax_config: &TaxConfig,
+) -> GenericResult<(SpanishTaxStatement, bool)> {
+    let params = SpanishTaxParams::resolve(tax_config, year)?;
+    let mut statement = SpanishTaxStatement::new(year, params.regime, params.scale.clone());
+
+    let has_income = process_broker_statement(&mut statement, broker_statement, &params, converter)?;
+    statement.calculate_totals();
+
+    Ok((statement, has_income))
+}
+
+fn process_broker_statement(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let has_trades = process_trades(statement, broker_statement, params, converter)?;
+
+    // Short positions get no automatic treatment; surface them for manual review.
+    statement.short_positions = broker_statement
+        .short_positions
+        .iter()
+        .map(|(symbol, &quantity)| (symbol.clone(), quantity))
+        .collect();
+    statement.short_positions.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if !statement.short_positions.is_empty() {
+        let listed = statement
+            .short_positions
+            .iter()
+            .map(|(symbol, quantity)| format!("{symbol}: {quantity}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        warn!(
+            "Short positions held at the end of the statement are not tax-computed and need manual \
+             review: {listed}."
+        );
+    }
+
+    Ok(has_trades)
+}
+
+/// Turn each qualifying sale into a capital-gain entry with per-lot actualization.
+fn process_trades(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_income = false;
+
+    // Spain files in EUR; build the jurisdiction once so the shared trade engine converts through
+    // the ECB rates supplied by the caller.
+    let country = crate::localities::spain(&TaxConfig {
+        spain: Some(params.config.clone()),
+        ..Default::default()
+    });
+
+    for trade in &broker_statement.stock_sells {
+        if !produces_capital_gain(trade, params.year) {
+            continue;
+        }
+
+        has_income = true;
+
+        // Per-lot FIFO cost basis from the shared broker-statement engine: it consumes lots in
+        // acquisition order (art. 47.2 / art. 37.2, "los adquiridos en primer lugar") and folds in
+        // buy-side commissions. FX follows SellDetails conventions — revenue at settlement, each
+        // lot's purchase cost at its own settlement — a documented simplification.
+        let instrument = broker_statement.instrument_info.get_or_empty(&trade.symbol);
+        let details = trade.calculate(&country, &instrument, &[], converter)?;
+
+        let net_proceeds_eur = details.local_revenue.amount - details.local_commission.amount;
+        let total_quantity: Decimal = details
+            .fifo
+            .iter()
+            .map(|lot| lot.quantity * lot.multiplier)
+            .sum();
+
+        let mut lots = Vec::with_capacity(details.fifo.len());
+        let mut cost_eur = Decimal::ZERO;
+        let mut actualized_cost_eur = Decimal::ZERO;
+
+        for lot in &details.fifo {
+            let lot_cost_eur = lot_cost_basis_eur(broker_statement, lot, converter)?;
+
+            // The coefficient is a per-lot figure: it depends on when this lot was acquired, not
+            // on when the position as a whole was built.
+            let coefficient = params
+                .config
+                .actualization_coefficient(params.year, lot.conclusion_time.date)?;
+            let lot_actualized_cost = lot_cost_eur * coefficient;
+
+            let lot_quantity = lot.quantity * lot.multiplier;
+            let lot_proceeds = if total_quantity.is_zero() {
+                Decimal::ZERO
+            } else {
+                net_proceeds_eur * lot_quantity / total_quantity
+            };
+
+            cost_eur += lot_cost_eur;
+            actualized_cost_eur += lot_actualized_cost;
+
+            lots.push(SpanishLotDetail {
+                acquisition_date: lot.conclusion_time.date,
+                quantity: lot_quantity,
+                cost_eur: lot_cost_eur,
+                coefficient,
+                actualized_cost_eur: lot_actualized_cost,
+                proceeds_eur: lot_proceeds,
+                gain_eur: lot_proceeds - lot_actualized_cost,
+            });
+        }
+
+        // Summed from the lots rather than recomputed, so the entry total and the audit lines that
+        // justify it can never disagree.
+        let fiscal_gain_loss: Decimal = lots.iter().map(|lot| lot.gain_eur).sum();
+
+        let instrument_info = broker_statement.instrument_info.get(&trade.symbol);
+        let isin = instrument_info
+            .and_then(|info| info.isin.iter().next())
+            .map(|isin| isin.to_string())
+            .unwrap_or_default();
+        let description = broker_statement
+            .instrument_info
+            .get_name(&trade.symbol)
+            .to_string();
+
+        statement.capital_gains.push(CapitalGainEntry {
+            symbol: trade.symbol.clone(),
+            isin,
+            description,
+            sale_date: trade.conclusion_time.date,
+            settle_date: trade.execution_date,
+            quantity: total_quantity,
+            proceeds_eur: net_proceeds_eur,
+            cost_eur,
+            actualized_cost_eur,
+            fiscal_gain_loss,
+            deferred_loss: Decimal::ZERO,
+            integrable_amount: fiscal_gain_loss,
+            lots,
+            notes: None,
+        });
+    }
+
+    Ok(has_income)
+}
+
+/// Acquisition cost of one FIFO lot in EUR.
+fn lot_cost_basis_eur(
+    broker_statement: &BrokerStatement,
+    lot: &FifoDetails,
+    converter: &CurrencyConverter,
+) -> GenericResult<Decimal> {
+    match lot.source {
+        // Vested shares carry no trade cost in `SellDetails`. Their acquisition value is the
+        // vest-date FMV, which was already taxed as employment income in the general base.
+        StockSourceDetails::Grant => grant_lot_cost_basis_eur(broker_statement, lot, converter),
+        _ => Ok(lot.total_cost("EUR", converter)?.amount),
+    }
+}
+
+fn grant_lot_cost_basis_eur(
+    broker_statement: &BrokerStatement,
+    lot: &FifoDetails,
+    converter: &CurrencyConverter,
+) -> GenericResult<Decimal> {
+    let vest_date = lot.conclusion_time.date;
+
+    let Some(grant) = broker_statement
+        .stock_grants
+        .iter()
+        .find(|grant| grant.symbol == lot.original_symbol && grant.date == vest_date)
+    else {
+        warn!(
+            "Stock grant lot for {} vested {} has no matching grant record; using €0 acquisition \
+             value.",
+            lot.original_symbol, vest_date
+        );
+        return Ok(Decimal::ZERO);
+    };
+
+    let Some(fmv) = grant.fmv_per_share else {
+        warn!(
+            "Stock grant {} vested {}: vest-date FMV unavailable; using €0 acquisition value \
+             (overstates the gain).",
+            lot.original_symbol, vest_date
+        );
+        return Ok(Decimal::ZERO);
+    };
+
+    // fmv is per original (un-split) share; lot.quantity is likewise the pre-multiplier count.
+    let cost = Cash::new(fmv.currency, fmv.amount * lot.quantity);
+    Ok(converter
+        .convert_to_cash_rounding(vest_date, cost, "EUR")
+        .map_err(|e| {
+            format!("Converting vest-date FMV for stock grant {} on {vest_date}: {e}", lot.original_symbol)
+        })?
+        .amount)
+}
