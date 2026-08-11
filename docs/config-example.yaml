@@ -245,6 +245,20 @@ portfolios:
 #        acquired_month: 4          # Optional: month bought this year (Zwölftelung); omit if held all year
 #  vorabpauschale_carryforward:     # Per-ISIN accumulated gross Vorabpauschale; reduces the sale gain (§19)
 #    IE00B4L5Y983: 128.24
+#
+#  # For Spain. Nested per-jurisdiction block (the flat german_* fields above are the older pattern).
+#  # See docs/spain-taxes.md.
+#  jurisdiction: spain
+#  spain:
+#    regime: gipuzkoa               # Required, no default: gipuzkoa (Norma Foral 3/2014) or comun (LIRPF)
+#    loss_carryforward:             # Saldos negativos pendientes, keyed by the year each arose in
+#      gyp: {2024: '1200.50'}       # Ganancias y pérdidas patrimoniales (4-year window)
+#      rcm: {2025: '80.00'}         # Rendimientos del capital mobiliario (4-year window)
+#    deferred_losses:               # Valores-homogéneos deferrals carried in from a prior return
+#      - {symbol: VUSA, isin: IE00B3XXRP09, loss: '420.00', blocked_quantity: 15,
+#         acquisition_date: 2025-12-20, sale_date: 2025-12-10}
+#    coefficients:                  # Optional: override/extend the shipped Decreto Foral tables
+#      2027: {2020: '1.11'}         # disposal year -> acquisition year -> coefficient
 
 # Your individual broker + bank account configuration. For now specifies your bank commissions for transferring funds
 # from your bank account to your broker account. Will be taken into account during portfolio performance analysis.
