@@ -250,9 +250,9 @@ Explicitly **skipped** (do not do): moving German `loss_carryforward.rs`; any `T
 
 ### Phase 5 — Docs & polish
 
-- **S19 — Docs.** Status: TODO — `docs/spain-taxes.md` (mirror `germany-taxes.md` structure: overview, config, usage, scales with sources, FIFO + coefficients worked example, wash sale + carry-out workflow + statement-window caveat, loss compensation + Común cross-offset, foreign tax credit US example, custody fees, FX, grants, Modelo 109/100 mapping + warning, informational notes: Modelo 720, no traspaso at foreign brokers, no Vorabpauschale equivalent; out of scope: wealth tax, partial-year residency, Beckham regime, unlisted 1-year window) + README + `config-example.yaml`.
+- **S19 — Docs.** Status: ✅ Done (`1c967306`) — `docs/spain-taxes.md` (mirror `germany-taxes.md` structure: overview, config, usage, scales with sources, FIFO + coefficients worked example, wash sale + carry-out workflow + statement-window caveat, loss compensation + Común cross-offset, foreign tax credit US example, custody fees, FX, grants, Modelo 109/100 mapping + warning, informational notes: Modelo 720, no traspaso at foreign brokers, no Vorabpauschale equivalent; out of scope: wealth tax, partial-year residency, Beckham regime, unlisted 1-year window) + README + `config-example.yaml`.
   Commit: `docs(spain-tax): add the Spanish tax statement guide`
-- **S20 — Final gate.** Status: TODO — full `./check` + `cargo test`, sweep and list every `TODO(verify)` in a closing report appended to this file.
+- **S20 — Final gate.** Status: ✅ Done — see the closing report at the end of this file.
   Commit: `chore(spain-tax): final gate and verification report`
 
 ## Appendix A — Worked numbers (fixture/unit-test expectations)
@@ -305,17 +305,130 @@ Savings quota on the Gipuzkoa figure (no other income, 2026 scale): base 19,692 
 - Fee/dividend/interest sources: `BrokerStatement { dividends, idle_cash_interest, fees, foreign_cash_flows, ... }` — `src/broker_statement/mod.rs:64`.
 
 
-## Session stopping point (2026-08-11)
+## Closing report (S20)
 
-Phases 0-2 are complete except S12/S13; phases 3-5 are not started. Branch `002-spain-tax`, 13 commits on top of `1a5c0e7b`.
+### Gate
 
-**Gate status at the stopping point**: `cargo check` clean; `cargo test spain` 123 passed / 0 failed; `cargo test --lib` 589 passed / 33 failed (all 33 are the pre-existing `broker_statement::*::parse_real` failures from the private, empty `testdata/` submodule — the same 33 as on the base commit, count unchanged throughout); `./check` reports the same 4 pre-existing clippy errors in untouched files (`portfolio/rebalancing.rs`, `quotes/cbr/mod.rs`, `analysis/performance/statistics.rs`, `formats/xls/table.rs`), matching the out-of-scope list recorded in the German AUDIT.md T10. No new lint was introduced at any commit.
+| Check | Result |
+|---|---|
+| `cargo check --lib --all-targets` | clean |
+| `cargo test spain --lib` | **169 passed / 0 failed** |
+| `cargo test --lib` | **635 passed / 33 failed** — all 33 are the pre-existing `broker_statement::*::parse_real` failures from the private, empty `testdata/` submodule. Verified: filtering the failure list for anything that is not a `parse_real` case yields zero rows, and the count is unchanged from the base commit |
+| `cargo test --no-fail-fast` (all targets) | lib as above; `tests/generate.rs` 1 passed; binary target has no tests |
+| `./check` (clippy, dev + release, `-Dwarnings`) | the same **4 pre-existing errors** in untouched files: `portfolio/rebalancing.rs`, `quotes/cbr/mod.rs`, `analysis/performance/statistics.rs`, `formats/xls/table.rs`. No new lint was introduced at any commit |
 
-**Not started, in plan order**: S12 (CSV formatter + contract doc), S13 (sell simulation), S14-S16 (wash sale), S17 (Común end-to-end rerun), S18 (cross-offset fixture — engine done, fixture outstanding), S19 (docs), S20 (final gate).
+`cargo fmt --check` reports diffs across the repo including files this feature never touched
+(`build.rs` among them); the project's gate is `./check`, which runs clippy only, so rustfmt is not
+enforced here and was not run.
 
-**Correctness gaps made loud rather than left silent.** Both would otherwise produce plausible wrong numbers, so each emits a `warn!` and a console warning, and each is carried on the statement so the CSV formatter can render it as a `# WARNING` line when S12 lands:
+### Every `TODO(verify)` in the Spanish feature
 
-- **Wash sale not applied** (`SpanishTaxStatement::wash_sale_unchecked`). Every instrument disposed of at a loss is named. Without the deferral rule a loss on a repurchased holding is deducted in full, which **overstates the deduction** — the dangerous direction. Commit `4d104cd0`.
-- **Borrowed-balance FX** (`fx_borrowed_review`). Excluded from the savings base with a warning, because repaying a currency loan is not clearly a transfer of a patrimonial element and neither statute settles it.
+Ordered by how much of a computed number rides on it.
 
-**CSV output** is not wired: `--output` prints the console summary and says so explicitly rather than writing a partial file.
+**Affects a figure on the return**
+
+1. `tax_statement/spain/wash_sale.rs:228` — **reintegration keying.** Both statutes release a
+   deferred loss "a medida que se transmitan los activos que **permanezcan en el patrimonio** de la
+   persona contribuyente" (NF 3/2014 art. 43 closing ¶ / LIRPF art. 33.5 closing ¶) — the securities
+   *remaining in the estate*, which is broader than the repurchased lot the implementation attaches
+   the deferral to. Under FIFO with a single instrument the two readings coincide in the common case;
+   they diverge when untouched pre-existing lots are held alongside the repurchased ones. The same
+   marker settles, by assumption, which shares of a partly-blocked acquisition date a sale consumes
+   first: the blocked ones.
+2. `tax_statement/spain/processor.rs:35` — **treaty rate.** Hard-coded at 15%, the dividend rate in
+   the Spain-US and Spain-Germany treaties and most of Spain's network. Neither NF 3/2014 art. 91 nor
+   LIRPF art. 80 mentions a treaty cap at all — the limit comes from the treaty itself, so a filer on
+   a different treaty gets the wrong credit.
+3. `tax_statement/spain/processor.rs:74` — **fecha de transmisión.** Whether a listed security's
+   transfer date is the trade date or the settlement date was not resolvable. The conclusion date is
+   used. Moves income between tax years for a trade concluded in late December.
+4. `taxes/spain/compensation.rs:38` — **order of operations in the cross-offset.** Art. 49.1 caps it
+   at "el 25 por ciento de dicho saldo positivo" without settling whether that positive is measured
+   before or after prior-year balances are absorbed. Measured after, the conservative reading.
+   Común only.
+5. `tax_statement/spain/wash_sale.rs:33` — **window endpoints.** Treated as inclusive. Neither text
+   says whether "dos meses anteriores" includes the day exactly two months back. Inclusive defers
+   more, which understates the deduction rather than overstating it.
+6. `tax_statement/spain/wash_sale.rs:54` — **homogeneity = same ISIN.** Art. 43 defers to the
+   RD 1704/1999 / RIRPF definition, which reaches different issues of the same issuer with the same
+   rights. Same-ISIN is the only test a Flex statement supports.
+7. `tax_statement/spain/processor.rs:682` — **custody-fee keyword match.** Art. 26.1.a names the
+   *service*, not the wording a broker uses. An unrecognised fee is reported but not deducted, which
+   overstates tax rather than understating it. Común only — nothing is deductible under Gipuzkoa.
+8. `tax_statement/spain/statement.rs:401` — **the credit's income base.** Art. 91.b applies the
+   average rate to "la renta obtenida en el extranjero" and art. 80.1.b to "la parte de base
+   liquidable gravada en el extranjero"; whether that is gross or net of attributable expenses is
+   unsettled. Gross dividends are used.
+9. `taxes/spain/scale.rs:135` — **average-rate rounding.** Both statutes say the rate is expressed to
+   two decimals, but neither says whether the credit cap is computed from the rounded rate or the
+   exact quotient. The exact quotient is used.
+10. `tax_statement/eur.rs:16` — **rounding convention.** Two decimals, half away from zero, assumed
+    for Modelo 109 / 100 per-line amounts. Neither the foral nor the state instructions state the
+    mode explicitly. Sub-cent effect only.
+
+**Reporting layer only**
+
+11. `tax_statement/spain/csv_formatter.rs:22` — every Modelo 109 casilla. See below.
+
+### The Modelo 109 casilla situation
+
+This is the one place a human must not trust the tool's output as printed.
+
+- Gipuzkoa **publishes no static numbered form**. The return is generated by the Zergabidea platform,
+  so there is no PDF whose boxes can be cited for a filing year.
+- The only official box map reachable during S1 is explicitly dated **AÑO 2019**
+  (`egoitza.gipuzkoa.eus/documents/39465/25500467/5.FE-Errenta_maila_PFEZ-es.pdf`): RCM 06+16,
+  RCM deductible expenses 17, RCM retenciones 07+22, ganancias patrimoniales 28, base imponible
+  general 19, base imponible del ahorro 33, cuota líquida 64. The tool emits six of these.
+- Two 2026 changes plausibly renumbered boxes: art. 76.1 gained its own cuota-íntegra column under
+  NF 1/2025, and Anexo 3 gained a crypto section.
+- The casilla for the **deducción por doble imposición internacional is not published anywhere
+  reachable, for any year**. It is emitted as `MODELO_109_CASILLA_UNKNOWN` with the computed amount
+  and no number.
+- **Modelo 100** (Territorio Común) was never mapped: its rows carry labels and the marker
+  `casilla unverified`.
+
+Every one of these is preceded by a `# WARNING` banner in the CSV. The amounts are computed; the box
+numbers are not evidence.
+
+### What a human should check before filing
+
+1. **Verify each casilla against your filing year's own form.** The numbers above are indicative.
+2. **Confirm your treaty's dividend rate** if the source state is not the US or Germany, and change
+   the hard-coded 15% if it differs.
+3. **Extend the statement at least two months past year end** before filing, or accept the
+   `WASH_SALE_WINDOW_OPEN` warning: a December loss whose repurchase window runs into February is
+   deducted in full and may be overstated. Re-run when the statement covers the window.
+4. **Copy both carry-forward blocks into next year's config** — `loss_carryforward` (per group, per
+   origin year) and `deferred_losses` (per blocked lot). The console prints them paste-ready. A
+   balance dropped for expiry is reported separately; it is gone, not carried.
+5. **Check any instrument you hold in more than one homogeneous issue**, and any deferral that
+   spanned a stock split — neither is modelled.
+6. **Review the borrowed-balance FX figures** if any appear: they are excluded from the base pending
+   a determination neither statute makes.
+7. **Modelo 720** is a separate informational obligation this tool never computes.
+8. **Joint holdings run a separate FIFO queue** under the Diputación Foral's own guidance. The tool
+   models a single queue per symbol; a jointly-held position needs its own run.
+
+### Known gaps, deliberately not implemented
+
+- Art. 43.h / 33.5.g **unlisted securities** — one-year window, not two months.
+- Art. 43.i **fungible crypto**.
+- **Corporate-action sells are not replayed**, so a blocked lot is not carried across a stock split.
+- The **general base** (employment income, including RSU vesting) is out of scope, as are wealth tax,
+  partial-year residency and the Beckham regime.
+
+
+## Feature status
+
+All twenty tasks are complete. Branch `002-spain-tax`, 27 commits on top of `1a5c0e7b`.
+
+**Correctness gaps that remain loud rather than silent** — each emits a `warn!`, a console warning
+and a `# WARNING` line in the CSV, because each would otherwise produce a plausible wrong number:
+
+- **Borrowed-balance FX** (`fx_borrowed_review`). Excluded from the savings base, because repaying a
+  currency loan is not clearly a transfer of a patrimonial element and neither statute settles it.
+- **Open valores-homogéneos window** (`wash_sale_window_gaps`). A loss whose +2-month repurchase
+  window reaches past the statement's last date is deducted in full, which may **overstate** it.
+- **Unpriced disposal years** (`wash_sale_unpriced_years`). Sales in a year with no shipped
+  actualization table are replayed for lot consumption but never tested for deferral.
