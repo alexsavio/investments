@@ -42,7 +42,7 @@ Reviewer-verified-correct (do not restructure): the Común two-phase compensatio
 
 ## Phase F2 — Documentation & consistency
 
-- **F7 — Documentation corrections.** Status: TODO — one commit:
+- **F7 — Documentation corrections.** Status: ✅ Done (`543d9de5`) — one commit:
   (a) `docs/spain-taxes.md:326-332`: the US-dividend credit example is impossible post-exemption (a €1,000 Gipuzkoa dividend is fully exempt ⇒ credit €0, contradicting the doc's own §364-367). Replace with two examples: the Gipuzkoa case showing credit €0 + IRS reclaim, and a Común case (base €10,000 ⇒ 19.80% avg rate) showing the real min() chain with F1's per-row limb.
   (b) `--output` flag doesn't exist (positional arg): fix `docs/spain-taxes.md:71`, `csv-output.md:10`, and the same pre-existing falsehood in the German console hint (`src/tax_statement/mod.rs:611`).
   (c) Unify the expired-loss message wording across `carryforward.rs:87-91`, `compensation.rs:130-134`, console (`mod.rs:317-323`), and the doc quote (`spain-taxes.md:502`) — one phrasing everywhere.
@@ -51,10 +51,10 @@ Reviewer-verified-correct (do not restructure): the Común two-phase compensatio
   (f) `plan.md:424`: "27 commits" → point at the actual branch state and at `remediation.md`/this file.
   (g) Add the Código Civil art. 5.1 "de fecha a fecha" basis at the `wash_sale.rs:33` marker (currently only in the docs); quote the CSV banner in `spain-taxes.md:222` with an ellipsis; fix the stale test comment (`tests.rs` "whole €7,200 is taxed" above post-R10 assertions taxing 5,700).
   Commit: `docs(spain-tax): correct the credit example and align documentation with behavior`
-- **F8 — CSV contract refresh.** Status: TODO — bring `specs/002-spain-tax/contracts/csv-output.md` up to the emitted format:
+- **F8 — CSV contract refresh.** Status: ✅ Done (`4ddfe82f`) — bring `specs/002-spain-tax/contracts/csv-output.md` up to the emitted format:
   row types `Stock Grant` + `Corporate Action` + reintegration in the enum and file-structure prose; the nine undocumented summary keys (`SUMMARY_RCM_DIVIDEND_EXEMPTION`, `SUMMARY_RCM_INTEREST_PAID`, `SUMMARY_GYP_DEFERRED`, `SUMMARY_GYP_REINTEGRATED`, both `SUMMARY_PRIOR_CROSS_OFFSET_*`, `SUMMARY_FOREIGN_TAXABLE_INCOME`, `WASH_SALE_WINDOW_OPEN`, `SHORT_POSITION`) plus F4's revised rows; delete the phantom `# FX BORROWED BALANCE` banner; align banner wording with the code's actual text; document per-regime warning banners and the withholding-warning's non-zero condition; complete "populated by" for reintegration (`isin`, `gain_loss_eur`) and Stock Grant (`quantity`, `gross_amount_eur` — note the column reuse and extend the column-placement test to the grant row); document the summary preamble and `# SALDOS NEGATIVOS PENDIENTES` / `# PÉRDIDAS DIFERIDAS PENDIENTES` banners and the key-shape asymmetry (`MODELO_109_CASILLA_<n>` vs `MODELO_100_<n>`); pandas recipe gains `comment="#"` on the summary read; make the `coefficient` cell use half-away-from-zero like every other numeric cell (it currently `rescale(3)`s half-to-even) and say so.
   Commit: `docs(spain-tax): bring the CSV contract up to date with the emitted format`
-- **F9 — Mechanical code batch.** Status: TODO — one commit:
+- **F9 — Mechanical code batch.** Status: ✅ Done (`4e93a094`) — one commit:
   (a) exemption `warn!` payer list: sort + dedup fully (`Vec::dedup` only kills consecutive duplicates — "STRC, GOOG, NVDA, STRC");
   (b) missing `regime` errors as serde's bare "missing field" — surface it as a proper error naming `taxes.spain.regime` (the one Spanish validation that breaks the name-the-path convention);
   (c) FX-borrowed `warn!`: route the amount through `format_eur` and align its wording with the console twin;
