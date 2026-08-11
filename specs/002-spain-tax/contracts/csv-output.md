@@ -60,7 +60,7 @@ by hand into Modelo 109 (Gipuzkoa, via Zergabidea) or Modelo 100 (AEAT).
 | 16 | `foreign_tax_eur` | Decimal | Tax actually withheld at source | dividends |
 | 17 | `treaty_capped_credit_eur` | Decimal | Withholding capped at the treaty rate on the **full** gross — what a reclaim from the source state is measured against, **informational per row** (see below) | dividends |
 | 18 | `savings_group` | String | `RCM` (rendimientos del capital mobiliario) or `GyP` (ganancias y pérdidas patrimoniales); empty when the row enters neither | most |
-| 19 | `notes` | String | Caveats, the per-lot actualization arithmetic, regime-specific deductibility notes | optional |
+| 19 | `notes` | String | Caveats, the per-lot actualization arithmetic, regime-specific deductibility notes, and on a capital-gain row any window-boundary review for that sale. Several notes on one row are joined with ` · ` | optional |
 
 ### Per-row figures that are not per-row taxes
 

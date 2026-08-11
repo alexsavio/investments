@@ -8,6 +8,8 @@ use crate::taxes::DeferredLossConfig;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::types::{Date, Decimal};
 
+use super::wash_sale::BoundaryKind;
+
 /// One FIFO lot consumed by a sale, with its actualization arithmetic laid out step by step.
 ///
 /// Kept per lot rather than collapsed into a sale-level total because the coefficient is a
@@ -81,6 +83,44 @@ pub struct WashSaleWindowGap {
     pub window_end: Date,
     /// Loss at risk, as a positive magnitude.
     pub loss_eur: Decimal,
+}
+
+/// A loss whose deferral turns on where exactly a window edge falls.
+///
+/// The arithmetic itself is settled — months counted de fecha a fecha, both ends inclusive, clamped
+/// to the last day of a short month — but no authority applies it to art. 33.5.f with concrete
+/// dates, so a deferral decided by one day is named rather than left implicit.
+#[derive(Clone, Debug)]
+pub struct WashSaleBoundaryReview {
+    pub symbol: String,
+    pub sale_date: Date,
+    /// The window edge as the tool computes it.
+    pub boundary_date: Date,
+    /// The edge an alternative reading would use.
+    pub alternative_date: Date,
+    pub kind: BoundaryKind,
+    /// Loss that moves between deferred and deductible under that reading, positive magnitude.
+    pub amount_eur: Decimal,
+}
+
+impl WashSaleBoundaryReview {
+    /// The sentence every surface reports this with, so the console, the log and the CSV cannot
+    /// drift apart.
+    pub fn message(&self) -> String {
+        format!(
+            "€{} of the {} loss of {} turns on window-boundary arithmetic: {}. The tool puts that \
+             edge on {}; the other reading puts it on {}. Two months are counted de fecha a fecha \
+             with both ends inclusive (Código Civil art. 5.1; STS 552/2022), clamping to the last \
+             day of a short month (Ley 39/2015 art. 30.4). See the open-interpretations register in \
+             docs/spain-taxes.md.",
+            super::format_eur(self.amount_eur),
+            self.symbol,
+            self.sale_date,
+            self.kind.description(),
+            self.boundary_date,
+            self.alternative_date
+        )
+    }
 }
 
 /// A loss whose deferral turns on which of the statute's two windows the listing venue takes.
@@ -244,6 +284,9 @@ pub struct SpanishTaxStatement {
     /// whose listing venue the two-month limb is not settled for.
     pub wash_sale_venue_reviews: Vec<WashSaleVenueReview>,
 
+    /// Filing-year losses decided by exactly where a window edge falls.
+    pub wash_sale_boundary_reviews: Vec<WashSaleBoundaryReview>,
+
     /// Loss deferred by this year's disposals, as a positive magnitude.
     pub total_deferred_loss: Decimal,
     /// Deferred loss this year's disposals released, as a positive magnitude.
@@ -373,6 +416,7 @@ impl SpanishTaxStatement {
             deferred_losses_next: Vec::new(),
             wash_sale_window_gaps: Vec::new(),
             wash_sale_venue_reviews: Vec::new(),
+            wash_sale_boundary_reviews: Vec::new(),
             total_deferred_loss: Decimal::ZERO,
             total_reintegrated_loss: Decimal::ZERO,
             total_dividend_income: Decimal::ZERO,

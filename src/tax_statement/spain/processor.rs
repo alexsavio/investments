@@ -24,8 +24,8 @@ use crate::types::{Date, Decimal};
 use super::wash_sale;
 use super::statement::{
     CapitalGainEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry,
-    SpanishLotDetail, SpanishTaxStatement, StockGrantEntry, WashSaleReintegrationEntry,
-    WashSaleVenueReview, WashSaleWindowGap,
+    SpanishLotDetail, SpanishTaxStatement, StockGrantEntry, WashSaleBoundaryReview,
+    WashSaleReintegrationEntry, WashSaleVenueReview, WashSaleWindowGap,
 };
 
 /// Everything about the filer's regime and tax year that the per-income processors need, resolved
@@ -394,6 +394,11 @@ fn process_trades(
         .collect();
     statement.deferred_losses_next = replay.carry_out;
     statement.wash_sale_venue_reviews = replay.venue_reviews;
+    statement.wash_sale_boundary_reviews = replay.boundary_reviews;
+
+    for review in &statement.wash_sale_boundary_reviews {
+        warn!("{}", review.message());
+    }
 
     for review in &statement.wash_sale_venue_reviews {
         warn!(
@@ -436,6 +441,21 @@ fn process_trades(
                 params.year, sale.symbol, sale.sale_date, params.year, params.year);
         };
 
+        let mut notes = Vec::new();
+        if sale.deferred_loss > Decimal::ZERO {
+            notes.push(format!(
+                "€{} of this loss is deferred: homogeneous securities were acquired within two \
+                 months of the sale (NF 3/2014 art. 43.g / LIRPF art. 33.5.f)",
+                super::format_eur(sale.deferred_loss)));
+        }
+        notes.extend(
+            statement
+                .wash_sale_boundary_reviews
+                .iter()
+                .filter(|review| review.symbol == sale.symbol && review.sale_date == sale.sale_date)
+                .map(|review| review.message()),
+        );
+
         statement.capital_gains.push(CapitalGainEntry {
             symbol: sale.symbol,
             isin: sale.isin,
@@ -450,10 +470,7 @@ fn process_trades(
             deferred_loss: sale.deferred_loss,
             integrable_amount: fiscal_gain_loss + sale.deferred_loss,
             lots: sale.lots,
-            notes: (sale.deferred_loss > Decimal::ZERO).then(|| format!(
-                "€{} of this loss is deferred: homogeneous securities were acquired within two \
-                 months of the sale (NF 3/2014 art. 43.g / LIRPF art. 33.5.f)",
-                super::format_eur(sale.deferred_loss))),
+            notes: (!notes.is_empty()).then(|| notes.join(" · ")),
         });
     }
 
@@ -621,6 +638,8 @@ struct ReplayResult {
     /// Losses whose deferral would change under the unlisted limb, on venues the two-month limb is
     /// not settled for.
     venue_reviews: Vec<WashSaleVenueReview>,
+    /// Losses decided by exactly where a window edge falls.
+    boundary_reviews: Vec<WashSaleBoundaryReview>,
 }
 
 /// Replay the whole statement through the valores-homogéneos engine and write each sale's deferral
@@ -769,6 +788,19 @@ fn apply_wash_sale_rule(
                 origin_sale_date: reintegration.origin_sale_date,
                 released_eur: reintegration.amount,
             });
+        }
+
+        if sale.sale_date.year() == params.year {
+            for review in &outcome.boundary_reviews {
+                result.boundary_reviews.push(WashSaleBoundaryReview {
+                    symbol: sale.symbol.clone(),
+                    sale_date: sale.sale_date,
+                    boundary_date: review.boundary_date,
+                    alternative_date: review.alternative_date,
+                    kind: review.kind,
+                    amount_eur: review.amount,
+                });
+            }
         }
 
         if outcome.wider_window_loss > Decimal::ZERO && sale.sale_date.year() == params.year {

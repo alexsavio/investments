@@ -1134,6 +1134,33 @@ fn a_malformed_opening_deferred_loss_is_rejected(
     assert!(error.contains("positive magnitude"), "{error}");
 }
 
+/// A deferral decided by the window's terminal day says so, on the sale row and in the statement.
+///
+/// Sell 100 on 2026-03-10 at a €900 loss and buy them back on 2026-05-10, the last day the window
+/// reaches. The whole loss defers — that is the reading the tool applies — but one day of arithmetic
+/// is all that stands behind it, so the sale row carries the warning.
+#[test]
+fn a_deferral_decided_by_the_window_edge_is_reported_on_the_sale_row() {
+    let spain = run_pipeline("wash_sale_boundary", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    let sale = &spain.capital_gains[0];
+    assert_eq!(sale.fiscal_gain_loss, dec!(-900));
+    assert_eq!(sale.deferred_loss, dec!(900));
+    assert_eq!(sale.integrable_amount, dec!(0));
+
+    assert_eq!(spain.wash_sale_boundary_reviews.len(), 1);
+    let review = &spain.wash_sale_boundary_reviews[0];
+    assert_eq!(review.symbol, "AAPL");
+    assert_eq!(review.boundary_date, Date::from_ymd_opt(2026, 5, 10).unwrap());
+    assert_eq!(review.alternative_date, Date::from_ymd_opt(2026, 5, 9).unwrap());
+    assert_eq!(review.amount_eur, dec!(900));
+
+    // The same sentence reaches the CSV, on the row it is about.
+    assert!(
+        sale.notes.as_deref().unwrap().contains(&review.message()),
+        "{:?}", sale.notes);
+}
+
 /// A repurchase outside the two months but inside the year is flagged when — and only when — the
 /// listing venue is not one the two-month limb is settled for.
 ///

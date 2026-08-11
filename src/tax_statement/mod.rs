@@ -331,6 +331,10 @@ fn generate_spanish_tax_statement(
         );
     }
 
+    for review in &statement.wash_sale_boundary_reviews {
+        println!("{}", Color::Yellow.paint(format!("WARNING: {}", review.message())));
+    }
+
     for review in &statement.wash_sale_venue_reviews {
         println!(
             "{}",

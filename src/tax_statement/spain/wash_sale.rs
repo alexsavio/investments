@@ -34,7 +34,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::Months;
+use chrono::{Datelike, Duration, Months};
 
 use crate::broker_statement::{StockBuy, StockSource};
 use crate::instruments::InstrumentInfo;
@@ -46,17 +46,6 @@ use crate::types::{Date, Decimal};
 /// transmisiones" for securities admitted to trading on a regulated market.
 pub const WINDOW_MONTHS: u32 = 2;
 
-/// The `[sale − 2 months, sale + 2 months]` window, both ends inclusive.
-///
-/// Calendar months, not 60 days: chrono clamps to the end of the target month, so a 31 March sale
-/// looks back to 31 January and forward to 31 May, and a 30 April sale looks back to 29 February in
-/// a leap year and 28 February otherwise.
-// TODO(verify): whether the endpoints themselves are inside the window. Neither text says whether
-// "dos meses anteriores" includes the day exactly two months back. Código Civil art. 5.1 computes a
-// period fixed in months "de fecha a fecha", which puts the same day-of-month two months out at the
-// edge of the period rather than past it, so inclusive is the reading that follows from it — and it
-// is also the conservative one, deferring more and so understating the deductible loss rather than
-// overstating it.
 /// Months either side under the limb for securities **not** admitted to a regulated market.
 ///
 /// NF 3/2014 art. 43.h / LIRPF art. 33.5.g. The engine never defers on this window; it only measures
@@ -104,6 +93,24 @@ pub fn venue_takes_the_two_month_window<'a>(
     known.then_some(true)
 }
 
+/// The `[sale − 2 months, sale + 2 months]` window, both ends inclusive.
+///
+/// Calendar months, not 60 days: chrono clamps to the end of the target month, so a 31 March sale
+/// looks back to 31 January and forward to 31 May, and a 30 April sale looks back to 29 February in
+/// a leap year and 28 February otherwise.
+///
+/// Both readings the arithmetic has to settle are the settled ones. A period fixed in months runs
+/// "de fecha a fecha" (Código Civil art. 5.1, supletory in tax matters through LGT art. 7.2), and
+/// the Tribunal Supremo computes that terminal ordinal as the **last day of the period** rather than
+/// the first day past it: STS 552/2022 (10-05-2022, RC 1874/2021), STS 02-07-2020 (RC 3780/2019) and
+/// STS 02-04-2008 (rec. 323/2004), where publication on 13-02 makes a one-month period expire on
+/// 13-03 and a filing on 15-03 late; STS 287/2009 applies the same de-fecha-a-fecha count in natural
+/// days to substantive periods. When the terminal ordinal does not exist the period ends on the last
+/// day of that month (CC art. 5.1; Ley 39/2015 art. 30.4). A practitioner worked example runs the
+/// same way: a 10-02-2024 sale gives a window of 10-12-2023 to 10-04-2024.
+///
+/// No authority computes art. 33.5.f boundaries with concrete dates, so where an outcome actually
+/// turns on one of those two edges the disposal reports it ([`DisposalOutcome::boundary_reviews`]).
 pub fn window(sale_date: Date) -> (Date, Date) {
     months_window(sale_date, WINDOW_MONTHS)
 }
@@ -215,6 +222,55 @@ pub struct DisposalOutcome {
     /// months. It never changes what this sale defers; it is what the caller reports when the
     /// instrument's listing venue is not one the two-month limb is settled for.
     pub wider_window_loss: Decimal,
+    /// Window edges this disposal's outcome actually hangs on.
+    pub boundary_reviews: Vec<BoundaryReview>,
+}
+
+/// How a window edge could be read differently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoundaryKind {
+    /// A repurchase on the window's own terminal day. Deferred here; deductible if the statute's
+    /// "dos meses anteriores o posteriores" excluded its terminal ordinal.
+    Endpoint,
+    /// A repurchase one day outside the terminal day. Deductible here; deferred if the period ran
+    /// one day further than de fecha a fecha puts it.
+    NearMiss,
+    /// The terminal day is a month-end clamp: the sale's day-of-month does not exist in the target
+    /// month, so the edge is a construct rather than the statute's own ordinal.
+    Clamp,
+}
+
+impl BoundaryKind {
+    /// One phrase, used verbatim by every surface that reports the review.
+    pub fn description(self) -> &'static str {
+        match self {
+            BoundaryKind::Endpoint => {
+                "homogeneous securities were acquired on the window's own terminal day, which is \
+                 inside the window only because the terminal ordinal counts as the last day of the \
+                 period"
+            }
+            BoundaryKind::NearMiss => {
+                "homogeneous securities were acquired one day outside the window, so they block \
+                 nothing only because the period ends where de fecha a fecha puts it"
+            }
+            BoundaryKind::Clamp => {
+                "the window's terminal day is a month-end clamp — the sale's day of the month does \
+                 not exist in that month — so the edge is a construct, not the statute's own ordinal"
+            }
+        }
+    }
+}
+
+/// A window edge a disposal's deferral actually turns on.
+#[derive(Clone, Debug)]
+pub struct BoundaryReview {
+    pub kind: BoundaryKind,
+    /// The window edge as the tool computes it.
+    pub boundary_date: Date,
+    /// The edge the alternative reading would use.
+    pub alternative_date: Date,
+    /// Loss that moves between deferred and deductible under that reading, as a positive magnitude.
+    pub amount: Decimal,
 }
 
 /// Shares acquired on one date, and how much of them the replay has seen disposed of.
@@ -325,6 +381,8 @@ impl WashSaleEngine {
             let (_, wider_total) = match_window(state, disposal, wider_window(disposal.date));
             outcome.wider_window_loss =
                 own_loss * (wider_total - matched_total) / disposal.quantity;
+            outcome.boundary_reviews =
+                review_boundaries(state, disposal, own_loss, matched_total);
         }
 
         // Definitiveness is measured on the **blocked** shares, not on the whole disposal: the
@@ -462,6 +520,84 @@ fn match_window(
     (matched, matched_total)
 }
 
+/// Name the window edges this disposal's deferral actually turns on.
+///
+/// Each edge is re-matched against the readings that could replace it: one day inward (the terminal
+/// ordinal excluded), one day outward, and — when the edge was clamped to a short month's last day —
+/// the date the sale's own day-of-month rolls over to. An edge is reported only when moving it
+/// changes how many shares block, and the euros at stake are the loss that moves with them.
+///
+/// At most one inward and one outward review per edge: two readings that move the same edge the same
+/// way are one question, not two.
+fn review_boundaries(
+    state: &InstrumentState, disposal: &Disposal, own_loss: Decimal, matched_total: Decimal,
+) -> Vec<BoundaryReview> {
+    let (start, end) = window(disposal.date);
+    let per_share = own_loss / disposal.quantity;
+    let mut reviews = Vec::new();
+
+    for (edge, anterior) in [(start, true), (end, false)] {
+        // chrono only moves the day of the month when the sale's own ordinal is missing there.
+        let clamped = edge.day() != disposal.date.day();
+        let rolled = clamped.then(|| {
+            edge + Duration::days(i64::from(disposal.date.day().saturating_sub(edge.day())))
+        });
+
+        let candidates = [
+            Some(edge - Duration::days(1)),
+            Some(edge + Duration::days(1)),
+            rolled,
+        ];
+
+        let mut inward = Decimal::ZERO;
+        let mut inward_date = edge;
+        let mut outward = Decimal::ZERO;
+        let mut outward_date = edge;
+
+        for candidate in candidates.into_iter().flatten() {
+            let bounds = if anterior { (candidate, end) } else { (start, candidate) };
+            let (_, total) = match_window(state, disposal, bounds);
+
+            let narrows = if anterior { candidate > edge } else { candidate < edge };
+            let delta = if narrows {
+                matched_total - total
+            } else {
+                total - matched_total
+            };
+            if delta <= Decimal::ZERO {
+                continue;
+            }
+
+            let (best, best_date) = if narrows {
+                (&mut inward, &mut inward_date)
+            } else {
+                (&mut outward, &mut outward_date)
+            };
+            if delta > *best {
+                *best = delta;
+                *best_date = candidate;
+            }
+        }
+
+        for (quantity, alternative_date, unclamped_kind) in [
+            (inward, inward_date, BoundaryKind::Endpoint),
+            (outward, outward_date, BoundaryKind::NearMiss),
+        ] {
+            if quantity <= Decimal::ZERO {
+                continue;
+            }
+            reviews.push(BoundaryReview {
+                kind: if clamped { BoundaryKind::Clamp } else { unclamped_kind },
+                boundary_date: edge,
+                alternative_date,
+                amount: per_share * quantity,
+            });
+        }
+    }
+
+    reviews
+}
+
 /// Attach the deferred amounts to the matched shares.
 ///
 /// The matched shares are shared out between the placements in proportion to their amounts, so the
@@ -572,6 +708,55 @@ mod tests {
 
         assert_eq!(outcome.deferred_loss, expected_deferred);
         assert_eq!(outcome.wider_window_loss, expected_wider);
+    }
+
+    /// A deferral that hangs on a window edge says so; one decided well inside the window does not.
+    ///
+    /// Sale of 100 shares on 2026-03-10 at a €900 loss, window 2026-01-10 to 2026-05-10.
+    #[rstest]
+    // Exactly on the posterior terminal day: deferred, and deductible if that ordinal were excluded.
+    #[case(date!(2026, 5, 10), Some((BoundaryKind::Endpoint, date!(2026, 5, 10), dec!(900))))]
+    // Exactly on the anterior terminal day, same question at the other edge.
+    #[case(date!(2026, 1, 10), Some((BoundaryKind::Endpoint, date!(2026, 1, 10), dec!(900))))]
+    // One day past the posterior edge: nothing is deferred, and €900 would be under a wider reading.
+    #[case(date!(2026, 5, 11), Some((BoundaryKind::NearMiss, date!(2026, 5, 10), dec!(900))))]
+    // Well inside the window: the deferral does not turn on either edge.
+    #[case(date!(2026, 4, 20), None)]
+    // Well outside it, in either direction.
+    #[case(date!(2026, 8, 20), None)]
+    fn a_deferral_that_turns_on_a_window_edge_is_reported(
+        #[case] acquired: Date,
+        #[case] expected: Option<(BoundaryKind, Date, Decimal)>,
+    ) {
+        let mut engine = WashSaleEngine::new([acquisition(acquired, dec!(100))], []);
+        let outcome = engine.process(&disposal(date!(2026, 3, 10), dec!(100), dec!(-900), &[]));
+
+        match expected {
+            Some((kind, boundary_date, amount)) => {
+                assert_eq!(outcome.boundary_reviews.len(), 1);
+                let review = &outcome.boundary_reviews[0];
+                assert_eq!(review.kind, kind);
+                assert_eq!(review.boundary_date, boundary_date);
+                assert_eq!(review.amount, amount);
+            }
+            None => assert!(outcome.boundary_reviews.is_empty()),
+        }
+    }
+
+    /// A clamped edge is reported as the construct it is: a 31 December sale has no 31 February to
+    /// reach forward to, so the window ends on the 28th and a repurchase there is blocked by an edge
+    /// the statute never names.
+    #[test]
+    fn a_month_end_clamp_is_reported_as_a_clamp() {
+        let mut engine = WashSaleEngine::new([acquisition(date!(2025, 2, 28), dec!(100))], []);
+        let outcome = engine.process(&disposal(date!(2024, 12, 31), dec!(100), dec!(-900), &[]));
+
+        assert_eq!(outcome.deferred_loss, dec!(900));
+        assert_eq!(outcome.boundary_reviews.len(), 1);
+        let review = &outcome.boundary_reviews[0];
+        assert_eq!(review.kind, BoundaryKind::Clamp);
+        assert_eq!(review.boundary_date, date!(2025, 2, 28));
+        assert_eq!(review.amount, dec!(900));
     }
 
     /// Identity prefers the ISIN, because tickers get reused and renamed while an ISIN does not.

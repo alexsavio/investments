@@ -165,7 +165,13 @@ How the tool applies it:
    same test gates the Gipuzkoa dividend exemption's anti-abuse clause, so a renamed line cannot slip
    past either rule under its other ticker.
 3. The window is two **calendar** months either side, both ends inclusive, so a 31 March sale reaches
-   back to 31 January and forward to 31 May.
+   back to 31 January and forward to 31 May. A period fixed in months runs "de fecha a fecha"
+   (Código Civil art. 5.1, supletory through LGT art. 7.2), and the Tribunal Supremo treats the
+   terminal ordinal as the **last day of the period**, not the first day past it — STS 552/2022
+   (RC 1874/2021), STS 02-07-2020 (RC 3780/2019), STS 02-04-2008 (rec. 323/2004: published 13-02, a
+   one-month period expires 13-03, a filing on 15-03 is late). Where that ordinal does not exist the
+   period ends on the last day of the month (CC art. 5.1; Ley 39/2015 art. 30.4), which is why a
+   31 December sale reaches forward only to 28 February.
 4. Each acquired share blocks at most one sold share. The deferral is the loss scaled by the matched
    fraction of the disposal.
 5. A repurchase *before* the sale blocks only shares the sale did not itself consume — those are
@@ -215,6 +221,20 @@ Two consequences the tool acts on:
 
   Equivalent venues (US, EEA, ASX, SEHK) say nothing. A statement that names no venue for the
   instrument is reported too: unknown is not the same as settled.
+
+**When a deferral hangs on one day.** No authority applies that arithmetic to art. 33.5.f with
+concrete dates, so where an outcome actually turns on a window edge the sale row says so — a
+repurchase on the terminal day itself, one day outside it, or inside the span a month-end clamp
+constructs:
+
+```text
+€900.00 of the AAPL loss of 2026-03-10 turns on window-boundary arithmetic: homogeneous securities
+were acquired on the window's own terminal day, … The tool puts that edge on 2026-05-10; the other
+reading puts it on 2026-05-09. …
+```
+
+The figure is what moves between deferred and deductible under the other reading. A repurchase well
+inside the window says nothing.
 
 **Dual listings and ADRs.** DGT CV **V1872-25** (14-10-2025) holds that two lines of the same class
 listed in different markets and currencies *are* homogeneous, which is what matching on the ISIN
