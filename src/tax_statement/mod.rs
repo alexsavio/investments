@@ -1,4 +1,5 @@
 mod dividends;
+mod eur;
 pub mod germany;
 mod interest;
 pub mod spain;
