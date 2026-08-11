@@ -48,6 +48,44 @@ pub struct CapitalGainEntry {
     pub notes: Option<String>,
 }
 
+/// A dividend, taxed as rendimiento del capital mobiliario.
+#[derive(Clone, Debug)]
+pub struct DividendEntry {
+    pub symbol: String,
+    pub isin: String,
+    pub description: String,
+    pub date: Date,
+    pub gross_eur: Decimal,
+    /// Foreign tax actually withheld at source.
+    pub withheld_eur: Decimal,
+    /// Withholding capped at the treaty rate — the first of the two limbs of the double-taxation
+    /// credit. Informational per row: the credit is a year-level figure, because its second limb is
+    /// the average savings rate, which only exists once the whole year is known.
+    pub treaty_capped_credit: Decimal,
+}
+
+/// Interest, taxed as rendimiento del capital mobiliario.
+#[derive(Clone, Debug)]
+pub struct InterestEntry {
+    pub date: Date,
+    pub description: String,
+    pub gross_eur: Decimal,
+}
+
+/// A broker fee.
+#[derive(Clone, Debug)]
+pub struct FeeEntry {
+    pub date: Date,
+    pub description: String,
+    /// Positive for a charge, negative for a refund.
+    pub amount_eur: Decimal,
+    /// Whether this fee reduces the RCM net result. Regime-dependent: Territorio Común allows
+    /// custody and administration fees (LIRPF art. 26.1.a), Gipuzkoa allows nothing (NF 3/2014
+    /// art. 39 is a closed list that does not reach securities income).
+    pub deductible: bool,
+    pub notes: Option<String>,
+}
+
 /// A Spanish IRPF savings-income tax statement for one tax year.
 #[derive(Clone, Debug)]
 pub struct SpanishTaxStatement {
@@ -58,11 +96,24 @@ pub struct SpanishTaxStatement {
     pub scale: SavingsScale,
 
     pub capital_gains: Vec<CapitalGainEntry>,
+    pub dividends: Vec<DividendEntry>,
+    pub interest: Vec<InterestEntry>,
+    pub fees: Vec<FeeEntry>,
 
     /// Short (negative-quantity) positions held at the statement's end, reported for information
     /// only. Their treatment is not computed and needs manual review.
     pub short_positions: Vec<(String, Decimal)>,
 
+    pub total_dividend_income: Decimal,
+    pub total_interest_income: Decimal,
+    /// Fees that reduce the RCM result, as a positive magnitude.
+    pub total_deductible_fees: Decimal,
+    /// Fees reported for information only, as a positive magnitude.
+    pub total_informational_fees: Decimal,
+    pub total_foreign_withholding: Decimal,
+
+    /// Net rendimientos del capital mobiliario before compensation.
+    pub rcm_net: Decimal,
     /// Net ganancias y pérdidas patrimoniales before compensation.
     pub gyp_net: Decimal,
     pub savings_base: Decimal,
@@ -79,7 +130,16 @@ impl SpanishTaxStatement {
             regime,
             scale,
             capital_gains: Vec::new(),
+            dividends: Vec::new(),
+            interest: Vec::new(),
+            fees: Vec::new(),
             short_positions: Vec::new(),
+            total_dividend_income: Decimal::ZERO,
+            total_interest_income: Decimal::ZERO,
+            total_deductible_fees: Decimal::ZERO,
+            total_informational_fees: Decimal::ZERO,
+            total_foreign_withholding: Decimal::ZERO,
+            rcm_net: Decimal::ZERO,
             gyp_net: Decimal::ZERO,
             savings_base: Decimal::ZERO,
             savings_quota: Decimal::ZERO,
@@ -93,14 +153,36 @@ impl SpanishTaxStatement {
     /// The tax is computed once on the final base, never summed from per-entry figures: the scale
     /// is progressive, so a sum of separately-taxed entries is not the tax on their total.
     pub fn calculate_totals(&mut self) {
+        self.total_dividend_income = self.dividends.iter().map(|entry| entry.gross_eur).sum();
+        self.total_interest_income = self.interest.iter().map(|entry| entry.gross_eur).sum();
+        self.total_foreign_withholding = self.dividends.iter().map(|entry| entry.withheld_eur).sum();
+
+        self.total_deductible_fees = self
+            .fees
+            .iter()
+            .filter(|fee| fee.deductible)
+            .map(|fee| fee.amount_eur)
+            .sum();
+        self.total_informational_fees = self
+            .fees
+            .iter()
+            .filter(|fee| !fee.deductible)
+            .map(|fee| fee.amount_eur)
+            .sum();
+
+        self.rcm_net =
+            self.total_dividend_income + self.total_interest_income - self.total_deductible_fees;
+
         self.gyp_net = self
             .capital_gains
             .iter()
             .map(|entry| entry.integrable_amount)
             .sum();
 
-        // A negative group balance does not reduce the base below zero; it carries forward.
-        self.savings_base = std::cmp::max(Decimal::ZERO, self.gyp_net);
+        // Each group is integrated "exclusivamente entre sí": a negative balance in one does not
+        // reduce the other, it carries forward.
+        self.savings_base = std::cmp::max(Decimal::ZERO, self.rcm_net)
+            + std::cmp::max(Decimal::ZERO, self.gyp_net);
         self.savings_quota = self.scale.tax(self.savings_base);
         self.average_savings_rate = self.scale.average_rate(self.savings_base);
         self.net_tax_due = self.savings_quota;

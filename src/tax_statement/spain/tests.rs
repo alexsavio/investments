@@ -247,3 +247,69 @@ fn missing_spain_config_is_rejected() {
         .to_string();
     assert!(error.contains("taxes.spain"), "{error}");
 }
+
+/// RCM income: an AAPL dividend of $1,000 with $300 US withholding (30%), $100 of broker interest
+/// and a $50 custody fee, all at 0.9 EUR/USD → gross €900, withheld €270, interest €90, fee €45.
+///
+/// The treaty caps the creditable portion at 15% of the gross (€135), so €135 of the €270 withheld
+/// is creditable in Spain and the rest has to be reclaimed from the IRS.
+#[test]
+fn rcm_income_is_reported_with_a_treaty_capped_credit_candidate() {
+    let spain = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert_eq!(spain.dividends.len(), 1);
+    let dividend = &spain.dividends[0];
+    assert_eq!(dividend.symbol, "AAPL");
+    assert_eq!(dividend.date, Date::from_ymd_opt(2026, 5, 20).unwrap());
+    assert_eq!(dividend.gross_eur, dec!(900));
+    assert_eq!(dividend.withheld_eur, dec!(270));
+    // 900 × 15%, well below the 270 actually withheld.
+    assert_eq!(dividend.treaty_capped_credit, dec!(135));
+
+    assert_eq!(spain.interest.len(), 1);
+    assert_eq!(spain.interest[0].gross_eur, dec!(90));
+
+    assert_eq!(spain.total_dividend_income, dec!(900));
+    assert_eq!(spain.total_interest_income, dec!(90));
+    assert_eq!(spain.total_foreign_withholding, dec!(270));
+}
+
+/// Fee deductibility is the sharpest split between the regimes. Gipuzkoa has no equivalent of LIRPF
+/// art. 26.1.a — NF 3/2014 art. 39 is a closed list — so the custody fee is reported but changes
+/// nothing; under Territorio Común the same €45 reduces the RCM result.
+#[test]
+fn custody_fee_deductibility_follows_the_regime() {
+    let gipuzkoa = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.fees.len(), 1);
+    assert!(!gipuzkoa.fees[0].deductible);
+    assert_eq!(gipuzkoa.fees[0].amount_eur, dec!(45));
+    assert!(gipuzkoa.fees[0].notes.as_deref().unwrap().contains("art. 39"));
+    assert_eq!(gipuzkoa.total_deductible_fees, dec!(0));
+    assert_eq!(gipuzkoa.total_informational_fees, dec!(45));
+    // 900 dividend + 90 interest, nothing deducted.
+    assert_eq!(gipuzkoa.rcm_net, dec!(990));
+
+    let comun = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
+    assert!(comun.fees[0].deductible);
+    assert!(comun.fees[0].notes.is_none());
+    assert_eq!(comun.total_deductible_fees, dec!(45));
+    assert_eq!(comun.total_informational_fees, dec!(0));
+    assert_eq!(comun.rcm_net, dec!(945));
+
+    // The regimes differ by exactly the fee, and by nothing else.
+    assert_eq!(gipuzkoa.rcm_net - comun.rcm_net, dec!(45));
+    assert_eq!(gipuzkoa.total_dividend_income, comun.total_dividend_income);
+    assert_eq!(gipuzkoa.total_interest_income, comun.total_interest_income);
+}
+
+/// The savings base is the sum of the two groups' positive balances: neither reduces the other.
+#[test]
+fn rcm_and_gyp_enter_the_base_as_separate_groups() {
+    let spain = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert_eq!(spain.rcm_net, dec!(990));
+    assert_eq!(spain.gyp_net, dec!(0));
+    assert_eq!(spain.savings_base, dec!(990));
+    // 990 sits entirely in the first bracket: 990 × 19%.
+    assert_eq!(spain.savings_quota, dec!(188.10));
+}

@@ -13,9 +13,12 @@ use crate::currency::converter::CurrencyConverter;
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::taxes::{SpanishTaxConfig, TaxConfig};
-use crate::types::Decimal;
+use crate::types::{Date, Decimal};
 
-use super::statement::{CapitalGainEntry, SpanishLotDetail, SpanishTaxStatement};
+use super::statement::{
+    CapitalGainEntry, DividendEntry, FeeEntry, InterestEntry, SpanishLotDetail,
+    SpanishTaxStatement,
+};
 
 /// Everything about the filer's regime and tax year that the per-income processors need, resolved
 /// once so no processor re-matches the regime enum and risks the two disagreeing.
@@ -24,6 +27,13 @@ struct SpanishTaxParams<'a> {
     regime: SpanishTaxRegime,
     year: i32,
     scale: SavingsScale,
+    /// Cap the source state may levy on a dividend under the applicable double-taxation treaty.
+    // TODO(verify): 15% is the dividend rate in the Spain-US and Spain-Germany treaties and in most
+    // of Spain's network, but it is treaty-specific and neither NF 3/2014 art. 91 nor LIRPF art. 80
+    // mentions a cap at all — the limit comes from the treaty itself.
+    treaty_rate: Decimal,
+    /// Whether custody and administration fees reduce the RCM result.
+    custody_fees_deductible: bool,
 }
 
 impl<'a> SpanishTaxParams<'a> {
@@ -34,6 +44,14 @@ impl<'a> SpanishTaxParams<'a> {
             regime: config.regime,
             year,
             scale: config.savings_scale(year)?,
+            treaty_rate: dec!(0.15),
+            // LIRPF art. 26.1.a allows custody and administration fees; the Gipuzkoa equivalent
+            // does not exist — NF 3/2014 art. 39 is a closed list that never reaches securities
+            // income, so nothing is deductible there.
+            custody_fees_deductible: match config.regime {
+                SpanishTaxRegime::Gipuzkoa => false,
+                SpanishTaxRegime::Comun => true,
+            },
         })
     }
 }
@@ -74,6 +92,9 @@ fn process_broker_statement(
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
     let has_trades = process_trades(statement, broker_statement, params, converter)?;
+    let has_dividends = process_dividends(statement, broker_statement, params, converter)?;
+    let has_interest = process_interest(statement, broker_statement, params, converter)?;
+    process_fees(statement, broker_statement, params, converter)?;
 
     // Short positions get no automatic treatment; surface them for manual review.
     statement.short_positions = broker_statement
@@ -96,7 +117,7 @@ fn process_broker_statement(
         );
     }
 
-    Ok(has_trades)
+    Ok(has_trades || has_dividends || has_interest)
 }
 
 /// Turn each qualifying sale into a capital-gain entry with per-lot actualization.
@@ -257,4 +278,207 @@ fn grant_lot_cost_basis_eur(
             format!("Converting vest-date FMV for stock grant {} on {vest_date}: {e}", lot.original_symbol)
         })?
         .amount)
+}
+
+/// Convert a foreign-currency amount to EUR, naming what failed if the rate is missing.
+fn convert_to_eur(
+    converter: &CurrencyConverter,
+    date: Date,
+    cash: Cash,
+    context: &str,
+) -> GenericResult<Decimal> {
+    converter
+        .convert_to_cash_rounding(date, cash, "EUR")
+        .map(|cash| cash.amount)
+        .map_err(|e| {
+            format!(
+                "{context}: failed to convert {cash} to EUR on {date}. This usually means the ECB \
+                 reference rate for that date is missing: {e}"
+            )
+            .into()
+        })
+}
+
+/// Dividends, taxed as rendimientos del capital mobiliario.
+fn process_dividends(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_income = false;
+
+    for dividend in &broker_statement.dividends {
+        if dividend.date.year() != params.year {
+            continue;
+        }
+
+        has_income = true;
+
+        let context = format!(
+            "Processing dividend from {} on {}",
+            dividend.issuer, dividend.date
+        );
+        let gross_eur = convert_to_eur(converter, dividend.date, dividend.amount, &context)?;
+        let withheld_eur = convert_to_eur(converter, dividend.date, dividend.paid_tax, &context)?;
+
+        let instrument_info = broker_statement.instrument_info.get(&dividend.issuer);
+        let isin = instrument_info
+            .and_then(|info| info.isin.iter().next())
+            .map(|isin| isin.to_string())
+            .unwrap_or_default();
+        let description = broker_statement
+            .instrument_info
+            .get_name(&dividend.issuer)
+            .to_string();
+
+        // First limb of the double-taxation credit: a treaty caps what the source state may levy,
+        // so anything withheld above it is not creditable here and must be reclaimed from that
+        // state instead. The second limb (the average savings rate) is a year-level figure, applied
+        // in `calculate_totals`.
+        let treaty_capped_credit = std::cmp::min(withheld_eur, gross_eur * params.treaty_rate);
+
+        statement.dividends.push(DividendEntry {
+            symbol: dividend.issuer.clone(),
+            isin,
+            description,
+            date: dividend.date,
+            gross_eur,
+            withheld_eur,
+            treaty_capped_credit: std::cmp::max(Decimal::ZERO, treaty_capped_credit),
+        });
+    }
+
+    Ok(has_income)
+}
+
+/// Broker interest, taxed as rendimientos del capital mobiliario.
+fn process_interest(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_income = false;
+
+    for interest in &broker_statement.idle_cash_interest {
+        if interest.date.year() != params.year {
+            continue;
+        }
+
+        has_income = true;
+
+        let context = format!("Processing interest payment on {}", interest.date);
+        let gross_eur = convert_to_eur(converter, interest.date, interest.amount, &context)?;
+
+        statement.interest.push(InterestEntry {
+            date: interest.date,
+            description: "Broker interest".to_string(),
+            gross_eur,
+        });
+    }
+
+    Ok(has_income)
+}
+
+/// Keywords that mark a fee as a custody or administration charge.
+///
+/// LIRPF art. 26.1.a allows only "gastos de administración y depósito de valores negociables", and
+/// explicitly excludes the fee for discretionary portfolio management. A broker statement carries
+/// nothing but a free-text description, so the match is on that.
+// TODO(verify): the keyword list is a best-effort reading of IB's fee descriptions against art.
+// 26.1.a; the article names the service, not the wording a broker happens to use. The failure
+// direction is deliberately conservative — an unrecognised fee is reported but not deducted, which
+// overstates tax rather than understating it.
+const CUSTODY_FEE_KEYWORDS: &[&str] = &[
+    "custody",
+    "safekeeping",
+    "administration",
+    "custodia",
+    "administración",
+    "administracion",
+];
+
+fn is_custody_fee(description: &str) -> bool {
+    let description = description.to_lowercase();
+    CUSTODY_FEE_KEYWORDS
+        .iter()
+        .any(|keyword| description.contains(keyword))
+}
+
+/// Broker fees. Deductibility from RCM is regime-dependent.
+fn process_fees(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_fees = false;
+
+    for fee in &broker_statement.fees {
+        if fee.date.year() != params.year {
+            continue;
+        }
+
+        has_fees = true;
+
+        let context = format!("Processing broker fee on {}", fee.date);
+        let amount_eur = convert_to_eur(converter, fee.date, fee.amount.withholding(), &context)?;
+
+        let description = fee
+            .description
+            .clone()
+            .unwrap_or_else(|| "Broker fee".to_string());
+
+        let custody = is_custody_fee(&description);
+        let deductible = params.custody_fees_deductible && custody;
+
+        let notes = if !params.custody_fees_deductible {
+            Some(
+                "Informational: Gipuzkoa has no equivalent of LIRPF art. 26.1.a — NF 3/2014 art. \
+                 39 does not allow expenses against securities income"
+                    .to_string(),
+            )
+        } else if custody {
+            None
+        } else {
+            Some(
+                "Informational: not recognised as a custody or administration fee (LIRPF art. \
+                 26.1.a); check whether it qualifies"
+                    .to_string(),
+            )
+        };
+
+        statement.fees.push(FeeEntry {
+            date: fee.date,
+            description,
+            amount_eur,
+            deductible,
+            notes,
+        });
+    }
+
+    Ok(has_fees)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Under Territorio Común only custody and administration fees qualify (LIRPF art. 26.1.a).
+    /// Anything else is reported but not deducted — the conservative direction, since a wrong
+    /// deduction understates tax.
+    #[test]
+    fn custody_fees_are_recognised_by_description() {
+        assert!(is_custody_fee("CUSTODY FEE"));
+        assert!(is_custody_fee("Monthly safekeeping charge"));
+        assert!(is_custody_fee("Comisión de administración"));
+        assert!(is_custody_fee("SECURITIES ADMINISTRATION"));
+
+        assert!(!is_custody_fee("ADR FEE"));
+        assert!(!is_custody_fee("Monthly Minimum Activity Fee"));
+        assert!(!is_custody_fee("Commission Adjustments"));
+        // Discretionary portfolio management is excluded by art. 26.1.a by name.
+        assert!(!is_custody_fee("Discretionary portfolio management fee"));
+    }
 }
