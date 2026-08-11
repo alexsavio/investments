@@ -383,7 +383,15 @@ fn process_trades(
     }
 
     let replay = apply_wash_sale_rule(&mut sales, broker_statement, params)?;
-    statement.wash_sale_unpriced_years = unpriced_years.into_iter().collect();
+
+    // Only years up to the one being filed are a gap in *this* return. The documented workflow asks
+    // for a statement running two months past year end so the repurchase window can close, and a
+    // disposal in those extra weeks can only release a deferral, never create one here — so its
+    // missing table is next year's problem, not a warning on this statement.
+    statement.wash_sale_unpriced_years = unpriced_years
+        .into_iter()
+        .filter(|&year| year <= params.year)
+        .collect();
     statement.deferred_losses_next = replay.carry_out;
 
     // Only the filing year's releases are this year's income; the rest belong to the returns their
@@ -665,16 +673,29 @@ fn apply_wash_sale_rule(
         // A carried-in deferral whose own loss-making sale is in the statement is a double
         // deduction: the replay prices that sale and computes its deferral, while the config lot
         // blocks the shares it would have used and then releases separately when they are sold.
-        if sales
-            .iter()
-            .any(|sale| sale.key == key && sale.sale_date == deferred.sale_date)
-        {
+        //
+        // Only a sale the replay could price computes anything. A disposal in a year no
+        // actualization table is shipped for is replayed but never priced, so it can never create a
+        // deferral of its own and the carry-in is the only record of one — rejecting it there would
+        // drop a real deduction. The result's sign and the quantity narrow the match further: a
+        // same-day disposal of the same instrument that made a gain, or that is too small to have
+        // blocked those shares, is a different sale.
+        let clashes = sales.iter().any(|sale| {
+            sale.key == key
+                && sale.sale_date == deferred.sale_date
+                && sale.fiscal_gain_loss.is_some_and(|result| result < Decimal::ZERO)
+                && sale.normalized_quantity >= deferred.blocked_quantity
+        });
+        if clashes {
             return Err!(
                 "taxes.spain.deferred_losses entry for {} names a loss-making sale on {} that this \
-                 statement already contains, so the tool computes that deferral itself. Keeping \
-                 both would deduct the loss twice — remove the config entry",
+                 statement already contains and prices, so the tool computes that deferral itself. \
+                 Keeping both would deduct the loss twice — remove the config entry. A disposal \
+                 year the tool cannot price is not affected: carry those deferrals in here, or ship \
+                 the table as taxes.spain.coefficients.{}",
                 deferred.symbol,
-                deferred.sale_date.format("%Y-%m-%d"));
+                deferred.sale_date.format("%Y-%m-%d"),
+                deferred.sale_date.year());
         }
 
         identities

@@ -208,10 +208,13 @@ pub struct SpanishTaxStatement {
     /// only. Their treatment is not computed and needs manual review.
     pub short_positions: Vec<(String, Decimal)>,
 
-    /// Disposal years the statement contains but the tool ships no actualization table for. Sales
-    /// in those years were replayed for the valores-homogéneos rule — they still consume lots and
-    /// release earlier deferrals — but their own result could not be priced, so a loss in one of
-    /// them was never tested for deferral.
+    /// Disposal years up to and including the filing year that the statement contains but the tool
+    /// ships no actualization table for. Sales in those years were replayed for the
+    /// valores-homogéneos rule — they still consume lots and release earlier deferrals — but their
+    /// own result could not be priced, so a loss in one of them was never tested for deferral.
+    ///
+    /// Later years are left out: a disposal after 31 December of the filing year belongs to the
+    /// next return, and this one only ever replays it to release deferrals.
     pub wash_sale_unpriced_years: Vec<i32>,
 
     /// Blocked lots still standing at the end of the statement, in the shape next year's

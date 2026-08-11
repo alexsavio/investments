@@ -969,6 +969,49 @@ fn an_opening_deferred_loss_overlapping_the_statement_is_rejected() {
     assert!(error.contains("taxes.spain.deferred_losses"), "{error}");
     assert!(error.contains("2026-03-10"), "{error}");
     assert!(error.contains("AAPL"), "{error}");
+    // The other way out of the clash is named too.
+    assert!(error.contains("taxes.spain.coefficients.2026"), "{error}");
+}
+
+/// The overlap guard must not fire against a sale the run could not price. A disposal in a year no
+/// actualization table is shipped for is replayed but never priced, so it never computes a deferral
+/// of its own — the carried-in entry is the only record of one, and rejecting it loses the
+/// deduction outright.
+///
+/// Fixture: buy 100 in 2022, sell them at a loss on 2023-06-10 (Gipuzkoa ships no 2023 table), buy
+/// 100 back on 2023-07-10 inside the window, and dispose of those on 2026-05-15. The prior return
+/// deferred €9,000 against the repurchased shares; this one releases it.
+#[test]
+fn a_carried_in_deferral_survives_an_unpriced_statement_year() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    config.spain.as_mut().unwrap().deferred_losses = vec![DeferredLossConfig {
+        symbol: "AAPL".to_string(),
+        isin: Some("US0378331005".to_string()),
+        loss: dec!(9000),
+        blocked_quantity: dec!(100),
+        acquisition_date: Date::from_ymd_opt(2023, 7, 10).unwrap(),
+        sale_date: Date::from_ymd_opt(2023, 6, 10).unwrap(),
+    }];
+
+    let spain = run_pipeline_with_config("unpriced_deferral", 2026, &config);
+
+    // The 2023 disposal could not be priced, and that gap is still reported: it is a year up to the
+    // one being filed, so a loss in it really was never tested.
+    assert_eq!(spain.wash_sale_unpriced_years, vec![2023]);
+
+    // 13,500 proceeds − 9,000 × 1.082 (2023 acquisition, 2026 disposal).
+    assert_eq!(spain.capital_gains.len(), 1);
+    assert_eq!(spain.capital_gains[0].fiscal_gain_loss, dec!(3762));
+
+    assert_eq!(spain.wash_sale_reintegrations.len(), 1);
+    let released = &spain.wash_sale_reintegrations[0];
+    assert_eq!(released.released_eur, dec!(9000));
+    assert_eq!(released.date, Date::from_ymd_opt(2026, 5, 15).unwrap());
+    assert_eq!(released.origin_sale_date, Date::from_ymd_opt(2023, 6, 10).unwrap());
+
+    // 3,762 − 9,000.
+    assert_eq!(spain.gyp_net, dec!(-5238));
+    assert!(spain.deferred_losses_next.is_empty());
 }
 
 /// The carry-out is a snapshot of what is still blocked on 31 December of the filing year.
@@ -1221,6 +1264,16 @@ fn disposal_years_without_a_coefficient_table_are_reported() {
     // Under Territorio Común the coefficient is 1 for every year, so no year is ever unpriced.
     let comun = run_pipeline("fifo", 2026, SpanishTaxRegime::Comun);
     assert!(comun.wash_sale_unpriced_years.is_empty());
+
+    // The documented workflow runs the statement two months past year end, so it holds disposals in
+    // the following year. Those can only release deferrals for the *next* return, so a missing
+    // table for them is not a gap in this one — warning about it is pure noise.
+    let carry_out = run_pipeline("wash_sale_carry_out", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(
+        carry_out.capital_gains[0].sale_date,
+        Date::from_ymd_opt(2026, 12, 10).unwrap()
+    );
+    assert!(carry_out.wash_sale_unpriced_years.is_empty());
 }
 
 /// The 25% cross-group offset, ganancias → RCM (LIRPF art. 49.1).
