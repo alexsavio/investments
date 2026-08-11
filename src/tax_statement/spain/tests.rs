@@ -26,6 +26,9 @@ use super::SpanishTaxStatement;
 struct FixedEurBackend {
     today: Date,
     eur_per_usd: Decimal,
+    /// Optional revaluation: from this date on, the rate becomes the second element. Without it
+    /// every date shares one rate, so no foreign-currency result can ever be realized.
+    revaluation: Option<(Date, Decimal)>,
 }
 
 impl CurrencyConverterBackend for FixedEurBackend {
@@ -41,13 +44,22 @@ impl CurrencyConverterBackend for FixedEurBackend {
         &self,
         from: &str,
         to: &str,
-        _date: Date,
+        date: Date,
     ) -> GenericResult<(Option<Decimal>, Option<Decimal>)> {
         assert_eq!(to, "EUR", "the Spanish pipeline only ever converts to EUR");
         match from {
             "EUR" => Ok((None, None)),
-            "USD" => Ok((Some(self.eur_per_usd), None)),
+            "USD" => Ok((Some(self.rate_on(date)), None)),
             other => Err!("fixture converter has no rate for {other}"),
+        }
+    }
+}
+
+impl FixedEurBackend {
+    fn rate_on(&self, date: Date) -> Decimal {
+        match self.revaluation {
+            Some((from, rate)) if date >= from => rate,
+            _ => self.eur_per_usd,
         }
     }
 }
@@ -56,6 +68,17 @@ fn converter() -> CurrencyConverter {
     CurrencyConverter::new_with_backend(Box::new(FixedEurBackend {
         today: time::today(),
         eur_per_usd: dec!(0.9),
+        revaluation: None,
+    }))
+}
+
+/// A converter whose USD rate steps from 0.9 to 1.0 on `from`, so a balance held across that date
+/// realizes a computable foreign-currency result.
+fn revaluing_converter(from: Date, rate: Decimal) -> CurrencyConverter {
+    CurrencyConverter::new_with_backend(Box::new(FixedEurBackend {
+        today: time::today(),
+        eur_per_usd: dec!(0.9),
+        revaluation: Some((from, rate)),
     }))
 }
 
@@ -443,4 +466,55 @@ fn the_credit_never_makes_the_tax_due_negative() {
     assert_eq!(spain.savings_quota, dec!(0));
     assert_eq!(spain.total_foreign_tax_credit, dec!(0));
     assert_eq!(spain.net_tax_due, dec!(0));
+}
+
+/// A conversion out of a **held** foreign-currency balance realizes a ganancia patrimonial.
+///
+/// $10,000 acquired 2026-02-10 at 0.9 (€9,000) and converted back 2026-08-10 at 1.0 (€10,000)
+/// realizes a €1,000 gain, which joins the ganancias group rather than the RCM one.
+#[test]
+fn held_balance_conversions_are_ganancias() {
+    let statement = read_fixture("fx_gain");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (spain, has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Gipuzkoa),
+    )
+    .unwrap();
+
+    assert!(has_income);
+    assert_eq!(spain.fx_gains.len(), 1);
+    let fx = &spain.fx_gains[0];
+    assert_eq!(fx.currency, "USD");
+    assert_eq!(fx.date, Date::from_ymd_opt(2026, 8, 10).unwrap());
+    assert_eq!(fx.acquisition_date, Date::from_ymd_opt(2026, 2, 10).unwrap());
+    assert_eq!(fx.amount_eur, dec!(1000));
+
+    assert_eq!(spain.total_fx_gains, dec!(1000));
+    assert_eq!(spain.total_fx_losses, dec!(0));
+    // The result lands in the ganancias group, not RCM.
+    assert_eq!(spain.gyp_net, dec!(1000));
+    assert_eq!(spain.rcm_net, dec!(0));
+    assert_eq!(spain.savings_base, dec!(1000));
+    assert_eq!(spain.savings_quota, dec!(190));
+
+    // Nothing was borrowed, so nothing is deferred to manual review.
+    assert!(spain.fx_borrowed_review.is_empty());
+    assert_eq!(spain.total_fx_borrowed_review, dec!(0));
+}
+
+/// With a flat rate the conversion is still a disposal, so it is still reported — but it realizes
+/// nothing, and must not invent a figure in either direction.
+#[test]
+fn a_flat_rate_realizes_a_zero_fx_result() {
+    let spain = run_pipeline("fx_gain", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert_eq!(spain.fx_gains.len(), 1);
+    assert_eq!(spain.fx_gains[0].amount_eur, dec!(0));
+    assert_eq!(spain.total_fx_gains, dec!(0));
+    assert_eq!(spain.total_fx_losses, dec!(0));
+    assert_eq!(spain.gyp_net, dec!(0));
+    assert_eq!(spain.savings_quota, dec!(0));
 }

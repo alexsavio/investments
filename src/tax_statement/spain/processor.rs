@@ -10,13 +10,14 @@ use crate::broker_statement::{
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
+use crate::tax_statement::fx_fifo::compute_fx_fifo;
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::taxes::{SpanishTaxConfig, TaxConfig};
 use crate::types::{Date, Decimal};
 
 use super::statement::{
-    CapitalGainEntry, DividendEntry, FeeEntry, InterestEntry, SpanishLotDetail,
+    CapitalGainEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry, SpanishLotDetail,
     SpanishTaxStatement,
 };
 
@@ -112,6 +113,7 @@ fn process_broker_statement(
     let has_trades = process_trades(statement, broker_statement, params, converter)?;
     let has_dividends = process_dividends(statement, broker_statement, params, converter)?;
     let has_interest = process_interest(statement, broker_statement, params, converter)?;
+    let has_fx = process_fx_gains(statement, broker_statement, params, converter)?;
     process_fees(statement, broker_statement, params, converter)?;
 
     // Short positions get no automatic treatment; surface them for manual review.
@@ -135,7 +137,7 @@ fn process_broker_statement(
         );
     }
 
-    Ok(has_trades || has_dividends || has_interest)
+    Ok(has_trades || has_dividends || has_interest || has_fx)
 }
 
 /// Turn each qualifying sale into a capital-gain entry with per-lot actualization.
@@ -477,6 +479,80 @@ fn process_fees(
     }
 
     Ok(has_fees)
+}
+
+
+/// Foreign-currency conversion results.
+///
+/// The shared signed-inventory FIFO replays the cash ledger and splits realizations by whether the
+/// balance was held or borrowed. Held-balance results are transfers of a patrimonial element and
+/// join the ganancias group; borrowed-balance results are referred for manual review.
+fn process_fx_gains(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let results = compute_fx_fifo(
+        &broker_statement.foreign_cash_flows,
+        &[],
+        |date, currency| {
+            converter.currency_rate(date, currency, "EUR").map_err(|e| {
+                format!(
+                    "Failed to convert {currency} to EUR on {date}. This usually means the ECB \
+                     reference rate for that date is missing: {e}"
+                )
+                .into()
+            })
+        },
+    )?;
+
+    let mut has_income = false;
+
+    for result in &results {
+        for realization in &result.taxable {
+            if realization.date.year() != params.year {
+                continue;
+            }
+            has_income = true;
+            statement.fx_gains.push(FxGainEntry {
+                date: realization.date,
+                currency: result.currency.clone(),
+                acquisition_date: realization.acquisition_date,
+                amount_eur: realization.amount,
+                activity_code: realization.activity_code.clone(),
+            });
+        }
+
+        for realization in &result.non_taxable {
+            if realization.date.year() != params.year {
+                continue;
+            }
+            statement.fx_borrowed_review.push(FxGainEntry {
+                date: realization.date,
+                currency: result.currency.clone(),
+                acquisition_date: realization.acquisition_date,
+                amount_eur: realization.amount,
+                activity_code: realization.activity_code.clone(),
+            });
+        }
+    }
+
+    if !statement.fx_borrowed_review.is_empty() {
+        let total: Decimal = statement
+            .fx_borrowed_review
+            .iter()
+            .map(|entry| entry.amount_eur)
+            .sum();
+        warn!(
+            "€{total} of foreign-currency results were realized on a borrowed (margin) balance and \
+             are NOT included in the savings base. Repaying a currency loan is not clearly a \
+             transfer of a patrimonial element and neither NF 3/2014 nor the LIRPF settles it — \
+             review these manually."
+        );
+    }
+
+    Ok(has_income)
 }
 
 #[cfg(test)]

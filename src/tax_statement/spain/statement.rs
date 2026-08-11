@@ -75,6 +75,18 @@ pub struct InterestEntry {
     pub gross_eur: Decimal,
 }
 
+/// A realized foreign-currency conversion result.
+#[derive(Clone, Debug)]
+pub struct FxGainEntry {
+    pub date: Date,
+    pub currency: String,
+    /// Acquisition date of the FIFO lot consumed.
+    pub acquisition_date: Date,
+    /// Positive for a gain, negative for a loss.
+    pub amount_eur: Decimal,
+    pub activity_code: String,
+}
+
 /// A broker fee.
 #[derive(Clone, Debug)]
 pub struct FeeEntry {
@@ -102,6 +114,15 @@ pub struct SpanishTaxStatement {
     pub dividends: Vec<DividendEntry>,
     pub interest: Vec<InterestEntry>,
     pub fees: Vec<FeeEntry>,
+    /// Conversion results realized on a held foreign-currency balance; these enter the ganancias
+    /// group.
+    pub fx_gains: Vec<FxGainEntry>,
+
+    /// Results realized on a **borrowed** foreign-currency balance. Not taxed here: repaying a
+    /// currency loan is not obviously a transfer of a patrimonial element, and neither the foral
+    /// nor the state text settles it. Reported for manual review instead of being silently taxed
+    /// or silently dropped.
+    pub fx_borrowed_review: Vec<FxGainEntry>,
 
     /// Short (negative-quantity) positions held at the statement's end, reported for information
     /// only. Their treatment is not computed and needs manual review.
@@ -114,6 +135,10 @@ pub struct SpanishTaxStatement {
     /// Fees reported for information only, as a positive magnitude.
     pub total_informational_fees: Decimal,
     pub total_foreign_withholding: Decimal,
+    pub total_fx_gains: Decimal,
+    pub total_fx_losses: Decimal,
+    /// Net borrowed-balance result awaiting manual review.
+    pub total_fx_borrowed_review: Decimal,
 
     /// Net rendimientos del capital mobiliario before compensation.
     pub rcm_net: Decimal,
@@ -188,12 +213,17 @@ impl SpanishTaxStatement {
             dividends: Vec::new(),
             interest: Vec::new(),
             fees: Vec::new(),
+            fx_gains: Vec::new(),
+            fx_borrowed_review: Vec::new(),
             short_positions: Vec::new(),
             total_dividend_income: Decimal::ZERO,
             total_interest_income: Decimal::ZERO,
             total_deductible_fees: Decimal::ZERO,
             total_informational_fees: Decimal::ZERO,
             total_foreign_withholding: Decimal::ZERO,
+            total_fx_gains: Decimal::ZERO,
+            total_fx_losses: Decimal::ZERO,
+            total_fx_borrowed_review: Decimal::ZERO,
             rcm_net: Decimal::ZERO,
             gyp_net: Decimal::ZERO,
             savings_base: Decimal::ZERO,
@@ -228,11 +258,32 @@ impl SpanishTaxStatement {
         self.rcm_net =
             self.total_dividend_income + self.total_interest_income - self.total_deductible_fees;
 
-        self.gyp_net = self
+        self.total_fx_gains = self
+            .fx_gains
+            .iter()
+            .map(|entry| std::cmp::max(Decimal::ZERO, entry.amount_eur))
+            .sum();
+        self.total_fx_losses = self
+            .fx_gains
+            .iter()
+            .map(|entry| std::cmp::max(Decimal::ZERO, -entry.amount_eur))
+            .sum();
+        self.total_fx_borrowed_review = self
+            .fx_borrowed_review
+            .iter()
+            .map(|entry| entry.amount_eur)
+            .sum();
+
+        // A currency conversion transfers a patrimonial element, so its result joins the ganancias
+        // group rather than the RCM one.
+        let capital_gains: Decimal = self
             .capital_gains
             .iter()
             .map(|entry| entry.integrable_amount)
             .sum();
+        let fx: Decimal = self.fx_gains.iter().map(|entry| entry.amount_eur).sum();
+
+        self.gyp_net = capital_gains + fx;
 
         let compensation = compensate_savings_base(
             self.year,
