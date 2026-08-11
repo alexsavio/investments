@@ -346,6 +346,40 @@ fn rcm_income_is_reported_with_a_treaty_capped_credit_candidate() {
     assert_eq!(spain.total_foreign_withholding, dec!(270));
 }
 
+/// Interest **paid** on a margin loan is not a rendimiento del capital mobiliario and reduces
+/// nothing.
+///
+/// IB reports it as a negative "Broker Interest Paid" accrual alongside the credit interest, so
+/// summing the raw amounts would silently net it off the RCM result. Neither regime allows that:
+/// LIRPF art. 26.1.a is a closed list that reaches only administration and custody of negotiable
+/// securities, and NF 3/2014 art. 39 is narrower still.
+///
+/// Fixture: $100 received 2026-06-30 and $250 paid 2026-09-30, at 0.9 EUR/USD.
+#[test]
+fn paid_margin_interest_does_not_reduce_the_rcm_result() {
+    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+        let spain = run_pipeline("margin_interest", 2026, regime);
+
+        // Both rows are reported; only the credit interest is income.
+        assert_eq!(spain.interest.len(), 2, "{regime:?}");
+        let received = &spain.interest[0];
+        assert!(received.taxable, "{regime:?}");
+        assert_eq!(received.gross_eur, dec!(90));
+        assert!(received.notes.is_none());
+
+        let paid = &spain.interest[1];
+        assert!(!paid.taxable, "{regime:?}");
+        assert_eq!(paid.gross_eur, dec!(-225));
+        assert!(paid.notes.as_deref().unwrap().contains("art. 26.1.a"), "{regime:?}");
+
+        assert_eq!(spain.total_interest_income, dec!(90), "{regime:?}");
+        assert_eq!(spain.total_paid_interest, dec!(225), "{regime:?}");
+        // 90, not 90 − 225.
+        assert_eq!(spain.rcm_net, dec!(90), "{regime:?}");
+        assert_eq!(spain.savings_base, dec!(90), "{regime:?}");
+    }
+}
+
 /// Fee deductibility is the sharpest split between the regimes. Gipuzkoa has no equivalent of LIRPF
 /// art. 26.1.a — NF 3/2014 art. 39 is a closed list — so the custody fee is reported but changes
 /// nothing; under Territorio Común the same €45 reduces the RCM result.

@@ -104,7 +104,13 @@ pub struct DividendEntry {
 pub struct InterestEntry {
     pub date: Date,
     pub description: String,
+    /// Positive for interest received, negative for interest paid on a borrowed balance.
     pub gross_eur: Decimal,
+    /// Whether this entry enters the RCM result. Interest **paid** does not: neither regime allows
+    /// an expense against securities income beyond LIRPF art. 26.1.a's administration and custody,
+    /// and NF 3/2014 art. 39 is narrower still.
+    pub taxable: bool,
+    pub notes: Option<String>,
 }
 
 /// A realized foreign-currency conversion result.
@@ -183,6 +189,9 @@ pub struct SpanishTaxStatement {
 
     pub total_dividend_income: Decimal,
     pub total_interest_income: Decimal,
+    /// Interest paid on a borrowed balance, as a positive magnitude. Reported only — it never
+    /// reduces the RCM result.
+    pub total_paid_interest: Decimal,
     /// Fees that reduce the RCM result, as a positive magnitude.
     pub total_deductible_fees: Decimal,
     /// Fees reported for information only, as a positive magnitude.
@@ -277,6 +286,7 @@ impl SpanishTaxStatement {
             total_reintegrated_loss: Decimal::ZERO,
             total_dividend_income: Decimal::ZERO,
             total_interest_income: Decimal::ZERO,
+            total_paid_interest: Decimal::ZERO,
             total_deductible_fees: Decimal::ZERO,
             total_informational_fees: Decimal::ZERO,
             total_foreign_withholding: Decimal::ZERO,
@@ -298,7 +308,18 @@ impl SpanishTaxStatement {
     /// is progressive, so a sum of separately-taxed entries is not the tax on their total.
     pub fn calculate_totals(&mut self) {
         self.total_dividend_income = self.dividends.iter().map(|entry| entry.gross_eur).sum();
-        self.total_interest_income = self.interest.iter().map(|entry| entry.gross_eur).sum();
+        self.total_interest_income = self
+            .interest
+            .iter()
+            .filter(|entry| entry.taxable)
+            .map(|entry| entry.gross_eur)
+            .sum();
+        self.total_paid_interest = self
+            .interest
+            .iter()
+            .filter(|entry| !entry.taxable)
+            .map(|entry| -entry.gross_eur)
+            .sum();
         self.total_foreign_withholding = self.dividends.iter().map(|entry| entry.withheld_eur).sum();
 
         self.total_deductible_fees = self
@@ -496,6 +517,33 @@ mod tests {
         // Base falls to 6,000, entirely in the 19% bracket.
         assert_eq!(taxes[1], dec!(1140));
         assert_eq!(taxes[1] - taxes[0], dec!(-785));
+    }
+
+    /// Interest paid on a margin loan is reported but never netted off the interest received:
+    /// neither statute allows an expense against securities income beyond LIRPF art. 26.1.a's
+    /// administration and custody, so the RCM result is the credit interest alone.
+    #[test]
+    fn paid_interest_is_reported_outside_the_rcm_result() {
+        let mut spain = statement();
+        spain.interest.push(InterestEntry {
+            date: Date::from_ymd_opt(2026, 6, 30).unwrap(),
+            description: "Broker interest".to_string(),
+            gross_eur: dec!(90),
+            taxable: true,
+            notes: None,
+        });
+        spain.interest.push(InterestEntry {
+            date: Date::from_ymd_opt(2026, 9, 30).unwrap(),
+            description: "Broker interest paid".to_string(),
+            gross_eur: dec!(-225),
+            taxable: false,
+            notes: Some("informational".to_string()),
+        });
+        spain.calculate_totals();
+
+        assert_eq!(spain.total_interest_income, dec!(90));
+        assert_eq!(spain.total_paid_interest, dec!(225));
+        assert_eq!(spain.rcm_net, dec!(90));
     }
 
     /// A loss the valores-homogéneos rule deferred shelters nothing: the disposal enters the base at

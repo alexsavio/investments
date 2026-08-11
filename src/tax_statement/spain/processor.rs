@@ -646,6 +646,12 @@ fn process_dividends(
 }
 
 /// Broker interest, taxed as rendimientos del capital mobiliario.
+///
+/// Interest **received** is income. Interest **paid** — IB's "Broker Interest Paid", which arrives
+/// as a negative accrual in the same ledger — is not deductible under either regime: LIRPF art.
+/// 26.1.a is a closed list reaching only administration and custody of negotiable securities, and
+/// NF 3/2014 art. 39 is narrower still. Netting the two would silently deduct a financing cost the
+/// return does not allow, so paid interest is reported and left out of the result.
 fn process_interest(
     statement: &mut SpanishTaxStatement,
     broker_statement: &BrokerStatement,
@@ -653,6 +659,7 @@ fn process_interest(
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
     let mut has_income = false;
+    let mut paid_total = Decimal::ZERO;
 
     for interest in &broker_statement.idle_cash_interest {
         if interest.date.year() != params.year {
@@ -664,11 +671,36 @@ fn process_interest(
         let context = format!("Processing interest payment on {}", interest.date);
         let gross_eur = convert_to_eur(converter, interest.date, interest.amount, &context)?;
 
+        let taxable = gross_eur >= Decimal::ZERO;
+        if !taxable {
+            paid_total -= gross_eur;
+        }
+
         statement.interest.push(InterestEntry {
             date: interest.date,
-            description: "Broker interest".to_string(),
+            description: if taxable {
+                "Broker interest received".to_string()
+            } else {
+                "Broker interest paid (borrowed balance)".to_string()
+            },
             gross_eur,
+            taxable,
+            notes: (!taxable).then(|| {
+                "Informational: interest paid on a borrowed balance is not deductible from the \
+                 savings base — LIRPF art. 26.1.a allows only administration and custody of \
+                 negotiable securities, and NF 3/2014 art. 39 allows nothing"
+                    .to_string()
+            }),
         });
+    }
+
+    if paid_total > Decimal::ZERO {
+        warn!(
+            "€{} of broker interest paid on a borrowed (margin) balance is reported but NOT \
+             deducted from the savings base: neither LIRPF art. 26.1.a nor NF 3/2014 art. 39 \
+             allows a financing cost against rendimientos del capital mobiliario.",
+            super::format_eur(paid_total)
+        );
     }
 
     Ok(has_income)

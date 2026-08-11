@@ -349,6 +349,18 @@ fn generate_spanish_tax_statement(
         );
     }
 
+    if statement.total_paid_interest > Decimal::ZERO {
+        println!(
+            "{}",
+            Color::Yellow.paint(format!(
+                "€{} of broker interest paid on a borrowed (margin) balance is reported but NOT \
+                 deducted: neither LIRPF art. 26.1.a nor NF 3/2014 art. 39 allows a financing cost \
+                 against rendimientos del capital mobiliario.",
+                eur::format_eur(statement.total_paid_interest)
+            ))
+        );
+    }
+
     if statement.total_fx_borrowed_review != Decimal::ZERO {
         println!(
             "{}",

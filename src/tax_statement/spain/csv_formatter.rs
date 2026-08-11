@@ -198,11 +198,13 @@ impl CsvFormatter {
     fn write_interest_row<W: Write>(writer: &mut W, entry: &InterestEntry) -> GenericResult<()> {
         writeln!(
             writer,
-            "Interest,{},{},CASH,,{},,,,,,{},,,,,,RCM,",
+            "Interest,{},{},CASH,,{},,,,,,{},,,,,,{},{}",
             Self::format_date(entry.date),
             Self::format_date(entry.date),
             Self::escape_csv(&entry.description),
-            Self::format_decimal(entry.gross_eur)
+            Self::format_decimal(entry.gross_eur),
+            if entry.taxable { "RCM" } else { "" },
+            Self::escape_csv(entry.notes.as_deref().unwrap_or(""))
         )?;
         Ok(())
     }
@@ -306,6 +308,12 @@ impl CsvFormatter {
             "SUMMARY_RCM_INTEREST",
             "Intereses (rendimientos del capital mobiliario)",
             statement.total_interest_income,
+        )?;
+        row(
+            writer,
+            "SUMMARY_RCM_INTEREST_PAID",
+            "Intereses pagados sobre saldo prestado (informativo — no deducibles)",
+            statement.total_paid_interest,
         )?;
         row(
             writer,
@@ -871,8 +879,10 @@ mod tests {
                     w,
                     &InterestEntry {
                         date: date(),
-                        description: "Broker interest".to_string(),
+                        description: "Broker interest received".to_string(),
                         gross_eur: dec!(90),
+                        taxable: true,
+                        notes: None,
                     },
                 )
             }),
@@ -1086,6 +1096,27 @@ mod tests {
 
         let informational = render(|w| CsvFormatter::write_fee_row(w, &fee(false)));
         assert_eq!(informational.split(',').nth(17), Some(""));
+    }
+
+    /// Interest paid on a borrowed balance carries no savings group, so a consumer summing the RCM
+    /// column cannot net a financing cost off the income the way IB's raw ledger would.
+    #[test]
+    fn paid_interest_carries_no_savings_group() {
+        let entry = |gross: Decimal, taxable: bool| InterestEntry {
+            date: date(),
+            description: "Broker interest".to_string(),
+            gross_eur: gross,
+            taxable,
+            notes: (!taxable).then(|| "Informational".to_string()),
+        };
+
+        let received = render(|w| CsvFormatter::write_interest_row(w, &entry(dec!(90), true)));
+        assert_eq!(received.split(',').nth(17), Some("RCM"));
+
+        let paid = render(|w| CsvFormatter::write_interest_row(w, &entry(dec!(-225), false)));
+        assert_eq!(paid.split(',').nth(17), Some(""));
+        assert_eq!(paid.split(',').nth(11), Some("-225.00"));
+        assert_eq!(paid.split(',').count(), COLUMNS);
     }
 
     /// A description containing a comma must not split the row: the cell is escaped as a unit, so
