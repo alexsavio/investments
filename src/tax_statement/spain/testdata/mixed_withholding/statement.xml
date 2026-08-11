@@ -1,0 +1,14 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20260101" toDate="20261231" period="LastYear" whenGenerated="20270115;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="1888.89" dividends="2222.22" brokerInterest="0" withholdingTax="-333.33"/>
+      </CashReport>
+      <CashTransactions>
+        <CashTransaction currency="USD" symbol="AAPL" isin="US0378331005" description="AAPL CASH DIVIDEND" dateTime="20260520;235959" amount="1111.11" type="Dividends"/>
+        <CashTransaction currency="USD" symbol="AAPL" isin="US0378331005" description="AAPL WITHHOLDING" dateTime="20260520;235959" amount="-333.33" type="Withholding Tax"/>
+        <CashTransaction currency="USD" symbol="VWRA" isin="IE00BK5BQT80" description="VWRA CASH DIVIDEND" dateTime="20260610;235959" amount="1111.11" type="Dividends"/>
+      </CashTransactions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

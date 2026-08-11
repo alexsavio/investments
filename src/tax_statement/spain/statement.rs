@@ -3,7 +3,7 @@
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::spain::carryforward::{LedgerApplication, LossLedger};
 use crate::taxes::spain::compensation::compensate_savings_base;
-use crate::taxes::spain::credit::double_taxation_credit;
+use crate::taxes::spain::credit::{double_taxation_credit, treaty_capped_credit};
 use crate::taxes::DeferredLossConfig;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::types::{Date, Decimal};
@@ -409,8 +409,12 @@ impl SpanishTaxStatement {
             .filter(|entry| entry.exemption_eligible)
             .map(|entry| entry.gross_eur)
             .sum();
-        self.total_dividend_exemption =
-            std::cmp::min(self.dividend_exemption_limit, eligible_dividends);
+        // Clamped at zero: a reversed dividend can leave the eligible pool net-negative, and a
+        // negative exemption would be *added* to the base below.
+        self.total_dividend_exemption = std::cmp::min(
+            self.dividend_exemption_limit,
+            std::cmp::max(Decimal::ZERO, eligible_dividends),
+        );
 
         self.rcm_net = self.total_dividend_income + self.total_interest_income
             - self.total_deductible_fees
@@ -482,17 +486,14 @@ impl SpanishTaxStatement {
         self.savings_quota = self.scale.tax(self.savings_base);
         self.average_savings_rate = self.scale.average_rate(self.savings_base);
 
-        // The credit is computed once on the year's aggregates. Its second limb is the average
-        // savings rate, which does not exist until the whole base is known, so the per-row
-        // `treaty_capped_credit` figures are informational only.
+        // The credit's second limb is the average savings rate, which does not exist until the
+        // whole base is known, so the credit itself can only be computed here.
         self.foreign_gross_income = self.dividends.iter().map(|entry| entry.gross_eur).sum();
         self.foreign_taxable_income = self.foreign_income_reaching_the_base();
 
         self.total_foreign_tax_credit = double_taxation_credit(
-            self.total_foreign_withholding,
-            self.foreign_gross_income,
+            self.treaty_limb(),
             self.foreign_taxable_income,
-            self.treaty_rate,
             self.average_savings_rate,
         );
 
@@ -500,6 +501,47 @@ impl SpanishTaxStatement {
             Decimal::ZERO,
             self.savings_quota - self.total_foreign_tax_credit,
         );
+    }
+
+    /// The credit's first limb, summed payment by payment.
+    ///
+    /// Two things make this a per-row figure rather than a year-level one:
+    ///
+    /// - a treaty caps what the **source** state may levy on each payment, so pooling the year's
+    ///   withholding against the year's gross would let a dividend withheld at 0% lend its unused
+    ///   headroom to one withheld at 30%;
+    /// - income Spain exempts bears no Spanish tax, so it carries no credit either. Each row is
+    ///   therefore measured on the slice of it that survives the exemption. The exempt slice is
+    ///   spread pro rata across the exemption-eligible rows, which is where the relief lands; a row
+    ///   the anti-abuse clause excluded keeps its full gross.
+    ///
+    /// The per-row `DividendEntry.treaty_capped_credit` is a different figure with a different use:
+    /// it is measured on the full gross, because that is what a reclaim from the source state is
+    /// measured against.
+    fn treaty_limb(&self) -> Decimal {
+        let eligible: Decimal = self
+            .dividends
+            .iter()
+            .filter(|entry| entry.exemption_eligible)
+            .map(|entry| entry.gross_eur)
+            .sum();
+
+        self.dividends
+            .iter()
+            .map(|entry| {
+                let taxed_gross = if entry.exemption_eligible && eligible > Decimal::ZERO {
+                    entry.gross_eur - self.total_dividend_exemption * entry.gross_eur / eligible
+                } else {
+                    entry.gross_eur
+                };
+
+                treaty_capped_credit(
+                    entry.withheld_eur,
+                    std::cmp::max(Decimal::ZERO, taxed_gross),
+                    self.treaty_rate,
+                )
+            })
+            .sum()
     }
 
     /// Foreign-source income as it actually reaches the base liquidable.
@@ -530,7 +572,10 @@ impl SpanishTaxStatement {
             return Decimal::ZERO;
         }
 
-        let rcm_gross = self.total_dividend_income + self.total_interest_income;
+        // Both sides of the pro-ration are measured after the exemption, so the fraction is the
+        // foreign share of the RCM income that is actually taxed.
+        let rcm_gross =
+            self.total_dividend_income + self.total_interest_income - self.total_dividend_exemption;
         let net = if rcm_gross > Decimal::ZERO {
             gross - self.total_deductible_fees * gross / rcm_gross
         } else {
@@ -581,6 +626,20 @@ mod tests {
             deferred_loss: Decimal::ZERO,
             integrable_amount: result,
             lots: Vec::new(),
+            notes: None,
+        }
+    }
+
+    fn dividend(gross: Decimal, withheld: Decimal, exemption_eligible: bool) -> DividendEntry {
+        DividendEntry {
+            symbol: "AAPL".to_string(),
+            isin: String::new(),
+            description: String::new(),
+            date: Date::from_ymd_opt(2026, 5, 20).unwrap(),
+            gross_eur: gross,
+            withheld_eur: withheld,
+            treaty_capped_credit: Decimal::ZERO,
+            exemption_eligible,
             notes: None,
         }
     }
@@ -722,6 +781,34 @@ mod tests {
         assert_eq!(spain.total_interest_income, dec!(90));
         assert_eq!(spain.total_paid_interest, dec!(225));
         assert_eq!(spain.rcm_net, dec!(90));
+    }
+
+    /// A reversed dividend can leave the exemption-eligible pool net-negative. An exemption is
+    /// relief, never a charge, so it floors at zero — the unclamped `min(1_500, −200)` would have
+    /// *added* €200 to the base.
+    #[test]
+    fn a_net_negative_eligible_pool_exempts_nothing() {
+        let regime = SpanishTaxRegime::Gipuzkoa;
+        let mut spain = SpanishTaxStatement::new(
+            2026,
+            regime,
+            SavingsScale::for_year(regime, 2026).unwrap(),
+            LossLedger::default(),
+            LossLedger::default(),
+            Decimal::ZERO,
+            dec!(0.15),
+            dec!(1500),
+        );
+
+        spain.dividends.push(dividend(dec!(300), dec!(45), true));
+        spain.dividends.push(dividend(dec!(-500), dec!(-75), true));
+        spain.calculate_totals();
+
+        assert_eq!(spain.total_dividend_income, dec!(-200));
+        assert_eq!(spain.total_dividend_exemption, dec!(0));
+        assert_eq!(spain.rcm_net, dec!(-200));
+        assert_eq!(spain.savings_base, dec!(0));
+        assert_eq!(spain.total_foreign_tax_credit, dec!(0));
     }
 
     /// A loss the valores-homogéneos rule deferred shelters nothing: the disposal enters the base at

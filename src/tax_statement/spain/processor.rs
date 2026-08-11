@@ -15,6 +15,7 @@ use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
 use crate::tax_statement::fx_fifo::compute_fx_fifo;
 use crate::taxes::spain::SpanishTaxRegime;
+use crate::taxes::spain::credit;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::taxes::{DeferredLossConfig, SpanishTaxConfig, TaxConfig};
 use crate::time::DateOptTime;
@@ -872,11 +873,11 @@ fn process_dividends(
             .get_name(&dividend.issuer)
             .to_string();
 
-        // First limb of the double-taxation credit: a treaty caps what the source state may levy,
-        // so anything withheld above it is not creditable here and must be reclaimed from that
-        // state instead. The second limb (the average savings rate) is a year-level figure, applied
-        // in `calculate_totals`.
-        let treaty_capped_credit = std::cmp::min(withheld_eur, gross_eur * params.treaty_rate);
+        // What a reclaim from the source state is measured against: a treaty caps what that state
+        // may levy on the payment, so anything withheld above the cap has to be reclaimed there
+        // rather than credited here. The credit's own first limb is narrower — it runs on the slice
+        // of the payment Spain taxes — and is assembled in `calculate_totals`.
+        let reclaim_floor = credit::treaty_capped_credit(withheld_eur, gross_eur, params.treaty_rate);
 
         let washed = dividend_is_washed(broker_statement, &dividend.issuer, dividend.date);
         let exemption_eligible = params.dividend_exemption_limit > Decimal::ZERO && !washed;
@@ -892,7 +893,7 @@ fn process_dividends(
             date: dividend.date,
             gross_eur,
             withheld_eur,
-            treaty_capped_credit: std::cmp::max(Decimal::ZERO, treaty_capped_credit),
+            treaty_capped_credit: reclaim_floor,
             exemption_eligible,
             notes: (params.dividend_exemption_limit > Decimal::ZERO && washed).then(|| {
                 "Excluded from the €1,500 dividend exemption (NF 3/2014 art. 9.24): homogeneous \

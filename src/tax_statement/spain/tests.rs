@@ -539,13 +539,40 @@ fn gipuzkoa_exempts_the_first_1500_euros_of_dividends() {
     assert_eq!(gipuzkoa.savings_base, dec!(1200));
     assert_eq!(gipuzkoa.savings_quota, dec!(228));
 
-    // Exempt income bears no Spanish tax, so it carries no credit either: the rate limb runs on
-    // €750, not on the €2,250 gross.
+    // Exempt income bears no Spanish tax, so it carries no credit either. Both limbs run on the
+    // €750 that is actually taxed: the exemption lands wholly on AAPL, the only eligible payer, so
+    // the treaty limb is min(270, 300 × 15%) + min(67.50, 450 × 15%) = 45 + 67.50, and the rate limb
+    // is 750 × 19% = 142.50.
     assert_eq!(gipuzkoa.total_foreign_withholding, dec!(337.50));
     assert_eq!(gipuzkoa.foreign_gross_income, dec!(2250));
     assert_eq!(gipuzkoa.foreign_taxable_income, dec!(750));
-    assert_eq!(gipuzkoa.total_foreign_tax_credit, dec!(142.50));
-    assert_eq!(gipuzkoa.net_tax_due, dec!(85.50));
+    assert_eq!(gipuzkoa.total_foreign_tax_credit, dec!(112.50));
+    assert_eq!(gipuzkoa.net_tax_due, dec!(115.50));
+}
+
+/// The treaty limb is a per-payment ceiling, not a pooled one: a treaty caps what the **source**
+/// state may levy on each payment, so a dividend nothing was withheld on cannot lift the ceiling
+/// for one withheld at 30%.
+///
+/// Fixture (Territorio Común, so no exemption is in play): a US dividend of €1,000 withheld at 30%
+/// and an Irish one of €1,000 withheld at nothing. Only €150 — 15% of the US payment — is
+/// creditable; pooling the year's €300 against the year's €2,000 gross would credit all €300.
+#[test]
+fn the_treaty_limb_is_capped_per_payment_not_across_payers() {
+    let spain = run_pipeline("mixed_withholding", 2026, SpanishTaxRegime::Comun);
+
+    assert_eq!(spain.dividends.len(), 2);
+    assert_eq!(spain.total_dividend_income, dec!(2000));
+    assert_eq!(spain.total_foreign_withholding, dec!(300));
+
+    assert_eq!(spain.savings_base, dec!(2000));
+    assert_eq!(spain.savings_quota, dec!(380));
+    assert_eq!(spain.average_savings_rate, dec!(0.19));
+
+    // Rate limb 2,000 × 19% = 380, so the treaty limb binds.
+    assert_eq!(spain.foreign_taxable_income, dec!(2000));
+    assert_eq!(spain.total_foreign_tax_credit, dec!(150));
+    assert_eq!(spain.net_tax_due, dec!(230));
 }
 
 /// Territorio Común has no dividend exemption: Ley 26/2014 repealed LIRPF art. 7.y with effect from
