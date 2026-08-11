@@ -1,6 +1,7 @@
 mod dividends;
 pub mod germany;
 mod interest;
+pub mod spain;
 mod statement;
 mod tax_agent;
 mod trades;

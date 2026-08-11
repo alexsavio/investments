@@ -1,0 +1,15 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20210101" toDate="20261231" period="Custom" whenGenerated="20270115;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="25000" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <Trades>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20210310;100000" settleDate="20210312" quantity="100" tradePrice="100" tradeMoney="-10000" ibCommission="0" buySell="BUY" openCloseIndicator="O"/>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20240610;100000" settleDate="20240612" quantity="100" tradePrice="200" tradeMoney="-20000" ibCommission="0" buySell="BUY" openCloseIndicator="O"/>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20260415;100000" settleDate="20260417" quantity="-100" tradePrice="250" tradeMoney="25000" ibCommission="0" buySell="SELL" openCloseIndicator="C"/>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20260915;100000" settleDate="20260917" quantity="-100" tradePrice="300" tradeMoney="30000" ibCommission="0" buySell="SELL" openCloseIndicator="C"/>
+      </Trades>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>
