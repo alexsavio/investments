@@ -198,20 +198,21 @@ impl WashSaleEngine {
     /// deferred loss integrable "a medida que se transmitan los activos", and DGT V3282-18 reads
     /// that as requiring a real exit: selling the blocking shares and buying homogeneous ones back
     /// inside the window does not end the deferral, it moves it onto the new shares. The released
-    /// amount is therefore split by the same matched fraction the rule uses everywhere else —
-    /// the matched part is re-attached, the rest becomes integrable.
+    /// amount is therefore split by the matched fraction of the **blocked** shares the disposal
+    /// consumed — the matched part is re-attached, the rest becomes integrable.
     pub fn process(&mut self, disposal: &Disposal) -> DisposalOutcome {
         let state = self.instruments.entry(disposal.key.clone()).or_default();
         let mut outcome = DisposalOutcome::default();
 
         let mut released = Vec::new();
+        let mut blocked_consumed = Decimal::ZERO;
         for &(lot_date, quantity) in &disposal.consumed {
             state
                 .acquisitions
                 .entry(lot_date)
                 .or_default()
                 .consumed += quantity;
-            release(state, lot_date, quantity, &mut released);
+            blocked_consumed += release(state, lot_date, quantity, &mut released);
         }
         state.blocked.retain(|lot| lot.blocked_quantity > Decimal::ZERO);
 
@@ -231,6 +232,20 @@ impl WashSaleEngine {
             Decimal::ZERO
         };
 
+        // Definitiveness is measured on the **blocked** shares, not on the whole disposal: the
+        // window match is attributed to them first. Selling 40 blocked plus 60 unblocked shares and
+        // buying 40 back replaces every share that was blocking, so nothing left the estate for
+        // good — even though only 40% of the sale was matched.
+        //
+        // V3282-18 gives no allocation rule when a disposal mixes blocked and unblocked shares.
+        // Blocked-first is the conservative reading: it re-attaches more and integrates less, which
+        // postpones a deduction rather than granting one early.
+        let release_fraction = if blocked_consumed > Decimal::ZERO {
+            std::cmp::min(matched_total, blocked_consumed) / blocked_consumed
+        } else {
+            Decimal::ZERO
+        };
+
         // Each deferred amount the matched shares end up carrying, with the sale it came from.
         let mut placements: Vec<(Date, Decimal)> = Vec::new();
 
@@ -240,7 +255,7 @@ impl WashSaleEngine {
         }
 
         for reintegration in released {
-            let re_attached = reintegration.amount * blocked_fraction;
+            let re_attached = reintegration.amount * release_fraction;
             let integrable = reintegration.amount - re_attached;
 
             if integrable > Decimal::ZERO {
@@ -267,7 +282,8 @@ impl WashSaleEngine {
     }
 }
 
-/// Release the deferrals blocked by shares acquired on `lot_date` that this sale just consumed.
+/// Release the deferrals blocked by shares acquired on `lot_date` that this sale just consumed,
+/// returning how many blocked shares that took.
 ///
 /// Oldest deferral first, and pro rata to the share of the blocked lot consumed.
 ///
@@ -283,7 +299,9 @@ fn release(
     lot_date: Date,
     mut quantity: Decimal,
     reintegrations: &mut Vec<Reintegration>,
-) {
+) -> Decimal {
+    let mut consumed = Decimal::ZERO;
+
     for lot in &mut state.blocked {
         if quantity <= Decimal::ZERO {
             break;
@@ -298,6 +316,7 @@ fn release(
         lot.deferred_loss -= released;
         lot.blocked_quantity -= taken;
         quantity -= taken;
+        consumed += taken;
 
         if released > Decimal::ZERO {
             reintegrations.push(Reintegration {
@@ -307,6 +326,8 @@ fn release(
             });
         }
     }
+
+    consumed
 }
 
 /// Homogeneous acquisitions inside the disposal's window that can still block, oldest first.
@@ -670,6 +691,59 @@ mod tests {
         assert_eq!(definitive.reintegrations[0].amount, dec!(360));
         assert_eq!(definitive.reintegrations[0].origin_sale_date, date!(2026, 3, 10));
         assert_eq!(engine.blocked_lots().count(), 0);
+    }
+
+    /// Definitiveness is measured on the blocked shares, not on the whole disposal.
+    ///
+    /// Sell 40 blocked shares together with 60 unblocked ones and buy 40 back inside the window:
+    /// every share that was blocking has been replaced, so nothing left the estate for good and the
+    /// whole €360 moves onto the new shares. Scaling by the disposal's own matched fraction
+    /// (40/100) would integrate €216 of a deferral that is still fully blocked.
+    ///
+    /// Buying only 20 back replaces half the blocked shares, so half is re-attached and half becomes
+    /// integrable.
+    #[rstest]
+    #[case(dec!(40), dec!(0), dec!(360))]
+    #[case(dec!(20), dec!(180), dec!(180))]
+    fn definitiveness_is_measured_on_the_blocked_shares(
+        #[case] repurchased: Decimal,
+        #[case] expected_integrable: Decimal,
+        #[case] expected_re_attached: Decimal,
+    ) {
+        let mut engine = WashSaleEngine::new(
+            [
+                acquisition(date!(2026, 1, 5), dec!(100)),
+                acquisition(date!(2026, 4, 20), dec!(40)),
+                // Outside the first sale's window, so these 60 shares never block anything.
+                acquisition(date!(2026, 6, 1), dec!(60)),
+                acquisition(date!(2026, 10, 1), repurchased),
+            ],
+            [],
+        );
+
+        let first = engine.process(&disposal(
+            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+        assert_eq!(first.deferred_loss, dec!(360));
+
+        // 40 blocked shares and 60 unblocked ones go together, at a gain, so only the release is in
+        // play.
+        let mixed = engine.process(&disposal(
+            date!(2026, 9, 10), dec!(100), dec!(1000),
+            &[(date!(2026, 4, 20), dec!(40)), (date!(2026, 6, 1), dec!(60))]));
+
+        let integrable: Decimal = mixed.reintegrations.iter().map(|entry| entry.amount).sum();
+        assert_eq!(integrable, expected_integrable);
+        assert_eq!(mixed.deferred_loss, dec!(0));
+
+        let re_attached: Decimal = engine.blocked_lots().map(|(_, lot)| lot.deferred_loss).sum();
+        assert_eq!(re_attached, expected_re_attached);
+        // Whatever moved on is still labelled with the sale it came from.
+        for (_, lot) in engine.blocked_lots() {
+            assert_eq!(lot.origin_sale_date, date!(2026, 3, 10));
+            assert_eq!(lot.buy_date, date!(2026, 10, 1));
+        }
+        // Nothing is created or lost: what was integrated plus what moved on is the whole deferral.
+        assert_eq!(integrable + re_attached, dec!(360));
     }
 
     /// A disposal the tool cannot price still releases earlier deferrals — the release does not

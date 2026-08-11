@@ -173,9 +173,14 @@ How the tool applies it:
 7. A release only counts to the extent that disposal was itself **definitive**. Both statutes make
    the loss integrable "a medida que se transmitan los activos", and DGT V3282-18 reads that as
    requiring a real exit: sell the blocking shares and buy homogeneous ones back inside the window
-   and the deferral does not end, it moves onto the new shares. The released amount is split by the
-   same matched fraction the rule uses everywhere else — the matched part is re-attached (keeping
-   the original sale's label), the rest becomes integrable.
+   and the deferral does not end, it moves onto the new shares. The matched part is re-attached
+   (keeping the original sale's label), the rest becomes integrable.
+8. That split is measured on the **blocked** shares the disposal consumed, not on the whole
+   disposal. Selling 40 blocked shares together with 60 unblocked ones and buying 40 back replaces
+   every share that was blocking, so nothing left the estate for good and the whole deferral moves
+   on. V3282-18 gives no allocation rule for a mixed disposal; attributing the repurchase to the
+   blocked shares first is the conservative reading — it re-attaches more and integrates less, so it
+   postpones a deduction rather than granting one early.
 
 Worked example — sell 100 shares on 2026-03-10 at a €900 loss, buy 40 back on 2026-04-20:
 
