@@ -6,6 +6,8 @@
 
 use std::io::Write;
 
+use rust_decimal::RoundingStrategy;
+
 use crate::core::GenericResult;
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::types::Decimal;
@@ -935,8 +937,13 @@ impl CsvFormatter {
 
     /// Coefficients are published to three decimals by the Decreto Foral; print them as published
     /// so a reader can match the cell against the table.
+    /// Coefficients print to three places, half away from zero like every other numeric cell.
+    ///
+    /// `rescale` alone rounds half-to-even, so an exact half in the fourth decimal would come out of
+    /// this cell rounded differently from every amount beside it. Shipped and validated coefficients
+    /// carry at most three decimals, so this only bites on a hand-written override.
     fn format_coefficient(value: Decimal) -> String {
-        let mut value = value;
+        let mut value = value.round_dp_with_strategy(3, RoundingStrategy::MidpointAwayFromZero);
         value.rescale(3);
         value.to_string()
     }
@@ -1267,6 +1274,36 @@ mod tests {
         assert_eq!(cell(&dividend, "savings_group"), "RCM");
         assert_eq!(cell(&dividend, "quantity"), "");
         assert_eq!(cell(&dividend, "gain_loss_eur"), "");
+
+        // A vest reuses two columns named for other row types: `quantity` for the shares vested and
+        // `gross_amount_eur` for the vest-date value. It carries no savings group — employment
+        // income belongs to the general base, which this tool does not compute.
+        let grant = render(|w| {
+            CsvFormatter::write_stock_grant_row(
+                w,
+                &StockGrantEntry {
+                    date: date(),
+                    symbol: "AAPL".to_string(),
+                    description: "RSU vest".to_string(),
+                    quantity: dec!(25),
+                    value_eur: Some(dec!(4500)),
+                    notes: "General base".to_string(),
+                },
+            )
+        });
+        assert_eq!(cell(&grant, "quantity"), "25.00");
+        assert_eq!(cell(&grant, "gross_amount_eur"), "4500.00");
+        assert_eq!(cell(&grant, "savings_group"), "");
+        assert_eq!(cell(&grant, "cost_eur"), "");
+        assert_eq!(cell(&grant, "gain_loss_eur"), "");
+
+        // A reintegration carries the released loss as a negative in both `gain_loss_eur` and
+        // `integrable_amount_eur`, plus the ISIN of the instrument it came from.
+        let reintegration = render(|w| CsvFormatter::write_reintegration_row(w, &reintegration()));
+        assert_eq!(cell(&reintegration, "isin"), "US0378331005");
+        assert_eq!(cell(&reintegration, "gain_loss_eur"), "-225.00");
+        assert_eq!(cell(&reintegration, "integrable_amount_eur"), "-225.00");
+        assert_eq!(cell(&reintegration, "savings_group"), "GyP");
     }
 
     /// A deductible fee is marked as reaching the RCM group; a non-deductible one carries no group,
@@ -1341,6 +1378,9 @@ mod tests {
         assert_eq!(CsvFormatter::format_coefficient(dec!(1.212)), "1.212");
         assert_eq!(CsvFormatter::format_coefficient(dec!(1)), "1.000");
         assert_eq!(CsvFormatter::format_coefficient(dec!(1.05)), "1.050");
+        // Half away from zero, like every other numeric cell — not the half-to-even `rescale` does.
+        assert_eq!(CsvFormatter::format_coefficient(dec!(1.0125)), "1.013");
+        assert_eq!(CsvFormatter::format_coefficient(dec!(1.0135)), "1.014");
     }
 
     /// The summary block is its own 3-column section: a row that spilled a comma would break any
