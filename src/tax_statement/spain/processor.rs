@@ -926,6 +926,9 @@ fn process_dividends(
     }
 
     if !exempted.is_empty() {
+        // Sort before dedup: `Vec::dedup` only collapses *consecutive* duplicates, so an
+        // interleaved payer list would print the same ticker twice.
+        exempted.sort();
         exempted.dedup();
         warn!(
             "The Gipuzkoa €1,500 dividend exemption (NF 3/2014 art. 9.24) was applied to: {}. It \
@@ -1191,10 +1194,11 @@ fn process_fx_gains(
             .map(|entry| entry.amount_eur)
             .sum();
         warn!(
-            "€{total} of foreign-currency results were realized on a borrowed (margin) balance and \
-             are NOT included in the savings base. Repaying a currency loan is not clearly a \
-             transfer of a patrimonial element and neither NF 3/2014 nor the LIRPF settles it — \
-             review these manually."
+            "€{} of foreign-currency results were realized on a borrowed (margin) balance and are \
+             excluded from the savings base pending manual review. Repaying a currency loan is not \
+             clearly a transfer of a patrimonial element and neither NF 3/2014 nor the LIRPF \
+             settles it.",
+            super::format_eur(total)
         );
     }
 

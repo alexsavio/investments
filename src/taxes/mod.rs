@@ -59,8 +59,7 @@ pub struct FundNav {
 }
 
 /// Spanish IRPF configuration. Required when `jurisdiction: spain`.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug)]
 pub struct SpanishTaxConfig {
     /// Which regime the filer is subject to. Deliberately has no default: the regimes differ in
     /// the savings scale, in whether acquisition costs are actualized, in whether the two
@@ -71,19 +70,52 @@ pub struct SpanishTaxConfig {
     /// Pending negative savings-base balances (saldos negativos pendientes de compensación)
     /// brought in from prior returns, keyed by the year each arose in. Both groups carry forward
     /// for four years, so the origin year is part of the data, not bookkeeping trivia.
-    #[serde(default)]
     pub loss_carryforward: SpanishLossCarryforward,
 
     /// Wash-sale losses already deferred by an earlier return or another tool, seeding the
     /// valores-homogéneos replay with blocked lots the statement itself cannot see.
-    #[serde(default)]
     pub deferred_losses: Vec<DeferredLossConfig>,
 
     /// Actualization coefficients, keyed by disposal year then acquisition year. Overrides and
     /// extends the Decreto Foral tables the tool ships, so a newly published year can be used
     /// without waiting for a release.
-    #[serde(default)]
     pub coefficients: BTreeMap<i32, BTreeMap<i32, Decimal>>,
+}
+
+/// Deserialized shape of `taxes.spain`, with `regime` optional so its absence can be reported by
+/// name rather than as serde's bare "missing field".
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpanishTaxConfigShape {
+    regime: Option<spain::SpanishTaxRegime>,
+    #[serde(default)]
+    loss_carryforward: SpanishLossCarryforward,
+    #[serde(default)]
+    deferred_losses: Vec<DeferredLossConfig>,
+    #[serde(default)]
+    coefficients: BTreeMap<i32, BTreeMap<i32, Decimal>>,
+}
+
+impl<'de> Deserialize<'de> for SpanishTaxConfig {
+    /// Every other Spanish validation names the config path it is about; this one has to do the
+    /// same, and serde's own message for a missing required field does not.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let shape = SpanishTaxConfigShape::deserialize(deserializer)?;
+
+        let regime = shape.regime.ok_or_else(|| serde::de::Error::custom(
+            "taxes.spain.regime is not set: set it to `gipuzkoa` or `comun`. There is no default \
+             — the two regimes differ in the savings scale, in whether acquisition costs are \
+             actualized, in whether the savings-base groups may offset each other, and in whether \
+             custody fees are deductible"
+        ))?;
+
+        Ok(SpanishTaxConfig {
+            regime,
+            loss_carryforward: shape.loss_carryforward,
+            deferred_losses: shape.deferred_losses,
+            coefficients: shape.coefficients,
+        })
+    }
 }
 
 impl SpanishTaxConfig {
@@ -611,7 +643,11 @@ mod tests {
     /// deductibility, so omitting it must fail rather than default to either regime.
     #[test]
     fn spanish_config_requires_the_regime() {
-        assert!(serde_yaml::from_str::<TaxConfig>("spain: {}\n").is_err());
+        let error = match serde_yaml::from_str::<TaxConfig>("spain: {}\n") {
+            Ok(_) => panic!("a config without a regime must be rejected"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("taxes.spain.regime"), "{error}");
         // A typo is a hard error too, not a silent fallback.
         assert!(serde_yaml::from_str::<TaxConfig>("spain:\n  regime: guipuzcoa\n").is_err());
         // `deny_unknown_fields` catches a misspelled key rather than ignoring the setting.

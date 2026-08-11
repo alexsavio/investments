@@ -26,3 +26,15 @@ pub enum SpanishTaxRegime {
     #[serde(alias = "común")]
     Comun,
 }
+
+impl SpanishTaxRegime {
+    /// How the regime is named to the filer, with the statute it comes from.
+    ///
+    /// One definition, so the console banner and the CSV's `SUMMARY_REGIME` row cannot drift apart.
+    pub fn description(self) -> &'static str {
+        match self {
+            SpanishTaxRegime::Gipuzkoa => "Gipuzkoa (Norma Foral 3/2014)",
+            SpanishTaxRegime::Comun => "Territorio Común (Ley 35/2006)",
+        }
+    }
+}

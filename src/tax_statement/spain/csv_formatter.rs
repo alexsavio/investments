@@ -344,11 +344,12 @@ impl CsvFormatter {
         )?;
         writeln!(writer, "summary_key,label,value_eur")?;
 
-        let regime = match statement.regime {
-            SpanishTaxRegime::Gipuzkoa => "Gipuzkoa (Norma Foral 3/2014)",
-            SpanishTaxRegime::Comun => "Territorio Común (Ley 35/2006)",
-        };
-        writeln!(writer, "SUMMARY_REGIME,{regime},{}", statement.year)?;
+        writeln!(
+            writer,
+            "SUMMARY_REGIME,{},{}",
+            statement.regime.description(),
+            statement.year
+        )?;
 
         // A free function rather than a closure: the closure would hold the writer borrow for the
         // rest of the block, and the average-rate row below writes through the writer directly.
@@ -403,17 +404,13 @@ impl CsvFormatter {
             writer,
             "SUMMARY_GYP_CAPITAL_GAINS",
             "Ganancias y pérdidas por transmisión de valores",
-            statement
-                .capital_gains
-                .iter()
-                .map(|entry| entry.integrable_amount)
-                .sum(),
+            statement.total_capital_gains,
         )?;
         row(
             writer,
             "SUMMARY_GYP_FX",
             "Ganancias y pérdidas por conversión de divisa",
-            statement.total_fx_gains - statement.total_fx_losses,
+            statement.total_fx_result,
         )?;
         row(
             writer,
@@ -496,8 +493,10 @@ impl CsvFormatter {
             statement.savings_quota,
         )?;
 
-        // Not a EUR amount: printed at full precision because it is the multiplier behind the
-        // credit cap, and rounding it would move the cap.
+        // A ratio, not a EUR amount, so it does not go through `row`'s two-place formatting.
+        // `SavingsScale::average_rate` already rounded it to the statutory four places — two as a
+        // percentage — and that rounding is operative, not presentational: the credit cap is
+        // computed from the rounded rate.
         writeln!(
             writer,
             "SUMMARY_AVERAGE_SAVINGS_RATE,Tipo medio de gravamen del ahorro (ratio — not EUR),{}",
@@ -683,7 +682,7 @@ impl CsvFormatter {
                     ),
                     (
                         modelo_109::NET_QUOTA,
-                        "Cuota líquida",
+                        "Cuota líquida del ahorro",
                         statement.net_tax_due,
                     ),
                 ];
@@ -1613,6 +1612,58 @@ mod tests {
         let gains = cell("MODELO_109_CASILLA_28");
         assert_eq!(gross, dec!(90.00));
         assert_eq!(gross - expenses + gains, cell("MODELO_109_CASILLA_33"));
+    }
+
+    /// The identity above holds only for a year nothing compensated. Box 28 is the ganancias group
+    /// **before** compensation and box 33 is the base **after** it, so a prior-year balance opens a
+    /// gap between them that is exactly what it absorbed. Pinned so the scope of the identity is
+    /// stated rather than assumed.
+    #[test]
+    fn the_casilla_identity_holds_only_before_compensation() {
+        let regime = SpanishTaxRegime::Gipuzkoa;
+        let mut spain = SpanishTaxStatement::new(
+            2026,
+            regime,
+            SavingsScale::for_year(regime, 2026).unwrap(),
+            LossLedger::default(),
+            LossLedger::from_config(&BTreeMap::from([(2024, dec!(4000))]), 2026, "gyp").unwrap(),
+            Decimal::ZERO,
+            dec!(0.15),
+            Decimal::ZERO,
+        );
+        let mut gain = capital_gain();
+        gain.fiscal_gain_loss = dec!(10000);
+        gain.integrable_amount = dec!(10000);
+        spain.capital_gains.push(gain);
+        spain.calculate_totals();
+
+        assert_eq!(spain.gyp_net, dec!(10000));
+        assert_eq!(spain.gyp_applied.used_total, dec!(4000));
+        assert_eq!(spain.savings_base, dec!(6000));
+
+        let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
+        let cell = |key: &str| -> Decimal {
+            output
+                .lines()
+                .find(|line| line.starts_with(&format!("{key},")))
+                .and_then(|line| line.rsplit(',').next())
+                .expect("box present")
+                .parse()
+                .unwrap()
+        };
+
+        let gross = cell("MODELO_109_CASILLA_06+16");
+        let expenses = cell("MODELO_109_CASILLA_17");
+        let gains = cell("MODELO_109_CASILLA_28");
+        let base = cell("MODELO_109_CASILLA_33");
+
+        assert_eq!(gains, dec!(10000.00), "box 28 is the group before compensation");
+        assert_eq!(base, dec!(6000.00), "box 33 is the base after it");
+        assert_eq!(
+            gross - expenses + gains - base,
+            dec!(4000.00),
+            "the gap is exactly what the prior-year balance absorbed"
+        );
     }
 
     /// Casilla 33 carries the base **liquidable** — the figure after group compensation — so the

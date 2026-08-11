@@ -243,8 +243,12 @@ pub struct SpanishTaxStatement {
     /// Fees reported for information only, as a positive magnitude.
     pub total_informational_fees: Decimal,
     pub total_foreign_withholding: Decimal,
+    /// Integrable result of the year's disposals — what the ganancias group takes from them.
+    pub total_capital_gains: Decimal,
     pub total_fx_gains: Decimal,
     pub total_fx_losses: Decimal,
+    /// Net realized foreign-currency result on **held** balances: `total_fx_gains − total_fx_losses`.
+    pub total_fx_result: Decimal,
     /// Net borrowed-balance result awaiting manual review.
     pub total_fx_borrowed_review: Decimal,
 
@@ -358,8 +362,10 @@ impl SpanishTaxStatement {
             total_deductible_fees: Decimal::ZERO,
             total_informational_fees: Decimal::ZERO,
             total_foreign_withholding: Decimal::ZERO,
+            total_capital_gains: Decimal::ZERO,
             total_fx_gains: Decimal::ZERO,
             total_fx_losses: Decimal::ZERO,
+            total_fx_result: Decimal::ZERO,
             total_fx_borrowed_review: Decimal::ZERO,
             rcm_net: Decimal::ZERO,
             gyp_net: Decimal::ZERO,
@@ -441,12 +447,12 @@ impl SpanishTaxStatement {
 
         // A currency conversion transfers a patrimonial element, so its result joins the ganancias
         // group rather than the RCM one.
-        let capital_gains: Decimal = self
+        self.total_capital_gains = self
             .capital_gains
             .iter()
             .map(|entry| entry.integrable_amount)
             .sum();
-        let fx: Decimal = self.fx_gains.iter().map(|entry| entry.amount_eur).sum();
+        self.total_fx_result = self.fx_gains.iter().map(|entry| entry.amount_eur).sum();
 
         self.total_deferred_loss = self
             .capital_gains
@@ -461,7 +467,7 @@ impl SpanishTaxStatement {
 
         // A released deferral is a loss that was blocked when it arose and is deductible now, so it
         // enters the group as a negative amount in the year the blocking shares left the estate.
-        self.gyp_net = capital_gains + fx - self.total_reintegrated_loss;
+        self.gyp_net = self.total_capital_gains + self.total_fx_result - self.total_reintegrated_loss;
 
         let compensation = compensate_savings_base(
             self.year,

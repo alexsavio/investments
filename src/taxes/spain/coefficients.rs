@@ -134,16 +134,6 @@ fn shipped_table(disposal_year: i32) -> Option<&'static [(i32, &'static str)]> {
     }
 }
 
-/// The coefficient a FIFO lot's acquisition cost is multiplied by, for a Gipuzkoa disposal.
-///
-/// `overrides` is `taxes.spain.coefficients`, keyed by disposal year then acquisition year. An
-/// override wins over the shipped table for that exact acquisition year, and a disposal year the
-/// tool ships no table for can be supplied entirely from config — so a newly published Decreto
-/// Foral is usable without waiting for a release.
-///
-/// Takes the acquisition **date**, not just its year, because of the statutory seam at the bottom
-/// of the table: an asset acquired on exactly 31 December 1994 takes the 1995 coefficient, not the
-/// "1994 y anteriores" one.
 /// Largest coefficient the config will accept.
 ///
 /// The oldest shipped row is 2.156, and the tables track consumer prices over three decades, so
@@ -193,6 +183,16 @@ pub fn has_table(
     shipped_table(disposal_year).is_some() || overrides.contains_key(&disposal_year)
 }
 
+/// The coefficient a FIFO lot's acquisition cost is multiplied by, for a Gipuzkoa disposal.
+///
+/// `overrides` is `taxes.spain.coefficients`, keyed by disposal year then acquisition year. An
+/// override wins over the shipped table for that exact acquisition year, and a disposal year the
+/// tool ships no table for can be supplied entirely from config — so a newly published Decreto
+/// Foral is usable without waiting for a release.
+///
+/// Takes the acquisition **date**, not just its year, because of the statutory seam at the bottom
+/// of the table: an asset acquired on exactly 31 December 1994 takes the 1995 coefficient, not the
+/// "1994 y anteriores" one.
 pub fn gipuzkoa_coefficient(
     disposal_year: i32,
     acquisition_date: Date,

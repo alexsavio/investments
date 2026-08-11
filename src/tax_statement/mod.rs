@@ -216,13 +216,7 @@ fn generate_spanish_tax_statement(
 
     println!("\n{}", Color::Cyan.paint("=== Spanish Tax Statement Summary ==="));
     println!("Year: {year}");
-    println!(
-        "Regime: {}",
-        match statement.regime {
-            crate::taxes::spain::SpanishTaxRegime::Gipuzkoa => "Gipuzkoa (Norma Foral 3/2014)",
-            crate::taxes::spain::SpanishTaxRegime::Comun => "Territorio Común (Ley 35/2006)",
-        }
-    );
+    println!("Regime: {}", statement.regime.description());
     println!(
         "Ganancias y pérdidas patrimoniales entries: {}",
         statement.capital_gains.len()
@@ -246,7 +240,10 @@ fn generate_spanish_tax_statement(
             eur::format_eur(statement.total_foreign_tax_credit)
         );
     }
-    println!("Net tax due: €{}", eur::format_eur(statement.net_tax_due));
+    println!(
+        "Cuota líquida del ahorro: €{}",
+        eur::format_eur(statement.net_tax_due)
+    );
 
     let has_ledgers = !statement.rcm_ledger_next.is_empty() || !statement.gyp_ledger_next.is_empty();
     if has_ledgers || !statement.deferred_losses_next.is_empty() {

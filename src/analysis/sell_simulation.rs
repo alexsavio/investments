@@ -498,7 +498,11 @@ impl SpanishTaxSimulation {
             self.before.gyp_ledger_next.total(), after.gyp_ledger_next.total());
         row("Base liquidable del ahorro", self.before.savings_base, after.savings_base);
         row("Cuota íntegra del ahorro", self.before.savings_quota, after.savings_quota);
-        row("Cuota líquida", self.before.net_tax_due, after.net_tax_due);
+        row(
+            "Cuota líquida del ahorro",
+            self.before.net_tax_due,
+            after.net_tax_due,
+        );
 
         let regime = match after.regime {
             crate::taxes::spain::SpanishTaxRegime::Gipuzkoa => "Gipuzkoa",

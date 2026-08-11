@@ -138,6 +138,11 @@ impl SavingsScale {
     /// so four as a fraction. That is operative, not presentation: the AEAT Manual Práctico de
     /// Renta cap. 18 works its own example from the rounded rate (16,60% × 6.000 € = 996 €), so the
     /// rounding happens here, before the cap is multiplied out.
+    ///
+    /// Half away from zero, matching every EUR amount the tool prints. The rate is a quotient of two
+    /// non-negative figures, so the negative-exact-half divergence noted on `tax_statement::eur`
+    /// cannot arise here; the choice only matters for an exact half in the fifth decimal, where it
+    /// rounds the rate up and so the credit cap up by a fraction of a cent.
     pub fn average_rate(&self, base: Decimal) -> Decimal {
         if base <= Decimal::ZERO {
             return Decimal::ZERO;

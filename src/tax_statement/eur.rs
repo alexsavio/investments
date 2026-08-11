@@ -15,8 +15,13 @@ use crate::types::Decimal;
 /// Half away from zero is German tax-form practice for per-line amounts, and it is also what the
 /// AEAT's own boilerplate prescribes: its form instructions round the second decimal up when the
 /// third is 5 or more ("se redondeará por exceso"). The foral instructions are silent, so Gipuzkoa
-/// follows the same convention — a sub-cent difference either way, and the direction that never
-/// truncates a cent off a declared amount.
+/// follows the same convention.
+///
+/// The two readings diverge on exactly one case: a **negative** amount at an exact half cent.
+/// "Por exceso" read literally rounds towards positive infinity, so −1.005 becomes −1.00, while
+/// `MidpointAwayFromZero` makes it −1.01. Half away from zero is chosen anyway — it keeps a loss and
+/// the gain it mirrors symmetric, and it never truncates a cent off a declared magnitude. The gap is
+/// half a cent on an exact tie, which no ECB-converted amount reaches in practice.
 pub(crate) fn format_eur(value: Decimal) -> String {
     let mut value = round_eur(value);
     value.rescale(2);
