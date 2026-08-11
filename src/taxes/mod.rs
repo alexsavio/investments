@@ -95,6 +95,14 @@ impl SpanishTaxConfig {
         spain::scale::SavingsScale::for_year(self.regime, year)
     }
 
+    /// Reject nonsensical `taxes.spain.coefficients` overrides before any lot is priced.
+    ///
+    /// Not a `serde` check: the shape is valid YAML either way, and the failure a bad coefficient
+    /// produces is a plausible-looking number on a tax return rather than a parse error.
+    pub fn validate_coefficients(&self) -> EmptyResult {
+        spain::coefficients::validate_overrides(&self.coefficients)
+    }
+
     /// The coefficient a FIFO lot's acquisition cost is actualized by before the gain is computed.
     ///
     /// Always 1 under Territorio Común: Ley 26/2014 deleted LIRPF art. 35.2 with effect from 2015,

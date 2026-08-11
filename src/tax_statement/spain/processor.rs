@@ -46,6 +46,7 @@ struct SpanishTaxParams<'a> {
 impl<'a> SpanishTaxParams<'a> {
     fn resolve(tax_config: &'a TaxConfig, year: i32) -> GenericResult<SpanishTaxParams<'a>> {
         let config = tax_config.spanish()?;
+        config.validate_coefficients()?;
         Ok(SpanishTaxParams {
             config,
             regime: config.regime,

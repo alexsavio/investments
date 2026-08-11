@@ -495,6 +495,26 @@ fn balances_expire_at_the_end_of_the_four_year_window() {
     assert!(spain.gyp_ledger_next.is_empty());
 }
 
+/// A coefficient override that could not be a coefficient is a config error the run must not get
+/// past: it multiplies the acquisition cost, so a bad one reports a plausible wrong gain.
+#[test]
+fn absurd_coefficient_overrides_are_rejected_by_the_pipeline() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    config
+        .spain
+        .as_mut()
+        .unwrap()
+        .coefficients
+        .insert(2026, [(2021, dec!(0))].into_iter().collect());
+
+    let statement = read_fixture("fifo");
+    let converter = converter();
+    let error = super::compute_tax_year(&statement, 2026, &converter, &config)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("taxes.spain.coefficients.2026.2021"), "{error}");
+}
+
 /// A balance older than the window is a config error, not something to silently ignore.
 #[test]
 fn expired_config_balances_are_rejected() {

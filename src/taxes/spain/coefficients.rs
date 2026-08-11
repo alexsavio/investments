@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use chrono::Datelike;
 
-use crate::core::GenericResult;
+use crate::core::{EmptyResult, GenericResult};
 use crate::time::Date;
 use crate::types::Decimal;
 
@@ -144,6 +144,43 @@ fn shipped_table(disposal_year: i32) -> Option<&'static [(i32, &'static str)]> {
 /// Takes the acquisition **date**, not just its year, because of the statutory seam at the bottom
 /// of the table: an asset acquired on exactly 31 December 1994 takes the 1995 coefficient, not the
 /// "1994 y anteriores" one.
+/// Largest coefficient the config will accept.
+///
+/// The oldest shipped row is 2.156, and the tables track consumer prices over three decades, so
+/// anything past 10 is a decimal-point slip or a percentage typed as a multiplier — not a
+/// coefficient. Better to refuse than to actualize a cost basis by 105× and report the loss.
+const MAX_COEFFICIENT: Decimal = dec!(10);
+
+/// Reject nonsensical coefficient overrides before any lot is priced.
+///
+/// A coefficient multiplies the acquisition cost, so a zero or negative one does not shrink a gain,
+/// it invents one out of the wrong sign — and the failure would surface as a plausible number on a
+/// tax return rather than as an error. Mirrors `LossLedger::from_config`: name the config path and
+/// refuse, never silently clamp.
+pub fn validate_overrides(overrides: &BTreeMap<i32, BTreeMap<i32, Decimal>>) -> EmptyResult {
+    for (&disposal_year, table) in overrides {
+        for (&acquisition_year, &coefficient) in table {
+            let path = format!("taxes.spain.coefficients.{disposal_year}.{acquisition_year}");
+
+            if coefficient <= Decimal::ZERO {
+                return Err!(
+                    "{path} is {coefficient}: an actualization coefficient multiplies the \
+                     acquisition cost, so it must be positive"
+                );
+            }
+
+            if coefficient > MAX_COEFFICIENT {
+                return Err!(
+                    "{path} is {coefficient}, which is not a plausible actualization coefficient \
+                     (the oldest shipped row is 2.156). Check the Decreto Foral table"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn gipuzkoa_coefficient(
     disposal_year: i32,
     acquisition_date: Date,
@@ -210,6 +247,40 @@ mod tests {
             &no_overrides(),
         )
         .unwrap()
+    }
+
+    /// A coefficient multiplies the acquisition cost, so a non-positive one flips the sign of the
+    /// cost basis and reports a gain that never happened. An absurdly large one is a decimal-point
+    /// slip. Both are refused with the config path named, never clamped.
+    #[rstest]
+    #[case("0", "must be positive")]
+    #[case("-1.05", "must be positive")]
+    #[case("10.001", "not a plausible")]
+    #[case("105", "not a plausible")]
+    fn absurd_overrides_are_rejected(#[case] value: &str, #[case] expected: &str) {
+        let overrides = BTreeMap::from([(
+            2027,
+            BTreeMap::from([(2020, value.parse::<Decimal>().unwrap())]),
+        )]);
+
+        let error = validate_overrides(&overrides).unwrap_err().to_string();
+        assert!(error.contains(expected), "{error}");
+        assert!(error.contains("taxes.spain.coefficients.2027.2020"), "{error}");
+    }
+
+    /// The guard must not reject a coefficient the Diputación Foral could actually publish: the
+    /// oldest shipped row is already 2.156, and deflation could in principle put one below 1.
+    #[rstest]
+    #[case("0.98")]
+    #[case("1")]
+    #[case("2.156")]
+    #[case("10")]
+    fn plausible_overrides_are_accepted(#[case] value: &str) {
+        let overrides = BTreeMap::from([(
+            2027,
+            BTreeMap::from([(2020, value.parse::<Decimal>().unwrap())]),
+        )]);
+        validate_overrides(&overrides).unwrap();
     }
 
     /// Spot values from each Decreto Foral, including the two the `fifo` fixture is pinned to
