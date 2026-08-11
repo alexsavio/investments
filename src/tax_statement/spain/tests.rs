@@ -781,33 +781,64 @@ fn disposal_years_without_a_coefficient_table_are_reported() {
     assert!(comun.wash_sale_unpriced_years.is_empty());
 }
 
-/// The 25% cross-group offset end to end. The `income` fixture under Común deducts the €45 custody
-/// fee, so RCM is +945; forcing a prior-year RCM balance larger than that drives RCM negative and
-/// lets the ganancias group absorb a quarter of it — under Gipuzkoa the same run must not cross.
+/// The 25% cross-group offset, ganancias → RCM (LIRPF art. 49.1).
+///
+/// Buy 100 @ $200 on 2026-01-15 (€18,000), sell them @ $100 on 2026-06-15 (€9,000) for a €9,000
+/// loss, and collect an $8,000 dividend (€7,200). Under Común the loss reaches the RCM balance but
+/// only up to a quarter of it: min(9,000, 25% × 7,200) = €1,800, leaving €5,400 taxable and €7,200
+/// of the loss pending. Under Gipuzkoa the groups integrate "exclusivamente entre sí", so the whole
+/// €7,200 is taxed and the whole €9,000 carries forward.
+///
+/// The 2026-01-15 acquisition is outside the sale's window (2026-04-15 to 2026-08-15), so no part of
+/// the loss is deferred and the cross-offset is the only thing separating the two runs.
 #[test]
-fn cross_group_offset_applies_only_under_comun() {
-    let configure = |regime| {
-        let mut config = spain_config(regime);
-        // Drive the ganancias group positive alongside a negative RCM.
-        config
-            .spain
-            .as_mut()
-            .unwrap()
-            .loss_carryforward
-            .rcm
-            .insert(2025, dec!(0));
-        config
-    };
+fn a_loss_reaches_the_rcm_balance_only_under_comun() {
+    let comun = run_pipeline("cross_offset", 2026, SpanishTaxRegime::Comun);
 
-    // Gipuzkoa: the groups never touch, so a negative RCM cannot reach the ganancias balance.
-    let gipuzkoa = run_pipeline_with_config("income", 2026, &configure(SpanishTaxRegime::Gipuzkoa));
-    assert_eq!(gipuzkoa.cross_offset_rcm_to_gyp, dec!(0));
-    assert_eq!(gipuzkoa.cross_offset_gyp_to_rcm, dec!(0));
-
-    let comun = run_pipeline_with_config("income", 2026, &configure(SpanishTaxRegime::Comun));
-    // Both groups are positive here, so there is nothing to cross either way — the difference is
-    // the deducted fee, not a cross-offset.
+    assert_eq!(comun.gyp_net, dec!(-9000));
+    assert_eq!(comun.rcm_net, dec!(7200));
+    assert_eq!(comun.cross_offset_gyp_to_rcm, dec!(1800));
     assert_eq!(comun.cross_offset_rcm_to_gyp, dec!(0));
-    assert_eq!(comun.rcm_taxable, dec!(945));
-    assert_eq!(comun.savings_base, dec!(945));
+    assert_eq!(comun.rcm_taxable, dec!(5400));
+    assert_eq!(comun.savings_base, dec!(5400));
+    // Entirely inside the state scale's 19% first bracket.
+    assert_eq!(comun.savings_quota, dec!(1026));
+    assert_eq!(comun.gyp_ledger_next.balances()[&2026], dec!(7200));
+
+    let gipuzkoa = run_pipeline("cross_offset", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.cross_offset_gyp_to_rcm, dec!(0));
+    assert_eq!(gipuzkoa.rcm_taxable, dec!(7200));
+    assert_eq!(gipuzkoa.savings_base, dec!(7200));
+    assert_eq!(gipuzkoa.savings_quota, dec!(1368));
+    assert_eq!(gipuzkoa.gyp_ledger_next.balances()[&2026], dec!(9000));
+}
+
+/// The same rule in the other direction, RCM → ganancias.
+///
+/// A €9,000 gain alongside a €3,600 custody fee. Under Común the fee is deductible (LIRPF art.
+/// 26.1.a), so RCM is −3,600 and reaches the ganancias balance up to 25% × 9,000 = €2,250, leaving
+/// €6,750 taxable and €1,350 pending. Under Gipuzkoa the fee is not deductible at all (NF 3/2014
+/// art. 39), so RCM is zero, there is nothing to cross, and the full €9,000 is taxed.
+#[test]
+fn a_negative_rcm_balance_reaches_the_ganancias_balance_only_under_comun() {
+    let comun = run_pipeline("cross_offset_rcm", 2026, SpanishTaxRegime::Comun);
+
+    assert_eq!(comun.rcm_net, dec!(-3600));
+    assert_eq!(comun.gyp_net, dec!(9000));
+    assert_eq!(comun.cross_offset_rcm_to_gyp, dec!(2250));
+    assert_eq!(comun.cross_offset_gyp_to_rcm, dec!(0));
+    assert_eq!(comun.gyp_taxable, dec!(6750));
+    assert_eq!(comun.savings_base, dec!(6750));
+    // 6,000 × 19% + 750 × 21%.
+    assert_eq!(comun.savings_quota, dec!(1297.50));
+    assert_eq!(comun.rcm_ledger_next.balances()[&2026], dec!(1350));
+
+    let gipuzkoa = run_pipeline("cross_offset_rcm", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.rcm_net, dec!(0));
+    assert_eq!(gipuzkoa.cross_offset_rcm_to_gyp, dec!(0));
+    assert_eq!(gipuzkoa.gyp_taxable, dec!(9000));
+    assert_eq!(gipuzkoa.savings_base, dec!(9000));
+    // 7,500 × 19% + 1,500 × 20%.
+    assert_eq!(gipuzkoa.savings_quota, dec!(1725));
+    assert!(gipuzkoa.rcm_ledger_next.is_empty());
 }
