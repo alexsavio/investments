@@ -349,6 +349,29 @@ fn generate_spanish_tax_statement(
         );
     }
 
+    if !statement.stock_grants.is_empty() {
+        println!(
+            "\n{}",
+            Color::Yellow.paint(format!(
+                "{} stock vest(s) are reported for information only: employment income belongs to \
+                 the GENERAL base, which this tool does not compute. Declare them separately.",
+                statement.stock_grants.len()
+            ))
+        );
+    }
+
+    if !statement.corporate_actions.is_empty() {
+        println!(
+            "Corporate actions reported for review: {}",
+            statement
+                .corporate_actions
+                .iter()
+                .map(|action| format!("{} — {}", action.symbol, action.description))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+
     if statement.total_dividend_exemption > Decimal::ZERO {
         println!(
             "{}",

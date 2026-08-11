@@ -11,8 +11,8 @@ use crate::taxes::spain::SpanishTaxRegime;
 use crate::types::Decimal;
 
 use super::statement::{
-    CapitalGainEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry, SpanishLotDetail,
-    SpanishTaxStatement, WashSaleReintegrationEntry,
+    CapitalGainEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry,
+    SpanishLotDetail, SpanishTaxStatement, StockGrantEntry, WashSaleReintegrationEntry,
 };
 
 /// Modelo 109 box numbers.
@@ -92,6 +92,14 @@ impl CsvFormatter {
 
         for entry in &statement.fees {
             Self::write_fee_row(writer, entry)?;
+        }
+
+        for entry in &statement.stock_grants {
+            Self::write_stock_grant_row(writer, entry)?;
+        }
+
+        for entry in &statement.corporate_actions {
+            Self::write_corporate_action_row(writer, entry)?;
         }
 
         Self::write_summary_rows(writer, statement)?;
@@ -281,6 +289,40 @@ impl CsvFormatter {
             Self::format_decimal(entry.amount_eur),
             if entry.deductible { "RCM" } else { "" },
             Self::escape_csv(entry.notes.as_deref().unwrap_or(""))
+        )?;
+        Ok(())
+    }
+
+    /// A vest carries no savings-base group: employment income belongs to the general base, which
+    /// this tool does not compute.
+    fn write_stock_grant_row<W: Write>(
+        writer: &mut W,
+        entry: &StockGrantEntry,
+    ) -> GenericResult<()> {
+        writeln!(
+            writer,
+            "Stock Grant,{},,{},,{},{},,,,,{},,,,,,,{}",
+            Self::format_date(entry.date),
+            Self::escape_csv(&entry.symbol),
+            Self::escape_csv(&entry.description),
+            Self::format_decimal(entry.quantity),
+            entry.value_eur.map(Self::format_decimal).unwrap_or_default(),
+            Self::escape_csv(&entry.notes)
+        )?;
+        Ok(())
+    }
+
+    fn write_corporate_action_row<W: Write>(
+        writer: &mut W,
+        entry: &CorporateActionEntry,
+    ) -> GenericResult<()> {
+        writeln!(
+            writer,
+            "Corporate Action,{},,{},,{},,,,,,,,,,,,,{}",
+            Self::format_date(entry.date),
+            Self::escape_csv(&entry.symbol),
+            Self::escape_csv(&entry.description),
+            Self::escape_csv(&entry.notes)
         )?;
         Ok(())
     }
@@ -1029,6 +1071,30 @@ mod tests {
                         amount_eur: dec!(45),
                         deductible: false,
                         notes: Some("Informational".to_string()),
+                    },
+                )
+            }),
+            render(|w| {
+                CsvFormatter::write_stock_grant_row(
+                    w,
+                    &StockGrantEntry {
+                        date: date(),
+                        symbol: "NVDA".to_string(),
+                        description: "NVIDIA CORP".to_string(),
+                        quantity: dec!(10),
+                        value_eur: Some(dec!(1800)),
+                        notes: "GENERAL base".to_string(),
+                    },
+                )
+            }),
+            render(|w| {
+                CsvFormatter::write_corporate_action_row(
+                    w,
+                    &CorporateActionEntry {
+                        date: date(),
+                        symbol: "AAPL".to_string(),
+                        description: "Stock split 2 for 1".to_string(),
+                        notes: "re-expressed".to_string(),
                     },
                 )
             }),

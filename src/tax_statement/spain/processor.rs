@@ -7,7 +7,8 @@ use chrono::Datelike;
 use log::warn;
 
 use crate::broker_statement::{
-    BrokerStatement, FifoDetails, StockSell, StockSellType, StockSourceDetails,
+    BrokerCorporateActionType, BrokerStatement, FifoDetails, StockSell, StockSellType,
+    StockSourceDetails,
 };
 use crate::core::GenericResult;
 use crate::currency::Cash;
@@ -21,8 +22,9 @@ use crate::types::{Date, Decimal};
 
 use super::wash_sale;
 use super::statement::{
-    CapitalGainEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry, SpanishLotDetail,
-    SpanishTaxStatement, WashSaleReintegrationEntry, WashSaleWindowGap,
+    CapitalGainEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry,
+    SpanishLotDetail, SpanishTaxStatement, StockGrantEntry, WashSaleReintegrationEntry,
+    WashSaleWindowGap,
 };
 
 /// Everything about the filer's regime and tax year that the per-income processors need, resolved
@@ -144,6 +146,9 @@ fn process_broker_statement(
     // informational ones are the tool telling the filer it looked and deducted nothing.
     let has_fees = process_fees(statement, broker_statement, params, converter)?;
 
+    let has_grants = process_stock_grants(statement, broker_statement, params, converter)?;
+    let has_corporate_actions = process_corporate_actions(statement, broker_statement, params);
+
     // Short positions get no automatic treatment; surface them for manual review.
     statement.short_positions = broker_statement
         .short_positions
@@ -165,7 +170,141 @@ fn process_broker_statement(
         );
     }
 
-    Ok(has_trades || has_dividends || has_interest || has_fx || has_fees)
+    Ok(has_trades
+        || has_dividends
+        || has_interest
+        || has_fx
+        || has_fees
+        || has_grants
+        || has_corporate_actions)
+}
+
+/// Vested stock grants, reported only.
+///
+/// Employment income belongs to the **general** base, which this tool does not compute — it handles
+/// the savings base alone. The rows exist so a vest is visible in the year's picture rather than
+/// silently absent, and so the filer is reminded that it has to be declared separately.
+fn process_stock_grants(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_grants = false;
+
+    for grant in &broker_statement.stock_grants {
+        if grant.date.year() != params.year {
+            continue;
+        }
+
+        has_grants = true;
+
+        let value_eur = match grant.fmv_per_share {
+            Some(fmv) => {
+                let context = format!("Processing the {} vest on {}", grant.symbol, grant.date);
+                let total = Cash::new(fmv.currency, fmv.amount * grant.quantity);
+                Some(convert_to_eur(converter, grant.date, total, &context)?)
+            }
+            None => None,
+        };
+
+        statement.stock_grants.push(StockGrantEntry {
+            date: grant.date,
+            symbol: grant.symbol.clone(),
+            description: broker_statement.instrument_info.get_name(&grant.symbol).to_string(),
+            quantity: grant.quantity,
+            value_eur,
+            notes: match value_eur {
+                Some(_) => "Informational: a vest is employment income in the GENERAL base, not \
+                            the savings base. Declare it separately; this tool does not compute it. \
+                            The vest-date value shown is what prices the shares' acquisition cost \
+                            when they are later sold"
+                    .to_string(),
+                None => "Informational: a vest is employment income in the GENERAL base, not the \
+                         savings base. The statement carries no vest-date FMV, so the shares will \
+                         be costed at ZERO when sold — which overstates the gain. Supply the value \
+                         yourself"
+                    .to_string(),
+            },
+        });
+    }
+
+    if has_grants {
+        warn!(
+            "The statement contains {} stock vest(s) in {}. Vested shares are employment income in \
+             the general base, which this tool does not compute — declare them separately.",
+            statement.stock_grants.len(),
+            params.year
+        );
+    }
+
+    Ok(has_grants)
+}
+
+/// Corporate actions in the filing year, reported only.
+///
+/// A plain split is already applied to the FIFO queue by the shared broker-statement engine, so it
+/// needs no tax treatment here; everything else is surfaced so the filer can check whether it moved
+/// a cost basis the tool then used.
+fn process_corporate_actions(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+) -> bool {
+    for action in &broker_statement.corporate_actions {
+        if action.time.date.year() != params.year {
+            continue;
+        }
+
+        let (description, notes) = describe_corporate_action(&action.action);
+
+        statement.corporate_actions.push(CorporateActionEntry {
+            date: action.time.date,
+            symbol: action.symbol.clone(),
+            description,
+            notes: notes.to_string(),
+        });
+    }
+
+    !statement.corporate_actions.is_empty()
+}
+
+fn describe_corporate_action(action: &BrokerCorporateActionType) -> (String, &'static str) {
+    match action {
+        BrokerCorporateActionType::StockSplit { ratio, .. } => (
+            format!("Stock split {} for {}", ratio.to, ratio.from),
+            "Applied to the FIFO queue: the shares are re-expressed, not acquired or disposed of, \
+             so no ganancia arises and the acquisition dates are unchanged",
+        ),
+        BrokerCorporateActionType::Rename { new_symbol } => (
+            format!("Renamed to {new_symbol}"),
+            "Applied to the FIFO queue; the position keeps its acquisition dates and cost basis",
+        ),
+        BrokerCorporateActionType::Delisting { quantity } => (
+            format!("Delisting of {quantity} shares"),
+            "NOT computed: a delisting may or may not be a transmisión for art. 40/33 purposes. \
+             Review it by hand",
+        ),
+        BrokerCorporateActionType::Liquidation { quantity, currency, volume, .. } => (
+            format!("Liquidation of {quantity} shares for {volume} {currency}"),
+            "NOT computed: treat as a disposal and price it against the FIFO cost basis by hand",
+        ),
+        BrokerCorporateActionType::Spinoff { symbol, quantity, .. } => (
+            format!("Spinoff: {quantity} shares of {symbol}"),
+            "NOT computed: the acquisition cost has to be split between the parent and the spinoff. \
+             Review it by hand",
+        ),
+        BrokerCorporateActionType::StockDividend { quantity, .. } => (
+            format!("Stock dividend of {quantity} shares"),
+            "NOT computed: a scrip dividend may be a rendimiento del capital mobiliario at its \
+             market value. Review it by hand",
+        ),
+        BrokerCorporateActionType::SubscribableRightsIssue => (
+            "Subscribable rights issue".to_string(),
+            "No effect until the rights are exercised or sold; a sale of rights is a transmisión. \
+             Review it by hand",
+        ),
+    }
 }
 
 /// One disposal priced against its own disposal year, ready for the valores-homogéneos replay.

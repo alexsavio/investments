@@ -381,6 +381,48 @@ fn an_empty_year_reports_no_income() {
     assert!(!has_income);
 }
 
+/// A vested RSU is employment income in the **general** base, which this tool does not compute. It
+/// is reported so the year's picture is complete and the filer is reminded to declare it.
+#[test]
+fn stock_grants_are_reported_for_the_general_base() {
+    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+        let (spain, has_income) =
+            run_pipeline_reporting_income("grants", 2026, &spain_config(regime));
+
+        assert!(has_income, "{regime:?}");
+        assert_eq!(spain.stock_grants.len(), 1, "{regime:?}");
+        let grant = &spain.stock_grants[0];
+        assert_eq!(grant.symbol, "NVDA");
+        assert_eq!(grant.date, Date::from_ymd_opt(2026, 3, 15).unwrap());
+        assert_eq!(grant.quantity, dec!(10));
+        // 10 × $200 at 0.9 EUR/USD.
+        assert_eq!(grant.value_eur, Some(dec!(1800)));
+        assert!(grant.notes.contains("GENERAL base"));
+
+        // Nothing of it reaches the savings base.
+        assert_eq!(spain.savings_base, dec!(0));
+        assert_eq!(spain.net_tax_due, dec!(0));
+    }
+}
+
+/// Corporate actions are reported so a filer can see what moved a cost basis the tool then used.
+/// A plain split needs no treatment — the FIFO queue already re-expresses the shares.
+#[test]
+fn corporate_actions_are_reported_for_review() {
+    let spain = run_pipeline("wash_sale_split", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert_eq!(spain.corporate_actions.len(), 1);
+    let action = &spain.corporate_actions[0];
+    assert_eq!(action.symbol, "AAPL");
+    assert_eq!(action.date, Date::from_ymd_opt(2026, 2, 20).unwrap());
+    assert_eq!(action.description, "Stock split 2 for 1");
+    assert!(action.notes.contains("re-expressed"));
+
+    // A year without one reports none.
+    let plain = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert!(plain.corporate_actions.is_empty());
+}
+
 /// A year the tool ships no scale for must fail loudly rather than compute a statement at an
 /// invented rate.
 #[test]

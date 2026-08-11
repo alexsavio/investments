@@ -129,6 +129,35 @@ pub struct FxGainEntry {
     pub activity_code: String,
 }
 
+/// A vested stock grant, reported only.
+///
+/// An RSU vest is employment income and belongs to the **general** base (NF 3/2014 art. 15 et seq. /
+/// LIRPF art. 17), which this tool does not compute — it only handles the savings base. The row
+/// exists so the figure is not silently absent from the filer's view of the year; the vest-date
+/// value is what later prices the shares' acquisition cost when they are sold.
+#[derive(Clone, Debug)]
+pub struct StockGrantEntry {
+    pub date: Date,
+    pub symbol: String,
+    pub description: String,
+    pub quantity: Decimal,
+    /// Vest-date fair market value of the whole vest, when the statement carries a per-share FMV.
+    pub value_eur: Option<Decimal>,
+    pub notes: String,
+}
+
+/// A corporate action, reported only.
+///
+/// Splits are already applied to the FIFO queue by the shared broker-statement engine; everything
+/// else is surfaced so the filer can check whether it changed a cost basis the tool then used.
+#[derive(Clone, Debug)]
+pub struct CorporateActionEntry {
+    pub date: Date,
+    pub symbol: String,
+    pub description: String,
+    pub notes: String,
+}
+
 /// A broker fee.
 #[derive(Clone, Debug)]
 pub struct FeeEntry {
@@ -167,6 +196,13 @@ pub struct SpanishTaxStatement {
     /// nor the state text settles it. Reported for manual review instead of being silently taxed
     /// or silently dropped.
     pub fx_borrowed_review: Vec<FxGainEntry>,
+
+    /// Vested stock grants, reported only: employment income belongs to the general base, which
+    /// this tool does not compute.
+    pub stock_grants: Vec<StockGrantEntry>,
+
+    /// Corporate actions in the filing year, reported only.
+    pub corporate_actions: Vec<CorporateActionEntry>,
 
     /// Short (negative-quantity) positions held at the statement's end, reported for information
     /// only. Their treatment is not computed and needs manual review.
@@ -303,6 +339,8 @@ impl SpanishTaxStatement {
             fees: Vec::new(),
             fx_gains: Vec::new(),
             fx_borrowed_review: Vec::new(),
+            stock_grants: Vec::new(),
+            corporate_actions: Vec::new(),
             short_positions: Vec::new(),
             wash_sale_unpriced_years: Vec::new(),
             wash_sale_reintegrations: Vec::new(),

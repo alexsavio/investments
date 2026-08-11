@@ -1,0 +1,15 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20260101" toDate="20261231" period="LastYear" whenGenerated="20270115;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <StockGrantActivities>
+        <StockGrantActivity symbol="NVDA" reportDate="20260315" quantity="10" grantType="RSU" fmv="200" description="RSU VEST"/>
+      </StockGrantActivities>
+      <OpenPositions>
+        <OpenPosition currency="USD" symbol="NVDA" isin="US67066G1040" description="NVIDIA CORP" position="10" markPrice="200"/>
+      </OpenPositions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

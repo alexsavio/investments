@@ -390,10 +390,15 @@ and neither the foral nor the state text settles it.
 ## Other income
 
 - **Stock grants / RSUs** are employment income and belong to the *general* base, which this tool
-  does not compute. Vested shares are costed at their vest-date fair market value when later sold.
+  does not compute. Each vest in the filing year gets a `Stock Grant` row carrying the vest-date
+  value and a reminder to declare it separately; that same value is what costs the shares when they
+  are later sold, so a vest with no FMV in the statement is flagged (it would otherwise be costed at
+  zero and overstate the eventual gain).
 - **Short positions** open at the end of the statement get no automatic treatment; they are listed
   for manual review.
-- **Corporate actions** are reported for information; their tax impact is not computed.
+- **Corporate actions** get a `Corporate Action` row each. Splits and renames are already applied to
+  the FIFO queue and need nothing further; delistings, liquidations, spinoffs, scrip dividends and
+  rights issues are **not** computed and each row says so.
 
 ## Modelo 109 / Modelo 100 mapping
 
