@@ -292,6 +292,95 @@ fn only_the_requested_tax_year_is_reported() {
     }
 }
 
+/// Run the pipeline and keep the `has_income` flag the caller uses to decide whether to write a
+/// statement at all.
+fn run_pipeline_reporting_income(
+    fixture: &str,
+    year: i32,
+    tax_config: &TaxConfig,
+) -> (SpanishTaxStatement, bool) {
+    let statement = read_fixture(fixture);
+    let converter = converter();
+    super::compute_tax_year(&statement, year, &converter, tax_config).unwrap()
+}
+
+/// A year with nothing but a fee still has to produce a statement.
+///
+/// Under Común the fee is a deduction that creates a negative RCM balance to carry forward; under
+/// Gipuzkoa it is informational, but the filer still needs to see that the tool looked at it and
+/// decided nothing. Reporting "no income" and writing no file loses both.
+#[test]
+fn a_fee_only_year_still_produces_a_statement() {
+    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+        let (spain, has_income) =
+            run_pipeline_reporting_income("fee_only", 2026, &spain_config(regime));
+
+        assert!(has_income, "{regime:?}");
+        assert_eq!(spain.fees.len(), 1, "{regime:?}");
+        assert_eq!(spain.fees[0].amount_eur, dec!(45));
+    }
+
+    // Común deducts it, so the year carries a €45 negative RCM balance forward.
+    let (comun, _) =
+        run_pipeline_reporting_income("fee_only", 2026, &spain_config(SpanishTaxRegime::Comun));
+    assert_eq!(comun.rcm_net, dec!(-45));
+    assert_eq!(comun.rcm_ledger_next.balances()[&2026], dec!(45));
+}
+
+/// A year with no activity at all but a pending balance still has to produce a statement: the
+/// carry-forward block and the expiry warning are the whole content of that return.
+#[test]
+fn a_carryforward_only_year_still_produces_a_statement() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    let spain_cfg = config.spain.as_mut().unwrap();
+    // Filing 2025, so 2021 is in its fourth and final year.
+    spain_cfg.loss_carryforward.gyp.insert(2021, dec!(4000));
+    spain_cfg.loss_carryforward.gyp.insert(2023, dec!(1000));
+
+    // The `fifo` fixture disposes only in 2026, so 2025 has no income of its own.
+    let (spain, has_income) = run_pipeline_reporting_income("fifo", 2025, &config);
+
+    assert!(has_income);
+    assert!(spain.capital_gains.is_empty());
+    assert_eq!(spain.savings_base, dec!(0));
+    // The 2021 vintage runs out of years here and must be reported, not silently carried.
+    assert_eq!(spain.gyp_expired, dec!(4000));
+    assert_eq!(spain.gyp_ledger_next.balances()[&2023], dec!(1000));
+}
+
+/// A year whose only content is a deferral carried in from an earlier return also has to produce a
+/// statement: the carry-out block is what the filer needs from it.
+#[test]
+fn a_deferral_only_year_still_produces_a_statement() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    config.spain.as_mut().unwrap().deferred_losses = vec![DeferredLossConfig {
+        symbol: "MSFT".to_string(),
+        isin: Some("US5949181045".to_string()),
+        loss: dec!(420),
+        blocked_quantity: dec!(15),
+        acquisition_date: Date::from_ymd_opt(2024, 12, 20).unwrap(),
+        sale_date: Date::from_ymd_opt(2024, 12, 10).unwrap(),
+    }];
+
+    let (spain, has_income) = run_pipeline_reporting_income("fifo", 2025, &config);
+
+    assert!(has_income);
+    assert_eq!(spain.deferred_losses_next.len(), 1);
+    assert_eq!(spain.deferred_losses_next[0].loss, dec!(420));
+}
+
+/// A year with genuinely nothing in it reports no income, so the caller can say so rather than
+/// writing an empty file.
+#[test]
+fn an_empty_year_reports_no_income() {
+    let (_, has_income) = run_pipeline_reporting_income(
+        "fifo",
+        2025,
+        &spain_config(SpanishTaxRegime::Gipuzkoa),
+    );
+    assert!(!has_income);
+}
+
 /// A year the tool ships no scale for must fail loudly rather than compute a statement at an
 /// invented rate.
 #[test]

@@ -103,8 +103,18 @@ pub fn compute_tax_year(
         params.treaty_rate,
     );
 
-    let has_income = process_broker_statement(&mut statement, broker_statement, &params, converter)?;
+    let has_activity =
+        process_broker_statement(&mut statement, broker_statement, &params, converter)?;
     statement.calculate_totals();
+
+    // A year with no income of its own can still have a return to file. A fee creates a negative
+    // RCM balance under Común and needs reporting under Gipuzkoa; a pending balance has to be
+    // carried or reported as expired; a carried-in deferral has to be carried out again. Reporting
+    // "no income" in any of those cases writes no file and loses the only content the year had.
+    let has_income = has_activity
+        || !statement.rcm_ledger_prior.is_empty()
+        || !statement.gyp_ledger_prior.is_empty()
+        || !params.config.deferred_losses.is_empty();
 
     Ok((statement, has_income))
 }
@@ -119,7 +129,9 @@ fn process_broker_statement(
     let has_dividends = process_dividends(statement, broker_statement, params, converter)?;
     let has_interest = process_interest(statement, broker_statement, params, converter)?;
     let has_fx = process_fx_gains(statement, broker_statement, params, converter)?;
-    process_fees(statement, broker_statement, params, converter)?;
+    // Fees count as activity in their own right: deductible ones move the RCM result, and
+    // informational ones are the tool telling the filer it looked and deducted nothing.
+    let has_fees = process_fees(statement, broker_statement, params, converter)?;
 
     // Short positions get no automatic treatment; surface them for manual review.
     statement.short_positions = broker_statement
@@ -142,7 +154,7 @@ fn process_broker_statement(
         );
     }
 
-    Ok(has_trades || has_dividends || has_interest || has_fx)
+    Ok(has_trades || has_dividends || has_interest || has_fx || has_fees)
 }
 
 /// One disposal priced against its own disposal year, ready for the valores-homogéneos replay.
