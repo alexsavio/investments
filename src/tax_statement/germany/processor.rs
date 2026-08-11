@@ -25,7 +25,7 @@ use crate::taxes::germany::{AbgeltungsteuerBreakdown, TeilfreistellungRate};
 use crate::time::Date;
 use crate::types::Decimal;
 
-use super::fx_fifo::{CurrencyFxResult, OpeningLot, compute_fx_fifo};
+use crate::tax_statement::fx_fifo::{CurrencyFxResult, OpeningLot, compute_fx_fifo};
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, CorporateActionType, DividendEntry,
     FeeEntry, FxGainEntry, GermanTaxStatement, InterestEntry, Section23, StockGrantEntry,
@@ -1372,7 +1372,7 @@ fn process_corporate_actions(
 
 #[cfg(test)]
 mod tests {
-    use super::super::fx_fifo::FxRealization;
+    use crate::tax_statement::fx_fifo::FxRealization;
     use super::*;
     use crate::tax_statement::germany::{CsvFormatter, GermanTaxStatement};
     use crate::taxes::germany::TeilfreistellungRate;

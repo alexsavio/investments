@@ -1,5 +1,6 @@
 mod dividends;
 mod eur;
+mod fx_fifo;
 pub mod germany;
 mod interest;
 pub mod spain;
