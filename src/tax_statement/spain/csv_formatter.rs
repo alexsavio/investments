@@ -202,7 +202,7 @@ impl CsvFormatter {
         // Dividend records carry no share quantity; leave that cell empty rather than a misleading 0.
         writeln!(
             writer,
-            "Dividend,{},{},{},{},{},,,,,,{},,,,{},{},RCM,",
+            "Dividend,{},{},{},{},{},,,,,,{},,,,{},{},RCM,{}",
             Self::format_date(entry.date),
             Self::format_date(entry.date),
             Self::escape_csv(&entry.symbol),
@@ -210,7 +210,8 @@ impl CsvFormatter {
             Self::escape_csv(&entry.description),
             Self::format_decimal(entry.gross_eur),
             Self::format_decimal(entry.withheld_eur),
-            Self::format_decimal(entry.treaty_capped_credit)
+            Self::format_decimal(entry.treaty_capped_credit),
+            Self::escape_csv(entry.notes.as_deref().unwrap_or(""))
         )?;
         Ok(())
     }
@@ -322,6 +323,12 @@ impl CsvFormatter {
             "SUMMARY_RCM_DIVIDENDS",
             "Dividendos (rendimientos del capital mobiliario)",
             statement.total_dividend_income,
+        )?;
+        row(
+            writer,
+            "SUMMARY_RCM_DIVIDEND_EXEMPTION",
+            "Dividendos exentos — límite 1.500 € anuales (NF 3/2014 art. 9.24 — sólo Gipuzkoa)",
+            statement.total_dividend_exemption,
         )?;
         row(
             writer,
@@ -799,6 +806,27 @@ impl CsvFormatter {
             }
         }
 
+        if statement.total_dividend_exemption > Decimal::ZERO {
+            writeln!(writer)?;
+            writeln!(
+                writer,
+                "# WARNING: €{} of dividends were exempted under NF 3/2014 art. 9.24. The exemption",
+                Self::format_decimal(statement.total_dividend_exemption)
+            )?;
+            writeln!(
+                writer,
+                "# does NOT cover distributions from instituciones de inversión colectiva (funds,"
+            )?;
+            writeln!(
+                writer,
+                "# ETFs, SICAVs), and a broker statement does not distinguish those from company"
+            )?;
+            writeln!(
+                writer,
+                "# dividends. Check each payer and reduce the exemption by hand if any is a fund."
+            )?;
+        }
+
         if !statement.wash_sale_unpriced_years.is_empty() {
             let years = statement
                 .wash_sale_unpriced_years
@@ -900,6 +928,7 @@ mod tests {
             LossLedger::default(),
             Decimal::ZERO,
             dec!(0.15),
+            Decimal::ZERO,
         )
     }
 
@@ -950,6 +979,8 @@ mod tests {
                         gross_eur: dec!(900),
                         withheld_eur: dec!(270),
                         treaty_capped_credit: dec!(135),
+                        exemption_eligible: true,
+                        notes: None,
                     },
                 )
             }),
@@ -1147,6 +1178,8 @@ mod tests {
                     gross_eur: dec!(900),
                     withheld_eur: dec!(270),
                     treaty_capped_credit: dec!(135),
+                    exemption_eligible: false,
+                    notes: None,
                 },
             )
         });
@@ -1287,6 +1320,8 @@ mod tests {
             gross_eur: dec!(900),
             withheld_eur: dec!(270),
             treaty_capped_credit: dec!(135),
+            exemption_eligible: false,
+            notes: None,
         });
         spain.calculate_totals();
         spain

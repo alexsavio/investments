@@ -39,6 +39,8 @@ struct SpanishTaxParams<'a> {
     treaty_rate: Decimal,
     /// Whether custody and administration fees reduce the RCM result.
     custody_fees_deductible: bool,
+    /// Annual dividend exemption (NF 3/2014 art. 9.24), zero where the regime has none.
+    dividend_exemption_limit: Decimal,
     /// Fraction of the other group's positive balance a negative one may offset.
     cross_offset_fraction: Decimal,
 }
@@ -59,6 +61,14 @@ impl<'a> SpanishTaxParams<'a> {
             custody_fees_deductible: match config.regime {
                 SpanishTaxRegime::Gipuzkoa => false,
                 SpanishTaxRegime::Comun => true,
+            },
+            // NF 3/2014 art. 9.24 exempts the first €1,500 of dividends a year — confirmed in
+            // force for 2024, 2025 and 2026 against the Diputación Foral's own Modelo 109 pages,
+            // and untouched by NF 1/2025 and NF 2/2025. Territorio Común lost the same relief when
+            // Ley 26/2014 repealed LIRPF art. 7.y with effect from 2015.
+            dividend_exemption_limit: match config.regime {
+                SpanishTaxRegime::Gipuzkoa => dec!(1500),
+                SpanishTaxRegime::Comun => Decimal::ZERO,
             },
             // Gipuzkoa integrates the two groups "exclusivamente entre sí"; Territorio Común lets
             // a negative balance in one reach 25% of the other's positive (LIRPF art. 49.1).
@@ -101,6 +111,7 @@ pub fn compute_tax_year(
         gyp_ledger,
         params.cross_offset_fraction,
         params.treaty_rate,
+        params.dividend_exemption_limit,
     );
 
     let has_activity =
@@ -679,6 +690,7 @@ fn process_dividends(
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
     let mut has_income = false;
+    let mut exempted: Vec<String> = Vec::new();
 
     for dividend in &broker_statement.dividends {
         if dividend.date.year() != params.year {
@@ -710,6 +722,13 @@ fn process_dividends(
         // in `calculate_totals`.
         let treaty_capped_credit = std::cmp::min(withheld_eur, gross_eur * params.treaty_rate);
 
+        let washed = dividend_is_washed(broker_statement, &dividend.issuer, dividend.date);
+        let exemption_eligible = params.dividend_exemption_limit > Decimal::ZERO && !washed;
+
+        if exemption_eligible {
+            exempted.push(dividend.issuer.clone());
+        }
+
         statement.dividends.push(DividendEntry {
             symbol: dividend.issuer.clone(),
             isin,
@@ -718,10 +737,57 @@ fn process_dividends(
             gross_eur,
             withheld_eur,
             treaty_capped_credit: std::cmp::max(Decimal::ZERO, treaty_capped_credit),
+            exemption_eligible,
+            notes: (params.dividend_exemption_limit > Decimal::ZERO && washed).then(|| {
+                "Excluded from the €1,500 dividend exemption (NF 3/2014 art. 9.24): homogeneous \
+                 securities were acquired within two months before the payment date and \
+                 transferred within two months after it"
+                    .to_string()
+            }),
         });
     }
 
+    if !exempted.is_empty() {
+        exempted.dedup();
+        warn!(
+            "The Gipuzkoa €1,500 dividend exemption (NF 3/2014 art. 9.24) was applied to: {}. It \
+             does NOT cover distributions from instituciones de inversión colectiva (funds, ETFs, \
+             SICAVs), which a broker statement does not distinguish from company dividends — check \
+             each instrument and reduce the exemption by hand if any of them is a fund.",
+            exempted.join(", ")
+        );
+    }
+
     Ok(has_income)
+}
+
+/// Whether the anti-abuse clause of NF 3/2014 art. 9.24 removes a dividend from the exemption.
+///
+/// The exemption does not reach dividends "procedentes de valores o participaciones adquiridas
+/// dentro de los dos meses anteriores a la fecha en que aquéllos se hubieran satisfecho cuando, con
+/// posterioridad a esta fecha, dentro del mismo plazo, se produzca una transmisión de valores
+/// homogéneos" — buy just before the payment, sell just after, and the relief is gone.
+///
+/// Applied per instrument rather than per share: the statute scopes it to the dividends coming from
+/// those particular securities, but a broker statement cannot say which shares a payment came from.
+/// Excluding the whole payment overstates tax rather than understating it.
+fn dividend_is_washed(broker_statement: &BrokerStatement, symbol: &str, date: Date) -> bool {
+    let (start, end) = wash_sale::window(date);
+
+    let acquired_before = broker_statement.stock_buys.iter().any(|buy| {
+        buy.symbol == symbol
+            && wash_sale::is_acquisition(buy)
+            && buy.conclusion_time.date >= start
+            && buy.conclusion_time.date < date
+    });
+
+    acquired_before
+        && broker_statement.stock_sells.iter().any(|sell| {
+            sell.symbol == symbol
+                && matches!(sell.type_, StockSellType::Trade { .. })
+                && sell.conclusion_time.date > date
+                && sell.conclusion_time.date <= end
+        })
 }
 
 /// Broker interest, taxed as rendimientos del capital mobiliario.

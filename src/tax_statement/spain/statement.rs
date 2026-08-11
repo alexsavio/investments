@@ -97,6 +97,10 @@ pub struct DividendEntry {
     /// credit. Informational per row: the credit is a year-level figure, because its second limb is
     /// the average savings rate, which only exists once the whole year is known.
     pub treaty_capped_credit: Decimal,
+    /// Whether this dividend counts towards the Gipuzkoa €1,500 exemption (NF 3/2014 art. 9.24).
+    /// Always false under Territorio Común, which lost the relief in 2015.
+    pub exemption_eligible: bool,
+    pub notes: Option<String>,
 }
 
 /// Interest, taxed as rendimiento del capital mobiliario.
@@ -188,6 +192,9 @@ pub struct SpanishTaxStatement {
     pub total_reintegrated_loss: Decimal,
 
     pub total_dividend_income: Decimal,
+    /// Dividends exempt under the Gipuzkoa €1,500 annual relief (NF 3/2014 art. 9.24). Zero under
+    /// Territorio Común.
+    pub total_dividend_exemption: Decimal,
     pub total_interest_income: Decimal,
     /// Interest paid on a borrowed balance, as a positive magnitude. Reported only — it never
     /// reduces the RCM result.
@@ -245,6 +252,9 @@ pub struct SpanishTaxStatement {
     pub average_savings_rate: Decimal,
     pub net_tax_due: Decimal,
 
+    /// Annual dividend exemption in force: €1,500 under Gipuzkoa (NF 3/2014 art. 9.24), 0 under
+    /// Territorio Común.
+    dividend_exemption_limit: Decimal,
     /// Fraction of the other group's positive balance a negative one may offset: 0 under Gipuzkoa,
     /// 0.25 under Territorio Común.
     cross_offset_fraction: Decimal,
@@ -261,6 +271,7 @@ impl SpanishTaxStatement {
         gyp_ledger: LossLedger,
         cross_offset_fraction: Decimal,
         treaty_rate: Decimal,
+        dividend_exemption_limit: Decimal,
     ) -> SpanishTaxStatement {
         SpanishTaxStatement {
             year,
@@ -268,6 +279,7 @@ impl SpanishTaxStatement {
             scale,
             cross_offset_fraction,
             treaty_rate,
+            dividend_exemption_limit,
             rcm_ledger_prior: rcm_ledger.clone(),
             gyp_ledger_prior: gyp_ledger.clone(),
             rcm_ledger_next: rcm_ledger,
@@ -299,6 +311,7 @@ impl SpanishTaxStatement {
             total_deferred_loss: Decimal::ZERO,
             total_reintegrated_loss: Decimal::ZERO,
             total_dividend_income: Decimal::ZERO,
+            total_dividend_exemption: Decimal::ZERO,
             total_interest_income: Decimal::ZERO,
             total_paid_interest: Decimal::ZERO,
             total_deductible_fees: Decimal::ZERO,
@@ -349,8 +362,21 @@ impl SpanishTaxStatement {
             .map(|fee| fee.amount_eur)
             .sum();
 
-        self.rcm_net =
-            self.total_dividend_income + self.total_interest_income - self.total_deductible_fees;
+        // NF 3/2014 art. 9.24 exempts the first €1,500 of qualifying dividends each year, so that
+        // slice never enters the base at all. Territorio Común lost the same relief when Ley
+        // 26/2014 repealed LIRPF art. 7.y with effect from 2015, and carries a zero limit.
+        let eligible_dividends: Decimal = self
+            .dividends
+            .iter()
+            .filter(|entry| entry.exemption_eligible)
+            .map(|entry| entry.gross_eur)
+            .sum();
+        self.total_dividend_exemption =
+            std::cmp::min(self.dividend_exemption_limit, eligible_dividends);
+
+        self.rcm_net = self.total_dividend_income + self.total_interest_income
+            - self.total_deductible_fees
+            - self.total_dividend_exemption;
 
         self.total_fx_gains = self
             .fx_gains
@@ -458,6 +484,14 @@ impl SpanishTaxStatement {
             return Decimal::ZERO;
         }
 
+        // Exempt income bears no Spanish tax, so it carries no credit either. Only dividends are
+        // exempted and only dividends carry foreign withholding, so the whole exemption comes off
+        // this base.
+        let gross = std::cmp::max(Decimal::ZERO, gross - self.total_dividend_exemption);
+        if gross.is_zero() {
+            return Decimal::ZERO;
+        }
+
         let rcm_gross = self.total_dividend_income + self.total_interest_income;
         let net = if rcm_gross > Decimal::ZERO {
             gross - self.total_deductible_fees * gross / rcm_gross
@@ -490,6 +524,7 @@ mod tests {
             LossLedger::default(),
             Decimal::ZERO,
             dec!(0.15),
+            Decimal::ZERO,
         )
     }
 
@@ -592,6 +627,7 @@ mod tests {
             LossLedger::default(),
             dec!(0.25),
             dec!(0.15),
+            Decimal::ZERO,
         );
 
         spain.dividends.push(DividendEntry {
@@ -602,6 +638,8 @@ mod tests {
             gross_eur: dec!(900),
             withheld_eur: dec!(270),
             treaty_capped_credit: dec!(135),
+            exemption_eligible: false,
+            notes: None,
         });
         spain.capital_gains.push(disposal(dec!(10000)));
         spain.calculate_totals();

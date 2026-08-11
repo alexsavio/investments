@@ -469,6 +469,75 @@ fn paid_margin_interest_does_not_reduce_the_rcm_result() {
     }
 }
 
+/// Gipuzkoa exempts the first €1,500 of dividends each year (NF 3/2014 art. 9.24). Territorio
+/// Común had the same relief until Ley 26/2014 repealed LIRPF art. 7.y with effect from 2015.
+///
+/// Fixture: an AAPL dividend of $2,000 (€1,800) held since 2026-01-05, and an MSFT dividend of $500
+/// (€450) on shares bought 2026-05-01 and sold 2026-06-15 — inside the two-month windows either
+/// side of the payment date, so that one is excluded from the exemption by the anti-abuse clause.
+#[test]
+fn gipuzkoa_exempts_the_first_1500_euros_of_dividends() {
+    let gipuzkoa = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert_eq!(gipuzkoa.total_dividend_income, dec!(2250));
+    assert_eq!(gipuzkoa.dividends.len(), 2);
+
+    let aapl = gipuzkoa.dividends.iter().find(|entry| entry.symbol == "AAPL").unwrap();
+    assert!(aapl.exemption_eligible);
+    let msft = gipuzkoa.dividends.iter().find(|entry| entry.symbol == "MSFT").unwrap();
+    assert!(!msft.exemption_eligible);
+    assert!(msft.notes.as_deref().unwrap().contains("art. 9.24"));
+
+    // Only the €1,800 of eligible dividends can be exempted, and the cap binds at €1,500.
+    assert_eq!(gipuzkoa.total_dividend_exemption, dec!(1500));
+    assert_eq!(gipuzkoa.rcm_net, dec!(750));
+    assert_eq!(gipuzkoa.gyp_net, dec!(450));
+    assert_eq!(gipuzkoa.savings_base, dec!(1200));
+    assert_eq!(gipuzkoa.savings_quota, dec!(228));
+
+    // Exempt income bears no Spanish tax, so it carries no credit either: the rate limb runs on
+    // €750, not on the €2,250 gross.
+    assert_eq!(gipuzkoa.total_foreign_withholding, dec!(337.50));
+    assert_eq!(gipuzkoa.foreign_gross_income, dec!(2250));
+    assert_eq!(gipuzkoa.foreign_taxable_income, dec!(750));
+    assert_eq!(gipuzkoa.total_foreign_tax_credit, dec!(142.50));
+    assert_eq!(gipuzkoa.net_tax_due, dec!(85.50));
+}
+
+/// Territorio Común has no dividend exemption: Ley 26/2014 repealed LIRPF art. 7.y with effect from
+/// 2015, so the same dividends are taxed in full.
+#[test]
+fn comun_has_no_dividend_exemption() {
+    let comun = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Comun);
+
+    assert_eq!(comun.total_dividend_exemption, dec!(0));
+    assert!(comun.dividends.iter().all(|entry| !entry.exemption_eligible));
+    assert_eq!(comun.rcm_net, dec!(2250));
+    assert_eq!(comun.savings_base, dec!(2700));
+    assert_eq!(comun.savings_quota, dec!(513));
+    assert_eq!(comun.foreign_taxable_income, dec!(2250));
+    // Treaty limb 2,250 × 15% = 337.50, below the rate limb of 2,250 × 19% = 427.50.
+    assert_eq!(comun.total_foreign_tax_credit, dec!(337.50));
+    assert_eq!(comun.net_tax_due, dec!(175.50));
+}
+
+/// A dividend smaller than the cap is exempted in full, and the year's whole withholding then has
+/// no Spanish tax left to be credited against.
+#[test]
+fn a_small_dividend_is_wholly_exempt_and_carries_no_credit() {
+    let spain = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert_eq!(spain.total_dividend_income, dec!(900));
+    assert_eq!(spain.total_dividend_exemption, dec!(900));
+    // Only the €90 of interest is left in the group.
+    assert_eq!(spain.rcm_net, dec!(90));
+    assert_eq!(spain.savings_base, dec!(90));
+    assert_eq!(spain.savings_quota, dec!(17.10));
+    assert_eq!(spain.foreign_taxable_income, dec!(0));
+    assert_eq!(spain.total_foreign_tax_credit, dec!(0));
+    assert_eq!(spain.net_tax_due, dec!(17.10));
+}
+
 /// Fee deductibility is the sharpest split between the regimes. Gipuzkoa has no equivalent of LIRPF
 /// art. 26.1.a — NF 3/2014 art. 39 is a closed list — so the custody fee is reported but changes
 /// nothing; under Territorio Común the same €45 reduces the RCM result.
@@ -481,18 +550,21 @@ fn custody_fee_deductibility_follows_the_regime() {
     assert!(gipuzkoa.fees[0].notes.as_deref().unwrap().contains("art. 39"));
     assert_eq!(gipuzkoa.total_deductible_fees, dec!(0));
     assert_eq!(gipuzkoa.total_informational_fees, dec!(45));
-    // 900 dividend + 90 interest, nothing deducted.
-    assert_eq!(gipuzkoa.rcm_net, dec!(990));
+    // 900 dividend + 90 interest, nothing deducted — but the whole dividend is exempt under
+    // NF 3/2014 art. 9.24, so only the interest reaches the group.
+    assert_eq!(gipuzkoa.total_dividend_exemption, dec!(900));
+    assert_eq!(gipuzkoa.rcm_net, dec!(90));
 
     let comun = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
     assert!(comun.fees[0].deductible);
     assert!(comun.fees[0].notes.is_none());
     assert_eq!(comun.total_deductible_fees, dec!(45));
     assert_eq!(comun.total_informational_fees, dec!(0));
+    assert_eq!(comun.total_dividend_exemption, dec!(0));
     assert_eq!(comun.rcm_net, dec!(945));
 
-    // The regimes differ by exactly the fee, and by nothing else.
-    assert_eq!(gipuzkoa.rcm_net - comun.rcm_net, dec!(45));
+    // The two regime differences are the fee and the exemption, and nothing else.
+    assert_eq!(comun.rcm_net - gipuzkoa.rcm_net, dec!(900) - dec!(45));
     assert_eq!(gipuzkoa.total_dividend_income, comun.total_dividend_income);
     assert_eq!(gipuzkoa.total_interest_income, comun.total_interest_income);
 }
@@ -500,13 +572,13 @@ fn custody_fee_deductibility_follows_the_regime() {
 /// The savings base is the sum of the two groups' positive balances: neither reduces the other.
 #[test]
 fn rcm_and_gyp_enter_the_base_as_separate_groups() {
-    let spain = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+    let spain = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
 
-    assert_eq!(spain.rcm_net, dec!(990));
+    assert_eq!(spain.rcm_net, dec!(945));
     assert_eq!(spain.gyp_net, dec!(0));
-    assert_eq!(spain.savings_base, dec!(990));
-    // 990 sits entirely in the first bracket: 990 × 19%.
-    assert_eq!(spain.savings_quota, dec!(188.10));
+    assert_eq!(spain.savings_base, dec!(945));
+    // 945 sits entirely in the first bracket: 945 × 19%.
+    assert_eq!(spain.savings_quota, dec!(179.55));
 }
 
 /// A loss-making disposal produces no taxable base and carries forward labelled with the filing
@@ -624,19 +696,20 @@ fn expired_config_balances_are_rejected() {
     assert!(error.contains("expired"), "{error}");
 }
 
-/// The year-level double-taxation credit. The `income` fixture's base is €990, taxed at 19%
-/// throughout, so the average savings rate is 0.19 and the credit's limbs are €135 (treaty) and
-/// €171 (0.19 × €900). The treaty limb binds.
+/// The year-level double-taxation credit, on the regime that still taxes the dividend. The `income`
+/// fixture's Común base is €945, taxed at 19% throughout, so the average savings rate is 0.19 and
+/// the credit's limbs are €135 (treaty) and €163.23 (0.19 × the €859.09 that reaches the base after
+/// the pro-rated custody fee). The treaty limb binds.
 #[test]
 fn foreign_tax_credit_is_computed_at_year_level() {
-    let spain = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+    let spain = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
 
-    assert_eq!(spain.savings_base, dec!(990));
-    assert_eq!(spain.savings_quota, dec!(188.10));
+    assert_eq!(spain.savings_base, dec!(945));
+    assert_eq!(spain.savings_quota, dec!(179.55));
     assert_eq!(spain.average_savings_rate, dec!(0.19));
     assert_eq!(spain.total_foreign_tax_credit, dec!(135));
-    // 188.10 − 135.
-    assert_eq!(spain.net_tax_due, dec!(53.10));
+    // 179.55 − 135.
+    assert_eq!(spain.net_tax_due, dec!(44.55));
 }
 
 /// The credit can never turn into a refund of foreign tax through the Spanish return.
@@ -1096,9 +1169,11 @@ fn a_loss_reaches_the_rcm_balance_only_under_comun() {
 
     let gipuzkoa = run_pipeline("cross_offset", 2026, SpanishTaxRegime::Gipuzkoa);
     assert_eq!(gipuzkoa.cross_offset_gyp_to_rcm, dec!(0));
-    assert_eq!(gipuzkoa.rcm_taxable, dec!(7200));
-    assert_eq!(gipuzkoa.savings_base, dec!(7200));
-    assert_eq!(gipuzkoa.savings_quota, dec!(1368));
+    // The first €1,500 of the dividend is exempt under NF 3/2014 art. 9.24.
+    assert_eq!(gipuzkoa.total_dividend_exemption, dec!(1500));
+    assert_eq!(gipuzkoa.rcm_taxable, dec!(5700));
+    assert_eq!(gipuzkoa.savings_base, dec!(5700));
+    assert_eq!(gipuzkoa.savings_quota, dec!(1083));
     assert_eq!(gipuzkoa.gyp_ledger_next.balances()[&2026], dec!(9000));
 }
 

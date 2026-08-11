@@ -349,6 +349,19 @@ fn generate_spanish_tax_statement(
         );
     }
 
+    if statement.total_dividend_exemption > Decimal::ZERO {
+        println!(
+            "{}",
+            Color::Yellow.paint(format!(
+                "€{} of dividends were exempted under NF 3/2014 art. 9.24 (limit €1,500/year). The \
+                 exemption does NOT cover distributions from instituciones de inversión colectiva \
+                 (funds, ETFs, SICAVs), which a broker statement does not distinguish — check each \
+                 payer and reduce it by hand if any of them is a fund.",
+                eur::format_eur(statement.total_dividend_exemption)
+            ))
+        );
+    }
+
     if statement.total_paid_interest > Decimal::ZERO {
         println!(
             "{}",

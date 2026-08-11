@@ -1,0 +1,23 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20260101" toDate="20261231" period="LastYear" whenGenerated="20270115;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="-7375" dividends="2500" brokerInterest="0" withholdingTax="-375"/>
+      </CashReport>
+      <Trades>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20260105;100000" settleDate="20260107" quantity="100" tradePrice="100" tradeMoney="-10000" ibCommission="0" buySell="BUY" openCloseIndicator="O"/>
+        <Trade currency="USD" symbol="MSFT" isin="US5949181045" description="MICROSOFT CORP" assetCategory="STK" dateTime="20260501;100000" settleDate="20260505" quantity="50" tradePrice="100" tradeMoney="-5000" ibCommission="0" buySell="BUY" openCloseIndicator="O"/>
+        <Trade currency="USD" symbol="MSFT" isin="US5949181045" description="MICROSOFT CORP" assetCategory="STK" dateTime="20260615;100000" settleDate="20260617" quantity="-50" tradePrice="110" tradeMoney="5500" ibCommission="0" buySell="SELL" openCloseIndicator="C"/>
+      </Trades>
+      <CashTransactions>
+        <CashTransaction currency="USD" symbol="AAPL" isin="US0378331005" description="AAPL CASH DIVIDEND" dateTime="20260520;235959" amount="2000" type="Dividends"/>
+        <CashTransaction currency="USD" symbol="AAPL" isin="US0378331005" description="AAPL WITHHOLDING" dateTime="20260520;235959" amount="-300" type="Withholding Tax"/>
+        <CashTransaction currency="USD" symbol="MSFT" isin="US5949181045" description="MSFT CASH DIVIDEND" dateTime="20260520;235959" amount="500" type="Dividends"/>
+        <CashTransaction currency="USD" symbol="MSFT" isin="US5949181045" description="MSFT WITHHOLDING" dateTime="20260520;235959" amount="-75" type="Withholding Tax"/>
+      </CashTransactions>
+      <OpenPositions>
+        <OpenPosition currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" position="100" markPrice="100"/>
+      </OpenPositions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

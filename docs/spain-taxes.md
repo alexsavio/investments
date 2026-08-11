@@ -334,6 +334,33 @@ nothing deductible and no compensation:
 The credit is a year-level figure — its cap depends on the average rate, which only exists once the
 whole base is known. The per-row `treaty_capped_credit_eur` column is informational.
 
+## The Gipuzkoa €1,500 dividend exemption
+
+Gipuzkoa exempts the first **€1,500** of dividends and participaciones en beneficios each year
+(NF 3/2014 **art. 9.24**, referring to art. 34.1.a/b). There is no residence restriction on the
+payer, so foreign dividends qualify. Verified in force for **2024, 2025 and 2026**: the Diputación
+Foral's own Modelo 109 pages list it verbatim as exempt item 24 for ejercicios 2023, 2024 and 2025,
+and neither NF 1/2025 (the 2026 reform) nor NF 2/2025 touches art. 9 número 24 — both only add new
+números (38, 39, 40) and amend 1, 5, 6 and 7.
+
+**Territorio Común has no equivalent.** Ley 26/2014 repealed LIRPF art. 7.y with effect from 2015.
+
+Consequences the tool applies:
+
+- The exempt slice never enters the savings base, so it also carries **no double-taxation credit**:
+  the credit's rate limb runs on the income that actually reaches the base liquidable, and exempt
+  income does not. A Gipuzkoa filer whose only dividends total less than €1,500 pays no Spanish tax
+  on them and credits none of the foreign withholding — reclaim the excess from the source state.
+- The **anti-abuse clause** is applied: a dividend on securities acquired within the two months
+  before the payment date is excluded when homogeneous securities are transferred within the two
+  months after it. The tool applies this per instrument rather than per share, because a broker
+  statement cannot say which shares a payment came from; that excludes more than the statute
+  strictly requires, which overstates tax rather than understating it.
+- **Distributions from instituciones de inversión colectiva** (funds, ETFs, SICAVs) and interest on
+  cooperative contributions do **not** qualify, and an IB statement does not distinguish them from
+  company dividends. The tool exempts them anyway and prints a warning naming every payer it
+  exempted — check each one and reduce the exemption by hand if any is a fund.
+
 ## Custody and administration fees
 
 This is the sharpest split between the regimes.
