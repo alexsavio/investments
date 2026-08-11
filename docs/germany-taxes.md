@@ -138,8 +138,9 @@ investment fund:
   | Mischfonds (mixed) | Zeile 5 | Zeile 10 | Zeile 17 |
   | sonstige (bond/other) | Zeile 8 | Zeile 13 | Zeile 26 |
 
-Anlage KAP line numbers follow the 2024/2025 form; the KAP-INV Zeilen above have been stable since the
-2018 InvStG reform. Both shift between years, so re-check them against the form for your filing year.
+Every Zeile above is pinned to the official Bundesfinanzverwaltung forms for **both 2024 and 2025**,
+which carry identical numbering — see [Open interpretations](#open-interpretations) for the sources.
+Forms can shift between years, so re-check them if you file a later year.
 
 **Altbestand on KAP:** a pure pre-2009 (Altbestand) share sale has a positive gross gain but a
 taxable amount of 0, so it contributes nothing to Zeile 19/20 — the tax-free gain is not declared as

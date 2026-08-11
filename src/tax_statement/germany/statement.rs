@@ -280,16 +280,28 @@ pub struct GermanTaxStatement {
     pub non_taxable_margin_fx: Decimal,
 
     // Anlage KAP form line values (non-fund entries only; fund income is declared on KAP-INV).
-    // TODO(verify): re-check these line numbers against the current-year Anlage KAP form.
-    /// KAP Zeile 19: net foreign capital income (dividends + interest + share gains/losses + FX).
+    //
+    // Pinned to the official forms of the Bundesfinanzverwaltung (Formular-Management-System,
+    // formulare-bfinv.de): "Anlage KAP 2024" (print id 2024AnlKAP051NET, September 2024) and
+    // "Anlage KAP 2025" (2025AnlKAP051NET, Oktober 2025). PDFs retrieved 2026-08-11 from
+    // https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2024/Anlage_KAP_steuern.de_01.pdf
+    // and https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2025/Anlage_KAP_2025_steuern-de.pdf
+    // All five lines below carry the same number in both years; the 2025 form only voids the
+    // Termingeschäfte lines (21, 24 and 25 are marked "frei") without renumbering the rest.
+    /// KAP Zeile 19 "Ausländische Kapitalerträge": net foreign capital income (dividends + interest
+    /// + share gains/losses + FX).
     pub kap_zeile_19: Decimal,
-    /// KAP Zeile 20: share-sale gains contained in Zeile 19.
+    /// KAP Zeile 20 "In den Zeilen 18 und 19 enthaltene Gewinne aus Aktienveräußerungen i. S. d.
+    /// § 20 Abs. 2 Satz 1 Nr. 1 EStG": share-sale gains contained in Zeile 19.
     pub kap_zeile_20: Decimal,
-    /// KAP Zeile 22: contained losses excluding share-sale losses (FX / other §20 losses).
+    /// KAP Zeile 22 "In den Zeilen 18 und 19 enthaltene Verluste ohne Verluste aus der Veräußerung
+    /// von Aktien": contained losses excluding share-sale losses (FX / other §20 losses).
     pub kap_zeile_22: Decimal,
-    /// KAP Zeile 23: contained share-sale losses.
+    /// KAP Zeile 23 "In den Zeilen 18 und 19 enthaltene Verluste aus der Veräußerung von Aktien
+    /// i. S. d. § 20 Abs. 2 Satz 1 Nr. 1 EStG": contained share-sale losses.
     pub kap_zeile_23: Decimal,
-    /// KAP Zeile 41: creditable foreign withholding tax (anrechenbare ausländische Quellensteuer).
+    /// KAP Zeile 41 "Anrechenbare noch nicht angerechnete ausländische Steuern": creditable foreign
+    /// withholding tax.
     pub kap_zeile_41: Decimal,
 
     // Anlage KAP-INV: gross (pre-Teilfreistellung) investment-fund figures by fund type. The
