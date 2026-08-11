@@ -16,4 +16,4 @@ pub use self::statement::{CapitalGainEntry, SpanishLotDetail, SpanishTaxStatemen
 
 // The one-formatter invariant spans every EUR-filing jurisdiction: the CSV, the console summary and
 // the sell simulation's table all round through the same pair.
-pub(crate) use crate::tax_statement::eur::format_eur;
+pub(crate) use crate::tax_statement::eur::{format_eur, round_eur};

@@ -341,3 +341,114 @@ impl SpanishTaxStatement {
         self.dividends.iter().map(|entry| entry.gross_eur).sum()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn statement() -> SpanishTaxStatement {
+        let regime = SpanishTaxRegime::Gipuzkoa;
+        SpanishTaxStatement::new(
+            2026,
+            regime,
+            SavingsScale::for_year(regime, 2026).unwrap(),
+            LossLedger::default(),
+            LossLedger::default(),
+            Decimal::ZERO,
+            dec!(0.15),
+        )
+    }
+
+    fn disposal(result: Decimal) -> CapitalGainEntry {
+        CapitalGainEntry {
+            symbol: "AAPL".to_string(),
+            isin: String::new(),
+            description: String::new(),
+            sale_date: Date::from_ymd_opt(2026, 6, 15).unwrap(),
+            settle_date: Date::from_ymd_opt(2026, 6, 17).unwrap(),
+            quantity: dec!(1),
+            proceeds_eur: result,
+            cost_eur: Decimal::ZERO,
+            actualized_cost_eur: Decimal::ZERO,
+            fiscal_gain_loss: result,
+            deferred_loss: Decimal::ZERO,
+            integrable_amount: result,
+            lots: Vec::new(),
+            notes: None,
+        }
+    }
+
+    /// The chain `simulate-sell` builds: the year's tax after each disposal is added in turn.
+    /// Mirrors `SpanishTaxSimulation::observe`, which recomputes the year once per emulated sale.
+    fn tax_after_each(statement: &mut SpanishTaxStatement, results: &[Decimal]) -> Vec<Decimal> {
+        results
+            .iter()
+            .map(|&result| {
+                statement.capital_gains.push(disposal(result));
+                statement.calculate_totals();
+                statement.net_tax_due
+            })
+            .collect()
+    }
+
+    /// The pricing rule behind `simulate-sell`: a hypothetical disposal costs what it *adds* to the
+    /// year. Under a progressive savings scale three identical disposals therefore cost three
+    /// different amounts, rising as the base climbs through the brackets — which is exactly what the
+    /// flat `localities::spain` approximation cannot express.
+    #[test]
+    fn hypothetical_disposal_is_priced_at_what_it_adds_to_the_year() {
+        let mut spain = statement();
+        let taxes = tax_after_each(&mut spain, &[dec!(7500), dec!(7500), dec!(7500)]);
+
+        // Gipuzkoa 2026: 19% to 7,500, then 20% to 15,000, then 22%.
+        assert_eq!(taxes[0], dec!(1425));
+        assert_eq!(taxes[1], dec!(2925));
+        assert_eq!(taxes[2], dec!(4575));
+
+        let marginal: Vec<Decimal> = (0..3)
+            .map(|index| taxes[index] - if index == 0 { Decimal::ZERO } else { taxes[index - 1] })
+            .collect();
+        assert_eq!(marginal, vec![dec!(1425), dec!(1500), dec!(1650)]);
+
+        // The standalone comparator the deduction column is measured against is the same €1,425 for
+        // every one of them: taxed alone, each disposal starts from the first bracket.
+        for result in &marginal {
+            assert!(*result >= spain.scale.tax(dec!(7500)));
+        }
+        assert_eq!(spain.scale.tax(dec!(7500)), dec!(1425));
+    }
+
+    /// A loss-making disposal is worth *negative* tax when the year holds a gain for it to shelter.
+    /// That is the in-year compensation within the ganancias group, and the reason a trim can be
+    /// cheaper than it looks.
+    #[test]
+    fn hypothetical_loss_shelters_a_gain_booked_earlier_in_the_year() {
+        let mut spain = statement();
+        let taxes = tax_after_each(&mut spain, &[dec!(10000), dec!(-4000)]);
+
+        // 1,425 + 2,500 × 20%.
+        assert_eq!(taxes[0], dec!(1925));
+        // Base falls to 6,000, entirely in the 19% bracket.
+        assert_eq!(taxes[1], dec!(1140));
+        assert_eq!(taxes[1] - taxes[0], dec!(-785));
+    }
+
+    /// A loss the valores-homogéneos rule deferred shelters nothing: the disposal enters the base at
+    /// its integrable amount, not its gross result, so the simulation prices it at what the return
+    /// would actually allow.
+    #[test]
+    fn a_deferred_loss_is_priced_at_its_integrable_amount() {
+        let mut spain = statement();
+        spain.capital_gains.push(disposal(dec!(10000)));
+
+        let mut deferred = disposal(dec!(-4000));
+        deferred.deferred_loss = dec!(4000);
+        deferred.integrable_amount = Decimal::ZERO;
+        spain.capital_gains.push(deferred);
+        spain.calculate_totals();
+
+        // The whole loss was blocked, so the year is unchanged by it.
+        assert_eq!(spain.gyp_net, dec!(10000));
+        assert_eq!(spain.net_tax_due, dec!(1925));
+    }
+}
