@@ -696,6 +696,50 @@ fn custody_fee_deductibility_follows_the_regime() {
     assert_eq!(gipuzkoa.total_interest_income, comun.total_interest_income);
 }
 
+/// Each fee type is treated as the DGT classifies it, and a type nobody has classified is not
+/// deducted and says why.
+///
+/// $50 custody (€45), $100 market data (€90), $30 minimum-activity (€27). Under Común only the
+/// custody fee reduces the RCM result; the market-data fee carries the consulta that excludes it;
+/// the minimum-activity fee carries the open question, in the same words on every surface.
+#[test]
+fn fee_types_follow_dgt_doctrine_and_name_what_is_unsettled() {
+    let comun = run_pipeline("fee_types", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.fees.len(), 3);
+
+    let custody = &comun.fees[0];
+    assert!(custody.deductible);
+    assert!(custody.notes.is_none());
+    assert!(custody.review.is_none());
+
+    let market_data = &comun.fees[1];
+    assert!(!market_data.deductible);
+    assert!(market_data.review.is_none());
+    assert!(
+        market_data.notes.as_deref().unwrap().contains("03-04-1998"),
+        "{:?}", market_data.notes);
+
+    let inactivity = &comun.fees[2];
+    assert!(!inactivity.deductible);
+    let review = inactivity.review.as_deref().unwrap();
+    assert!(review.contains("no DGT doctrine settles"), "{review}");
+    assert!(review.contains("€27.00"), "{review}");
+    // The CSV note is the same sentence the console and the log carry.
+    assert_eq!(inactivity.notes.as_deref(), Some(review));
+
+    assert_eq!(comun.total_deductible_fees, dec!(45));
+    assert_eq!(comun.total_informational_fees, dec!(117));
+
+    // Gipuzkoa deducts nothing whatever the type is, so no question about a type can arise there.
+    let gipuzkoa = run_pipeline("fee_types", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.total_deductible_fees, dec!(0));
+    assert_eq!(gipuzkoa.total_informational_fees, dec!(162));
+    for fee in &gipuzkoa.fees {
+        assert!(fee.review.is_none());
+        assert!(fee.notes.as_deref().unwrap().contains("art. 39"));
+    }
+}
+
 /// The savings base is the sum of the two groups' positive balances: neither reduces the other.
 #[test]
 fn rcm_and_gyp_enter_the_base_as_separate_groups() {

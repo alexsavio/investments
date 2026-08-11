@@ -419,6 +419,12 @@ fn generate_spanish_tax_statement(
         );
     }
 
+    for fee in &statement.fees {
+        if let Some(review) = &fee.review {
+            println!("{}", Color::Yellow.paint(format!("WARNING: {review}")));
+        }
+    }
+
     if statement.total_fx_borrowed_review != Decimal::ZERO {
         println!(
             "{}",

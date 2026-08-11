@@ -1117,29 +1117,137 @@ fn process_interest(
     Ok(has_income)
 }
 
-/// Keywords that mark a fee as a custody or administration charge.
+/// What LIRPF art. 26.1.a makes of a broker fee.
 ///
-/// LIRPF art. 26.1.a allows only "gastos de administración y depósito de valores negociables", and
-/// explicitly excludes the fee for discretionary portfolio management. A broker statement carries
-/// nothing but a free-text description, so the match is on that.
-// TODO(verify): the keyword list is a best-effort reading of IB's fee descriptions against art.
-// 26.1.a; the article names the service, not the wording a broker happens to use. The failure
-// direction is deliberately conservative — an unrecognised fee is reported but not deducted, which
-// overstates tax rather than understating it.
-const CUSTODY_FEE_KEYWORDS: &[&str] = &[
-    "custody",
-    "safekeeping",
-    "administration",
-    "custodia",
-    "administración",
-    "administracion",
+/// The article allows "gastos de administración y depósito de valores negociables" and nothing else,
+/// and the DGT has classified the common types: **V2117-19** (custody/administration charged by a
+/// commercializer is deductible, the covered service being static safekeeping, dividend collection
+/// and corporate-event handling), **V2629-13** (buy/sell commissions are not art. 26 expenses — they
+/// adjust the acquisition and transmission values instead, which the shared trade engine already
+/// does), **V1047-16** (performance and success fees are management, excluded by name), and consulta
+/// 03-04-1998 (only costs directly required by the deposit function qualify; current-account
+/// maintenance does not). The AEAT Manual de Renta cap. 5 (2024/2025) restates all of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeeClass {
+    /// The service art. 26.1.a names. Deducted under Común.
+    Custody,
+    /// Part of the same service on the DGT's reading, but not the words the article uses. Deducted
+    /// under Común, with the reasoning on the row.
+    CustodyAdjacent,
+    /// A cost of acquiring or transmitting: it adjusts the values instead of reducing the RCM.
+    ValueAdjustment,
+    /// Outside art. 26.1.a, by name or because it is not a cost of the deposit function.
+    NonDeductible,
+    /// No doctrine on the type. Not deducted, and said out loud.
+    Unsettled,
+}
+
+/// One classification rule. First match on the lowercased description wins, so the rules are ordered
+/// exclusions first: a description naming both management and administration is management.
+struct FeeRule {
+    keywords: &'static [&'static str],
+    class: FeeClass,
+    /// The type, as the unsettled warning names it.
+    label: &'static str,
+    /// Why, with its citation. Shown on the row whenever the fee is not deducted outright.
+    note: &'static str,
+}
+
+const FEE_RULES: &[FeeRule] = &[
+    FeeRule {
+        keywords: &["management", "advisory", "performance", "gestión", "gestion", "éxito", "exito"],
+        class: FeeClass::NonDeductible,
+        label: "management or performance fee",
+        note: "Informational: management, advisory and performance fees are excluded from LIRPF \
+               art. 26.1.a by name (DGT V1047-16 treats a success fee as management)",
+    },
+    FeeRule {
+        keywords: &[
+            "commission", "comisión de compra", "comision de compra", "exchange fee", "sec fee",
+            "finra", "taf ", "stamp", "canon", "transaction tax", "ftt",
+        ],
+        class: FeeClass::ValueAdjustment,
+        label: "trading commission or market pass-through",
+        note: "Informational: a cost of acquiring or transmitting is not an art. 26 expense — it \
+               adjusts the acquisition and transmission values instead (DGT V2629-13), which the \
+               per-trade figures above already do",
+    },
+    FeeRule {
+        keywords: &["custody", "custodia", "safekeeping", "deposit fee", "depósito", "deposito",
+                    "administration", "administraci"],
+        class: FeeClass::Custody,
+        label: "custody or administration fee",
+        note: "Deducted: administración y depósito de valores negociables (LIRPF art. 26.1.a; DGT \
+               V2117-19)",
+    },
+    FeeRule {
+        keywords: &["dividend fee", "corporate action", "cobro de dividendos", "coupon", "cupón",
+                    "cupon"],
+        class: FeeClass::CustodyAdjacent,
+        label: "dividend-collection or corporate-event fee",
+        note: "Deducted: DGT V2117-19 reads the depósito service as covering dividend collection \
+               and corporate events, though art. 26.1.a does not name them",
+    },
+    FeeRule {
+        keywords: &["market data", "datos de mercado", "research", "quote", "snapshot", "booster",
+                    "news"],
+        class: FeeClass::NonDeductible,
+        label: "market-data or research fee",
+        note: "Informational: information services are not part of the deposit function (consulta \
+               03-04-1998; AEAT Manual de Renta cap. 5), so LIRPF art. 26.1.a does not reach them",
+    },
+    FeeRule {
+        keywords: &["wire", "withdrawal", "sepa", "remittance", "cuenta corriente",
+                    "current account"],
+        class: FeeClass::NonDeductible,
+        label: "cash-movement or account fee",
+        note: "Informational: moving cash is not a cost of holding the securities (consulta \
+               03-04-1998 excludes current-account maintenance), so LIRPF art. 26.1.a does not \
+               reach it",
+    },
+    FeeRule {
+        keywords: &["inactivity", "minimum activity", "activity fee", "maintenance", "mantenimiento",
+                    "connectivity", "platform"],
+        class: FeeClass::Unsettled,
+        label: "inactivity, minimum-activity or maintenance fee",
+        note: "",
+    },
+    FeeRule {
+        keywords: &["currency conversion", "fx conversion", "conversión de divisa",
+                    "conversion de divisa"],
+        class: FeeClass::Unsettled,
+        label: "standalone currency-conversion fee",
+        note: "",
+    },
+    FeeRule {
+        keywords: &["traspaso", "transfer out", "transfer-out", "outgoing transfer", "acats",
+                    "position transfer"],
+        class: FeeClass::Unsettled,
+        label: "securities transfer-out fee",
+        note: "",
+    },
 ];
 
-fn is_custody_fee(description: &str) -> bool {
+/// A description no rule recognises. Not deducted: art. 26.1.a names the service, not the wording a
+/// broker happens to use, and the failure direction is deliberately conservative.
+const UNRECOGNISED_FEE: FeeRule = FeeRule {
+    keywords: &[],
+    class: FeeClass::NonDeductible,
+    label: "unrecognised fee",
+    note: "Informational: not recognised as a custody or administration fee (LIRPF art. 26.1.a); \
+           check whether it qualifies",
+};
+
+fn classify_fee(description: &str) -> &'static FeeRule {
     let description = description.to_lowercase();
-    CUSTODY_FEE_KEYWORDS
+    FEE_RULES
         .iter()
-        .any(|keyword| description.contains(keyword))
+        .find(|rule| {
+            rule.keywords
+                .iter()
+                .any(|keyword| description.contains(keyword))
+        })
+        .unwrap_or(&UNRECOGNISED_FEE)
 }
 
 /// Broker fees. Deductibility from RCM is regime-dependent.
@@ -1166,8 +1274,26 @@ fn process_fees(
             .clone()
             .unwrap_or_else(|| "Broker fee".to_string());
 
-        let custody = is_custody_fee(&description);
+        let rule = classify_fee(&description);
+        let custody = matches!(rule.class, FeeClass::Custody | FeeClass::CustodyAdjacent);
         let deductible = params.custody_fees_deductible && custody;
+
+        // Gipuzkoa deducts nothing whatever the type is (NF 3/2014 art. 39 is a closed list), so the
+        // classification changes nothing there and no open question arises.
+        let review = (params.custody_fees_deductible && rule.class == FeeClass::Unsettled).then(
+            || {
+                format!(
+                    "€{} of {} on {} is NOT deducted from the savings base: no DGT doctrine \
+                     settles whether it is a gasto de administración y depósito under LIRPF art. \
+                     26.1.a. Not deducting overstates the tax rather than understating it — \
+                     consult a gestor if the amount is material. See the open-interpretations \
+                     register in docs/spain-taxes.md.",
+                    super::format_eur(amount_eur),
+                    rule.label,
+                    fee.date
+                )
+            },
+        );
 
         let notes = if !params.custody_fees_deductible {
             Some(
@@ -1175,21 +1301,24 @@ fn process_fees(
                  39 does not allow expenses against securities income"
                     .to_string(),
             )
-        } else if custody {
+        } else if let Some(review) = review.clone() {
+            Some(review)
+        } else if rule.class == FeeClass::Custody {
             None
         } else {
-            Some(
-                "Informational: not recognised as a custody or administration fee (LIRPF art. \
-                 26.1.a); check whether it qualifies"
-                    .to_string(),
-            )
+            Some(rule.note.to_string())
         };
+
+        if let Some(review) = &review {
+            warn!("{review}");
+        }
 
         statement.fees.push(FeeEntry {
             date: fee.date,
             description,
             amount_eur,
             deductible,
+            review,
             notes,
         });
     }
@@ -1276,20 +1405,39 @@ fn process_fx_gains(
 mod tests {
     use super::*;
 
-    /// Under Territorio Común only custody and administration fees qualify (LIRPF art. 26.1.a).
-    /// Anything else is reported but not deducted — the conservative direction, since a wrong
-    /// deduction understates tax.
-    #[test]
-    fn custody_fees_are_recognised_by_description() {
-        assert!(is_custody_fee("CUSTODY FEE"));
-        assert!(is_custody_fee("Monthly safekeeping charge"));
-        assert!(is_custody_fee("Comisión de administración"));
-        assert!(is_custody_fee("SECURITIES ADMINISTRATION"));
+    use rstest::rstest;
 
-        assert!(!is_custody_fee("ADR FEE"));
-        assert!(!is_custody_fee("Monthly Minimum Activity Fee"));
-        assert!(!is_custody_fee("Commission Adjustments"));
-        // Discretionary portfolio management is excluded by art. 26.1.a by name.
-        assert!(!is_custody_fee("Discretionary portfolio management fee"));
+    /// Under Territorio Común only administración y depósito qualifies (LIRPF art. 26.1.a), and the
+    /// DGT has classified the rest. Anything the doctrine leaves open is not deducted — the
+    /// conservative direction, since a wrong deduction understates tax.
+    #[rstest]
+    #[case("CUSTODY FEE", FeeClass::Custody)]
+    #[case("Monthly safekeeping charge", FeeClass::Custody)]
+    #[case("Comisión de administración", FeeClass::Custody)]
+    #[case("SECURITIES ADMINISTRATION", FeeClass::Custody)]
+    #[case("Comisión de depósito de valores", FeeClass::Custody)]
+    // The depósito service on the DGT's reading, but not words art. 26.1.a uses.
+    #[case("Dividend fee", FeeClass::CustodyAdjacent)]
+    #[case("Corporate action fee", FeeClass::CustodyAdjacent)]
+    // Costs of acquiring or transmitting: they adjust the values instead.
+    #[case("Commission Adjustments", FeeClass::ValueAdjustment)]
+    #[case("SEC Fee", FeeClass::ValueAdjustment)]
+    #[case("UK stamp duty", FeeClass::ValueAdjustment)]
+    // Excluded by name, and management wins over any administration wording beside it.
+    #[case("Discretionary portfolio management fee", FeeClass::NonDeductible)]
+    #[case("Performance fee", FeeClass::NonDeductible)]
+    #[case("Portfolio management and administration fee", FeeClass::NonDeductible)]
+    // Outside the deposit function.
+    #[case("US Market Data Subscription", FeeClass::NonDeductible)]
+    #[case("Wire transfer fee", FeeClass::NonDeductible)]
+    // No doctrine either way.
+    #[case("Monthly Minimum Activity Fee", FeeClass::Unsettled)]
+    #[case("Account maintenance fee", FeeClass::Unsettled)]
+    #[case("Currency conversion fee", FeeClass::Unsettled)]
+    #[case("Traspaso de valores a otra entidad", FeeClass::Unsettled)]
+    // Recognised by nobody: reported, never deducted.
+    #[case("ADR FEE", FeeClass::NonDeductible)]
+    fn fees_are_classified_by_dgt_doctrine(#[case] description: &str, #[case] class: FeeClass) {
+        assert_eq!(classify_fee(description).class, class, "{description}");
     }
 }

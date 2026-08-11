@@ -1130,6 +1130,7 @@ mod tests {
                         description: "CUSTODY FEE".to_string(),
                         amount_eur: dec!(45),
                         deductible: false,
+                        review: None,
                         notes: Some("Informational".to_string()),
                     },
                 )
@@ -1356,6 +1357,7 @@ mod tests {
             description: "CUSTODY FEE".to_string(),
             amount_eur: dec!(45),
             deductible,
+            review: None,
             notes: None,
         };
 
@@ -1474,6 +1476,7 @@ mod tests {
             description: "CUSTODY FEE".to_string(),
             amount_eur: dec!(800),
             deductible: true,
+            review: None,
             notes: None,
         });
         let mut gain = capital_gain();

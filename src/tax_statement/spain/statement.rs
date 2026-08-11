@@ -224,6 +224,9 @@ pub struct FeeEntry {
     /// custody and administration fees (LIRPF art. 26.1.a), Gipuzkoa allows nothing (NF 3/2014
     /// art. 39 is a closed list that does not reach securities income).
     pub deductible: bool,
+    /// The sentence every surface reports an unsettled fee type with, so the console, the log and
+    /// the CSV note cannot drift apart. `None` for every type the doctrine classifies.
+    pub review: Option<String>,
     pub notes: Option<String>,
 }
 

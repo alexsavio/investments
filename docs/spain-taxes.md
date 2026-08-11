@@ -481,10 +481,37 @@ This is the sharpest split between the regimes.
   negocios o minas, and subarrendamientos. Confirmed by the Diputación Foral's own Renta manual,
   ch. 4 §4.5.
 
-A broker statement carries only a free-text description, so the tool matches on keywords (custody,
-safekeeping, administration, custodia, administración, administracion). An unrecognised fee is
-**reported but not deducted** — that overstates tax rather than understating it. Trading commissions are not affected
-either way: they are already inside the FIFO cost basis.
+A broker statement carries only a free-text description, so the tool matches on it. Under Común each
+type is treated as the DGT classifies it:
+
+| Fee type | Treatment | Authority |
+|---|---|---|
+| Custody, safekeeping, depósito, administración de valores | **Deducted** from RCM | LIRPF art. 26.1.a; DGT V2117-19 |
+| Dividend collection, coupon handling, corporate-event handling | **Deducted** (medium confidence: the DGT reads them into the depósito service, the article does not name them) | DGT V2117-19 |
+| Trading commissions, exchange / SEC / FINRA / canon / stamp / FTT pass-throughs | Not an art. 26 expense — they adjust the acquisition and transmission values, which the per-trade figures already do | DGT V2629-13 |
+| Management, advisory, performance / success fees | **Not deductible**, excluded by name | LIRPF art. 26.1.a; DGT V1047-16 |
+| Market data, research, quotes | **Not deductible**: not part of the deposit function | Consulta 03-04-1998; AEAT Manual cap. 5 |
+| Wire / withdrawal / SEPA, current-account fees | **Not deductible**: moving cash is not a cost of holding securities | Consulta 03-04-1998 |
+| Inactivity, minimum-activity, maintenance, connectivity | **Not deducted, and flagged**: no doctrine either way | — |
+| Standalone currency-conversion fees | **Not deducted, and flagged** | — |
+| Securities transfer-out (traspaso) fees | **Not deducted, and flagged** | — |
+
+An unrecognised description is **reported but not deducted** — that overstates tax rather than
+understating it. The three flagged types get an explicit warning on the console, in the log and in
+the fee row's `notes`:
+
+```text
+€27.00 of inactivity, minimum-activity or maintenance fee on 2026-09-15 is NOT deducted from the
+savings base: no DGT doctrine settles whether it is a gasto de administración y depósito under
+LIRPF art. 26.1.a. …
+```
+
+**A foreign broker charging the fee does not change the answer.** No consulta is on point, but the
+statutory wording is not territorially limited and AEAT practice accepts the deduction; treat that as
+medium confidence.
+
+None of this applies under Gipuzkoa, where art. 39 allows nothing whatever the type is: every fee row
+is informational there, and no type can raise an open question.
 
 ### Interest paid on a margin loan
 
