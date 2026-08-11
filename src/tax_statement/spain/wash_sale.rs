@@ -10,6 +10,14 @@
 //! Out of scope, both deliberately: art. 43.h (unlisted securities, one-year window) and art. 43.i
 //! (fungible crypto). Both need a different window and neither is reachable from an IB statement
 //! the tool supports.
+// TODO(verify): which of the two windows a US-listed share falls under. The two-month limb is
+// written for securities "admitidos a negociación en alguno de los mercados regulados de valores
+// definidos en la Directiva 2014/65/UE"; that directive defines a regulated market as an EEA venue,
+// so a literal reading puts NYSE and Nasdaq under the one-**year** limb instead. Practice and the
+// AEAT manual treat equivalent third-country markets as covered, and no consulta reachable settles
+// it. The tool applies **two months to every instrument in the statement**, which is the shorter
+// window and therefore defers less; a filer holding US lines who wants the conservative reading has
+// to widen it by hand.
 
 use std::collections::BTreeMap;
 

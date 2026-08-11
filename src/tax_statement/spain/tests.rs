@@ -609,6 +609,28 @@ fn the_treaty_limb_is_capped_per_payment_not_across_payers() {
     assert_eq!(spain.net_tax_due, dec!(230));
 }
 
+/// The anti-abuse clause tests **homogeneity**, not ticker equality. A renamed line can sit under
+/// both its old and its new ticker in one statement, and matching the raw string lets the buy and
+/// the sell hide from each other under the two names.
+///
+/// Fixture: an old `FB` line still holds 10 shares and collects the dividend, while the buy-then-sell
+/// straddling the payment date is booked under `META`. Both carry ISIN US30303M1027, so they are the
+/// same securities and the exemption is lost.
+#[test]
+fn the_dividend_anti_abuse_clause_matches_on_the_homogeneity_key() {
+    let spain = run_pipeline("dividend_homogeneity", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert_eq!(spain.dividends.len(), 1);
+    let dividend = &spain.dividends[0];
+    assert_eq!(dividend.symbol, "FB");
+    assert_eq!(dividend.gross_eur, dec!(450));
+    assert!(!dividend.exemption_eligible);
+    assert!(dividend.notes.as_deref().unwrap().contains("art. 9.24"));
+
+    assert_eq!(spain.total_dividend_exemption, dec!(0));
+    assert_eq!(spain.rcm_net, dec!(450));
+}
+
 /// Territorio Común has no dividend exemption: Ley 26/2014 repealed LIRPF art. 7.y with effect from
 /// 2015, so the same dividends are taxed in full.
 #[test]

@@ -949,11 +949,17 @@ fn process_dividends(
 /// Applied per instrument rather than per share: the statute scopes it to the dividends coming from
 /// those particular securities, but a broker statement cannot say which shares a payment came from.
 /// Excluding the whole payment overstates tax rather than understating it.
+///
+/// "Valores homogéneos" is the same test the deferral rule uses, so it goes through the same
+/// identity: a renamed line, or two lines of one issue under different tickers, would otherwise slip
+/// past a raw string comparison.
 fn dividend_is_washed(broker_statement: &BrokerStatement, symbol: &str, date: Date) -> bool {
+    let instruments = &broker_statement.instrument_info;
+    let key = wash_sale::instrument_key(instruments, symbol);
     let (start, end) = wash_sale::window(date);
 
     let acquired_before = broker_statement.stock_buys.iter().any(|buy| {
-        buy.symbol == symbol
+        wash_sale::instrument_key(instruments, &buy.symbol) == key
             && wash_sale::is_acquisition(buy)
             && buy.conclusion_time.date >= start
             && buy.conclusion_time.date < date
@@ -961,7 +967,7 @@ fn dividend_is_washed(broker_statement: &BrokerStatement, symbol: &str, date: Da
 
     acquired_before
         && broker_statement.stock_sells.iter().any(|sell| {
-            sell.symbol == symbol
+            wash_sale::instrument_key(instruments, &sell.symbol) == key
                 && matches!(sell.type_, StockSellType::Trade { .. })
                 && sell.conclusion_time.date > date
                 && sell.conclusion_time.date <= end

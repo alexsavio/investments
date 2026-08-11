@@ -161,7 +161,9 @@ How the tool applies it:
 
 1. Every disposal in the statement is replayed in date order, across all years — a deferral created
    in one year is released in another.
-2. Homogeneous means **same ISIN** (falling back to the ticker when the statement carries none).
+2. Homogeneous means **same ISIN** (falling back to the ticker when the statement carries none). The
+   same test gates the Gipuzkoa dividend exemption's anti-abuse clause, so a renamed line cannot slip
+   past either rule under its other ticker.
 3. The window is two **calendar** months either side, both ends inclusive, so a 31 March sale reaches
    back to 31 January and forward to 31 May.
 4. Each acquired share blocks at most one sold share. The deferral is the loss scaled by the matched
@@ -181,6 +183,18 @@ How the tool applies it:
    on. V3282-18 gives no allocation rule for a mixed disposal; attributing the repurchase to the
    blocked shares first is the conservative reading — it re-attaches more and integrates less, so it
    postpones a deduction rather than granting one early.
+
+**Not modelled: the one-year window.** Both statutes carry a fourth limb for securities *not*
+admitted to trading on a regulated market as defined in Directive 2014/65/UE — there the window is
+one **year** either side, not two months. The tool does not implement it, and applies two months to
+every instrument in the statement.
+
+That matters more than it looks. Directive 2014/65 defines a regulated market as an EEA venue, so on
+a literal reading NYSE and Nasdaq lines fall under the one-year limb. Practice and the AEAT manual
+treat equivalent third-country markets as covered by the two-month limb, but no consulta reachable
+settles it, and two months is the shorter window — it defers less loss, so the tool's reading is the
+one that grants the deduction earlier. A filer who wants the conservative treatment for US lines has
+to widen the window by hand.
 
 Worked example — sell 100 shares on 2026-03-10 at a €900 loss, buy 40 back on 2026-04-20:
 
