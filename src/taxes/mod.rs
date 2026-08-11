@@ -87,6 +87,14 @@ pub struct SpanishTaxConfig {
 }
 
 impl SpanishTaxConfig {
+    /// The savings-base scale in force for this filer's regime in `year`.
+    ///
+    /// Errors for a year the tool ships no scale for: a savings scale is set by statute each year,
+    /// so extrapolating one would file real money under an invented rate.
+    pub fn savings_scale(&self, year: i32) -> GenericResult<spain::scale::SavingsScale> {
+        spain::scale::SavingsScale::for_year(self.regime, year)
+    }
+
     /// The two savings-base loss ledgers as of `filing_year`, validated against the 4-year
     /// carry-forward window.
     ///
@@ -582,6 +590,39 @@ mod tests {
         assert!(error.contains("taxes.spain"), "{error}");
         assert!(error.contains("gipuzkoa"), "{error}");
         assert!(error.contains("comun"), "{error}");
+    }
+
+    /// The scale follows the configured regime, so the same base is taxed differently under each.
+    #[test]
+    fn spanish_savings_scale_follows_the_regime_and_year() {
+        let config = |regime: &str| -> TaxConfig {
+            serde_yaml::from_str(&format!("spain:\n  regime: {regime}\n")).unwrap()
+        };
+
+        let gipuzkoa = config("gipuzkoa");
+        let comun = config("comun");
+
+        // 2026: Gipuzkoa 7,500×19% + 2,500×20% = 1,925; state 6,000×19% + 4,000×21% = 1,980.
+        assert_eq!(
+            gipuzkoa
+                .spanish()
+                .unwrap()
+                .savings_scale(2026)
+                .unwrap()
+                .tax(dec!(10000)),
+            dec!(1925)
+        );
+        assert_eq!(
+            comun
+                .spanish()
+                .unwrap()
+                .savings_scale(2026)
+                .unwrap()
+                .tax(dec!(10000)),
+            dec!(1980)
+        );
+        // A year outside the shipped range errors rather than extrapolating.
+        assert!(gipuzkoa.spanish().unwrap().savings_scale(2027).is_err());
     }
 
     /// The window is relative to the year being filed, so the same config is valid for one return

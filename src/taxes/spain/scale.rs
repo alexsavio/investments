@@ -94,6 +94,54 @@ impl SavingsScale {
     pub fn brackets(&self) -> &[(Decimal, Decimal)] {
         &self.brackets
     }
+
+    /// Cuota íntegra del ahorro for a savings base.
+    ///
+    /// Full precision throughout: no slice is rounded, and the total is not rounded either.
+    /// Rounding belongs at the reporting boundary, once per figure. Rounding here would bias
+    /// [`average_rate`](Self::average_rate), which caps the double-taxation credit.
+    ///
+    /// A non-positive base is untaxed. Compensation already floors the base at zero, so this is a
+    /// belt-and-braces guard: a negative "tax" would be netted against real liability elsewhere.
+    pub fn tax(&self, base: Decimal) -> Decimal {
+        if base <= Decimal::ZERO {
+            return Decimal::ZERO;
+        }
+
+        let mut tax = Decimal::ZERO;
+
+        for (index, &(floor, rate)) in self.brackets.iter().enumerate() {
+            if base <= floor {
+                break;
+            }
+
+            // The bracket runs to the next floor, or to infinity for the last one.
+            let upper = match self.brackets.get(index + 1) {
+                Some(&(next_floor, _)) => std::cmp::min(base, next_floor),
+                None => base,
+            };
+
+            tax += (upper - floor) * rate;
+        }
+
+        tax
+    }
+
+    /// Average effective savings rate, `tax / base`, zero for a non-positive base.
+    ///
+    /// This is the "tipo medio de gravamen del ahorro" the double-taxation credit is capped at
+    /// (NF 3/2014 art. 91.b, art. 76.2 / LIRPF art. 80.1.b, art. 80.2). Kept at full precision here;
+    /// the statutes express it to two decimals, which is a presentation rule.
+    // TODO(verify): NF 3/2014 art. 76.2 and LIRPF art. 80.2 both say the rate is expressed with two
+    // decimals. Whether the credit cap must be computed from the *rounded* rate or from the exact
+    // quotient is not stated in either text; the exact quotient is used, which can differ by cents
+    // on a large foreign-taxed base.
+    pub fn average_rate(&self, base: Decimal) -> Decimal {
+        if base <= Decimal::ZERO {
+            return Decimal::ZERO;
+        }
+        self.tax(base) / base
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +216,132 @@ mod tests {
             assert!(pair[0].0 < pair[1].0, "bracket floors must ascend");
         }
         assert!(brackets.iter().all(|&(_, rate)| rate > dec!(0)));
+    }
+
+    /// The law publishes its own cumulative cuota íntegra at every bracket threshold, so these are
+    /// not hand-derived expectations but the statute's own numbers. If `tax()` reproduces all nine,
+    /// the bracket table and the slice arithmetic are both right.
+    #[rstest]
+    #[case("7500", "1425")]
+    #[case("15000", "2925")]
+    #[case("30000", "6225")]
+    #[case("50000", "11025")]
+    #[case("90000", "21225")]
+    #[case("120000", "29025")]
+    #[case("240000", "60825")]
+    #[case("300000", "77025")]
+    // Above the last threshold there is no published cuota; 77,025 + 100,000 × 28%.
+    #[case("400000", "105025")]
+    // Mid-bracket: 7,500 × 19% + 2,500 × 20%.
+    #[case("10000", "1925")]
+    fn gipuzkoa_2026_reproduces_the_published_cuota_integra(
+        #[case] base: &str,
+        #[case] expected: &str,
+    ) {
+        let scale = SavingsScale::for_year(SpanishTaxRegime::Gipuzkoa, 2026).unwrap();
+        assert_eq!(
+            scale.tax(base.parse().unwrap()),
+            expected.parse::<Decimal>().unwrap()
+        );
+    }
+
+    #[rstest]
+    #[case("2500", "500")]
+    #[case("10000", "2075")]
+    #[case("15000", "3175")]
+    #[case("30000", "6625")]
+    #[case("50000", "11625")]
+    fn gipuzkoa_pre_reform_cuota_integra(#[case] base: &str, #[case] expected: &str) {
+        for year in [2024, 2025] {
+            let scale = SavingsScale::for_year(SpanishTaxRegime::Gipuzkoa, year).unwrap();
+            assert_eq!(
+                scale.tax(base.parse().unwrap()),
+                expected.parse::<Decimal>().unwrap(),
+                "year {year}"
+            );
+        }
+    }
+
+    #[rstest]
+    #[case("6000", "1140")]
+    #[case("50000", "10380")]
+    #[case("200000", "44880")]
+    #[case("300000", "71880")]
+    #[case("400000", "101880")]
+    fn comun_2025_and_2026_cuota_integra(#[case] base: &str, #[case] expected: &str) {
+        for year in [2025, 2026] {
+            let scale = SavingsScale::for_year(SpanishTaxRegime::Comun, year).unwrap();
+            assert_eq!(
+                scale.tax(base.parse().unwrap()),
+                expected.parse::<Decimal>().unwrap(),
+                "year {year}"
+            );
+        }
+    }
+
+    /// The 28%-vs-30% top bracket is the only place the state scale moves inside the shipped range,
+    /// so it gets its own vector: below 300,000 the two years agree to the cent.
+    #[test]
+    fn comun_2024_differs_from_2025_only_above_the_top_threshold() {
+        let y2024 = SavingsScale::for_year(SpanishTaxRegime::Comun, 2024).unwrap();
+        let y2025 = SavingsScale::for_year(SpanishTaxRegime::Comun, 2025).unwrap();
+
+        assert_eq!(y2024.tax(dec!(300000)), dec!(71880));
+        assert_eq!(y2024.tax(dec!(400000)), dec!(99880));
+        assert_eq!(y2025.tax(dec!(400000)), dec!(101880));
+        // The 2,000 gap is exactly 100,000 × (30% − 28%).
+        assert_eq!(y2025.tax(dec!(400000)) - y2024.tax(dec!(400000)), dec!(2000));
+    }
+
+    /// A savings base cannot be negative for tax purposes: compensation floors it at zero before
+    /// the scale ever sees it, and a negative base must never produce a negative "tax" that would
+    /// be netted off against real liability elsewhere.
+    #[rstest]
+    #[case("0")]
+    #[case("-100")]
+    #[case("-1000000")]
+    fn non_positive_base_is_untaxed(#[case] base: &str) {
+        for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+            let scale = SavingsScale::for_year(regime, 2026).unwrap();
+            assert_eq!(scale.tax(base.parse().unwrap()), dec!(0));
+            assert_eq!(scale.average_rate(base.parse().unwrap()), dec!(0));
+        }
+    }
+
+    /// The scale must not round per slice. `ProgressiveTaxRate` does (correctly, for its own use),
+    /// which is why this type exists separately: the double-taxation credit is capped by the
+    /// average rate, and rounding each slice would bias that cap.
+    #[test]
+    fn slices_are_not_rounded() {
+        let scale = SavingsScale::for_year(SpanishTaxRegime::Gipuzkoa, 2026).unwrap();
+        // 7,500 × 19% + 0.555 × 20% = 1425 + 0.111.
+        assert_eq!(scale.tax(dec!(7500.555)), dec!(1425.111));
+        // A sub-cent base still produces a sub-cent tax rather than collapsing to zero.
+        assert_eq!(scale.tax(dec!(0.001)), dec!(0.00019));
+    }
+
+    /// The average rate is what caps the double-taxation credit (NF art. 91.b / LIRPF art. 80.1.b),
+    /// so it is the marginal rate only in the first bracket and strictly below it thereafter.
+    #[test]
+    fn average_rate_is_tax_over_base() {
+        let scale = SavingsScale::for_year(SpanishTaxRegime::Gipuzkoa, 2026).unwrap();
+
+        // 1,925 / 10,000.
+        assert_eq!(scale.average_rate(dec!(10000)), dec!(0.1925));
+        // Inside the first bracket the average rate is the marginal rate.
+        assert_eq!(scale.average_rate(dec!(5000)), dec!(0.19));
+        // At the top the average stays well under the 28% marginal rate.
+        assert_eq!(scale.average_rate(dec!(400000)), dec!(105025) / dec!(400000));
+        assert!(scale.average_rate(dec!(400000)) < dec!(0.28));
+    }
+
+    /// Guards the fixture the statement tests are pinned to: the Gipuzkoa 2026 savings base of
+    /// €19,692 produced by the `fifo` fixture.
+    #[test]
+    fn gipuzkoa_2026_fixture_base() {
+        let scale = SavingsScale::for_year(SpanishTaxRegime::Gipuzkoa, 2026).unwrap();
+        // 1,425 + 1,500 + 4,692 × 22%.
+        assert_eq!(scale.tax(dec!(19692)), dec!(3957.24));
     }
 
     /// An unshipped year errors and the message names the supported range, so the user is told how
