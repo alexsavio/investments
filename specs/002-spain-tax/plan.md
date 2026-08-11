@@ -241,9 +241,11 @@ Explicitly **skipped** (do not do): moving German `loss_carryforward.rs`; any `T
 
 ### Phase 4 — Territorio Común
 
-- **S17 — Regime end-to-end.** Status: TODO — `regime: comun` (coefficient 1, state scales); rerun `fifo`/`coefficients`/`income` fixtures under Común.
+- **S17 — Regime end-to-end.** Status: ✅ Done (`3f061239`)
+  Tests only: the regime switch itself landed in S8/S9 and the fixtures already ran under both regimes, but nothing asserted the **state scale** end to end — every Común assertion sat in the first bracket, where the two regimes happen to agree at 19%. Three tests close that: `fifo` under Común pays €4,605 (1,140 + 16,500 × 21%) against Gipuzkoa's €3,957.24 on the same trades, `income` under Común carries the credit through the state scale to €44.55 net, and `loss` under Común carries €9,000 forward unactualized. Note the `coefficients` fixture the task text names never existed — S8 asserted the `fifo` fixture under both regimes instead, because it is regime-independent by construction. — `regime: comun` (coefficient 1, state scales); rerun `fifo`/`coefficients`/`income` fixtures under Común.
   Commit: `feat(spain-tax): support the Territorio Común regime`
-- **S18 — Cross-offset.** Status: TODO — 25% rule in `compensate_savings_base`; `cross_offset` fixture asserting both directions and the Gipuzkoa run showing no crossing.
+- **S18 — Cross-offset.** Status: ✅ Done (`db4d832a`)
+  Two fixtures rather than one, because the two directions cannot coexist in a single year: a group is either positive or negative. `cross_offset` drives ganancias → RCM (a €9,000 loss against a €7,200 dividend: Común crosses €1,800, Gipuzkoa crosses nothing and taxes €7,200); `cross_offset_rcm` drives RCM → ganancias (a €9,000 gain against a €3,600 custody fee: Común crosses €2,250, while under Gipuzkoa the fee is not deductible at all so RCM is zero and there is nothing to cross). Both acquisitions sit outside their sale's window, so no deferral interferes and the cross-offset is the only thing separating the runs. The engine itself was already written and unit-tested in S11. — 25% rule in `compensate_savings_base`; `cross_offset` fixture asserting both directions and the Gipuzkoa run showing no crossing.
   Commit: `feat(spain-tax): apply the 25% cross-group offset for Territorio Común`
 
 ### Phase 5 — Docs & polish
