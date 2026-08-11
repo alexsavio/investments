@@ -1,5 +1,7 @@
 //! Savings-base tax scales (escala de la base liquidable del ahorro).
 
+use rust_decimal::RoundingStrategy;
+
 use crate::core::GenericResult;
 use crate::types::Decimal;
 
@@ -130,17 +132,18 @@ impl SavingsScale {
     /// Average effective savings rate, `tax / base`, zero for a non-positive base.
     ///
     /// This is the "tipo medio de gravamen del ahorro" the double-taxation credit is capped at
-    /// (NF 3/2014 art. 91.b, art. 76.2 / LIRPF art. 80.1.b, art. 80.2). Kept at full precision here;
-    /// the statutes express it to two decimals, which is a presentation rule.
-    // TODO(verify): NF 3/2014 art. 76.2 and LIRPF art. 80.2 both say the rate is expressed with two
-    // decimals. Whether the credit cap must be computed from the *rounded* rate or from the exact
-    // quotient is not stated in either text; the exact quotient is used, which can differ by cents
-    // on a large foreign-taxed base.
+    /// (NF 3/2014 art. 91.b, art. 76.2 / LIRPF art. 80.1.b, art. 80.2).
+    ///
+    /// Both statutes require it "expresado con dos decimales" — two decimals **as a percentage**,
+    /// so four as a fraction. That is operative, not presentation: the AEAT Manual Práctico de
+    /// Renta cap. 18 works its own example from the rounded rate (16,60% × 6.000 € = 996 €), so the
+    /// rounding happens here, before the cap is multiplied out.
     pub fn average_rate(&self, base: Decimal) -> Decimal {
         if base <= Decimal::ZERO {
             return Decimal::ZERO;
         }
-        self.tax(base) / base
+        (self.tax(base) / base)
+            .round_dp_with_strategy(4, RoundingStrategy::MidpointAwayFromZero)
     }
 }
 
@@ -326,13 +329,29 @@ mod tests {
     fn average_rate_is_tax_over_base() {
         let scale = SavingsScale::for_year(SpanishTaxRegime::Gipuzkoa, 2026).unwrap();
 
-        // 1,925 / 10,000.
+        // 1,925 / 10,000 = 19.25%, already exact at two decimals.
         assert_eq!(scale.average_rate(dec!(10000)), dec!(0.1925));
         // Inside the first bracket the average rate is the marginal rate.
         assert_eq!(scale.average_rate(dec!(5000)), dec!(0.19));
         // At the top the average stays well under the 28% marginal rate.
-        assert_eq!(scale.average_rate(dec!(400000)), dec!(105025) / dec!(400000));
         assert!(scale.average_rate(dec!(400000)) < dec!(0.28));
+    }
+
+    /// NF 3/2014 art. 76.2 and LIRPF art. 80.2 both require the tipo medio to be "expresado con dos
+    /// decimales" — two decimals **as a percentage**, i.e. four as a fraction. It is an operative
+    /// rule, not presentation: the credit cap is computed from the rounded rate, so the tool has to
+    /// round before multiplying or it credits cents the return does not allow.
+    #[rstest]
+    // 3,957.24 / 19,692 = 20.095673…% → 20.10%.
+    #[case(dec!(19692), dec!(0.2010))]
+    // 105,025 / 400,000 = 26.25625% → 26.26%.
+    #[case(dec!(400000), dec!(0.2626))]
+    // Already exact at two decimals: rounding must not move it.
+    #[case(dec!(10000), dec!(0.1925))]
+    #[case(dec!(5000), dec!(0.19))]
+    fn average_rate_is_expressed_with_two_decimals(#[case] base: Decimal, #[case] expected: Decimal) {
+        let scale = SavingsScale::for_year(SpanishTaxRegime::Gipuzkoa, 2026).unwrap();
+        assert_eq!(scale.average_rate(base), expected);
     }
 
     /// Guards the fixture the statement tests are pinned to: the Gipuzkoa 2026 savings base of

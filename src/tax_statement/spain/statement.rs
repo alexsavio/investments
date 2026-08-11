@@ -232,6 +232,11 @@ pub struct SpanishTaxStatement {
     pub rcm_expired: Decimal,
     pub gyp_expired: Decimal,
 
+    /// Gross foreign-source income the source state withheld on; the treaty limb's base.
+    pub foreign_gross_income: Decimal,
+    /// The same income net of attributable expenses and of whatever compensation removed from the
+    /// group it sits in; the average-rate limb's base (TEAC RG 00/08643/2023).
+    pub foreign_taxable_income: Decimal,
     pub total_foreign_tax_credit: Decimal,
 
     pub savings_base: Decimal,
@@ -277,6 +282,8 @@ impl SpanishTaxStatement {
             prior_cross_offset_gyp_to_rcm: Decimal::ZERO,
             rcm_expired: Decimal::ZERO,
             gyp_expired: Decimal::ZERO,
+            foreign_gross_income: Decimal::ZERO,
+            foreign_taxable_income: Decimal::ZERO,
             total_foreign_tax_credit: Decimal::ZERO,
             capital_gains: Vec::new(),
             dividends: Vec::new(),
@@ -414,9 +421,13 @@ impl SpanishTaxStatement {
         // The credit is computed once on the year's aggregates. Its second limb is the average
         // savings rate, which does not exist until the whole base is known, so the per-row
         // `treaty_capped_credit` figures are informational only.
+        self.foreign_gross_income = self.dividends.iter().map(|entry| entry.gross_eur).sum();
+        self.foreign_taxable_income = self.foreign_income_reaching_the_base();
+
         self.total_foreign_tax_credit = double_taxation_credit(
             self.total_foreign_withholding,
-            self.foreign_taxed_income(),
+            self.foreign_gross_income,
+            self.foreign_taxable_income,
             self.treaty_rate,
             self.average_savings_rate,
         );
@@ -427,18 +438,46 @@ impl SpanishTaxStatement {
         );
     }
 
-    /// Foreign-source income the double-taxation credit is measured against.
-    // TODO(verify): only dividends carry foreign withholding in the supported statements, so this
-    // is their gross sum. NF 3/2014 art. 91.b applies the average rate to "la renta obtenida en el
-    // extranjero" and LIRPF art. 80.1.b to "la parte de base liquidable gravada en el extranjero";
-    // whether that is gross or net of attributable expenses is not settled by either text.
-    fn foreign_taxed_income(&self) -> Decimal {
-        self.dividends.iter().map(|entry| entry.gross_eur).sum()
+    /// Foreign-source income as it actually reaches the base liquidable.
+    ///
+    /// TEAC RG 00/08643/2023 (20-10-2025, unificación de criterio, binding per LGT art. 239.8):
+    /// the average rate applies to **rentas netas**, the foreign income "una vez deducidos los
+    /// gastos y compensadas las rentas". Two reductions follow, in that order:
+    ///
+    /// 1. deductible expenses, pro-rated by the foreign share of the RCM income they were incurred
+    ///    against (Común only — Gipuzkoa deducts nothing, so this is a no-op there);
+    /// 2. whatever compensation removed from the RCM group, pro-rated the same way. A group the
+    ///    prior-year balances wiped carries no foreign income into the base at all, so there is
+    ///    nothing left for a credit to attach to.
+    ///
+    /// Only dividends carry foreign withholding in the statements this tool supports, so the group
+    /// in question is always RCM.
+    fn foreign_income_reaching_the_base(&self) -> Decimal {
+        let gross = self.foreign_gross_income;
+        if gross <= Decimal::ZERO {
+            return Decimal::ZERO;
+        }
+
+        let rcm_gross = self.total_dividend_income + self.total_interest_income;
+        let net = if rcm_gross > Decimal::ZERO {
+            gross - self.total_deductible_fees * gross / rcm_gross
+        } else {
+            gross
+        };
+
+        if self.rcm_net <= Decimal::ZERO {
+            return Decimal::ZERO;
+        }
+
+        let surviving = self.rcm_taxable / self.rcm_net;
+        std::cmp::max(Decimal::ZERO, net * surviving)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn statement() -> SpanishTaxStatement {
@@ -526,6 +565,60 @@ mod tests {
         // Base falls to 6,000, entirely in the 19% bracket.
         assert_eq!(taxes[1], dec!(1140));
         assert_eq!(taxes[1] - taxes[0], dec!(-785));
+    }
+
+    /// Under Territorio Común a prior-year RCM balance that wipes the group the foreign dividends
+    /// sit in leaves nothing for the credit to attach to — even though the year still pays tax on
+    /// its ganancias, so the average rate is nowhere near zero.
+    ///
+    /// TEAC RG 00/08643/2023: the average-rate limb takes the income "una vez deducidos los gastos
+    /// y compensadas las rentas". Measuring it on the gross would credit €135 against foreign
+    /// income the Spanish return never taxed.
+    #[test]
+    fn compensation_that_wipes_the_group_leaves_no_credit() {
+        let regime = SpanishTaxRegime::Comun;
+        let prior_rcm = LossLedger::from_config(
+            &BTreeMap::from([(2024, dec!(5000))]),
+            2026,
+            "rcm",
+        )
+        .unwrap();
+
+        let mut spain = SpanishTaxStatement::new(
+            2026,
+            regime,
+            SavingsScale::for_year(regime, 2026).unwrap(),
+            prior_rcm,
+            LossLedger::default(),
+            dec!(0.25),
+            dec!(0.15),
+        );
+
+        spain.dividends.push(DividendEntry {
+            symbol: "AAPL".to_string(),
+            isin: String::new(),
+            description: String::new(),
+            date: Date::from_ymd_opt(2026, 5, 20).unwrap(),
+            gross_eur: dec!(900),
+            withheld_eur: dec!(270),
+            treaty_capped_credit: dec!(135),
+        });
+        spain.capital_gains.push(disposal(dec!(10000)));
+        spain.calculate_totals();
+
+        // The whole €900 of RCM is absorbed, and the leftover crosses into the ganancias group up
+        // to 25% of it.
+        assert_eq!(spain.rcm_taxable, dec!(0));
+        assert_eq!(spain.gyp_taxable, dec!(7500));
+        assert_eq!(spain.savings_base, dec!(7500));
+        // State scale: 6,000 × 19% + 1,500 × 21% = 1,455, so the average rate is 19.40%.
+        assert_eq!(spain.savings_quota, dec!(1455));
+        assert_eq!(spain.average_savings_rate, dec!(0.194));
+
+        assert_eq!(spain.foreign_gross_income, dec!(900));
+        assert_eq!(spain.foreign_taxable_income, dec!(0));
+        assert_eq!(spain.total_foreign_tax_credit, dec!(0));
+        assert_eq!(spain.net_tax_due, dec!(1455));
     }
 
     /// Interest paid on a margin loan is reported but never netted off the interest received:

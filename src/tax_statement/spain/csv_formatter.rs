@@ -441,6 +441,12 @@ impl CsvFormatter {
         )?;
         row(
             writer,
+            "SUMMARY_FOREIGN_TAXABLE_INCOME",
+            "Renta neta obtenida en el extranjero integrada en la base (límite del tipo medio)",
+            statement.foreign_taxable_income,
+        )?;
+        row(
+            writer,
             "SUMMARY_FOREIGN_TAX_CREDIT",
             "Deducción por doble imposición internacional",
             statement.total_foreign_tax_credit,

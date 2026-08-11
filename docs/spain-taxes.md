@@ -293,10 +293,29 @@ of the tax actually paid abroad and the **savings average rate** applied to the 
 tool adds a third limb: withholding above the applicable treaty rate is not creditable in Spain at
 all and must be reclaimed from the source state.
 
-US dividend example — gross €1,000, €300 withheld (30%), savings base €10,000 under Gipuzkoa 2026:
+The two limbs measure **different bases**:
+
+- The treaty limb caps what the *source* state may levy, so it runs on the **gross** that state
+  taxed.
+- The rate limb caps the *Spanish* tax on that income, so it runs on the **net that actually reaches
+  the base liquidable**. TEAC resolución RG 00/08643/2023 (20-10-2025, unificación de criterio,
+  binding on the administration per LGT art. 239.8) settles this: the income counts "una vez
+  deducidos los gastos y compensadas las rentas". The tool subtracts deductible expenses pro-rated
+  by the foreign share of RCM income, then whatever compensation removed from the RCM group. A group
+  a prior-year balance wiped carries no foreign income into the base, so the credit is **zero** —
+  even if the year still pays tax on its ganancias. The figure is printed as
+  `SUMMARY_FOREIGN_TAXABLE_INCOME`.
+
+The average rate itself is "expresado con dos decimales" (NF 3/2014 art. 76.2 / LIRPF art. 80.2) —
+two decimals as a *percentage*, four as a fraction — and that is operative, not presentation. The
+AEAT Manual Práctico de Renta cap. 18 works its example from the rounded rate: `16,60% × 6.000 € =
+996 €`. The tool rounds before multiplying.
+
+US dividend example — gross €1,000, €300 withheld (30%), savings base €10,000 under Gipuzkoa 2026,
+nothing deductible and no compensation:
 
 - Treaty limb: `1,000 × 15% = €150`
-- Rate limb: average rate `1,925 / 10,000 = 0.1925`, so `1,000 × 0.1925 = €192.50`
+- Rate limb: average rate `1,925 / 10,000 = 19.25%`, so `1,000 × 0.1925 = €192.50`
 - **Credit: €150.** The other €150 is over-withholding; reclaim it from the IRS with a W-8BEN and
   Form 1040-NR, not through the Spanish return.
 
