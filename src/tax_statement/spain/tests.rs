@@ -519,15 +519,22 @@ fn a_flat_rate_realizes_a_zero_fx_result() {
     assert_eq!(spain.savings_quota, dec!(0));
 }
 
-/// The valores-homogéneos deferral is not implemented, and its absence overstates deductible
-/// losses. Every loss-making instrument must therefore be flagged, so the omission is loud rather
-/// than silent.
+/// The valores-homogéneos deferral is not computed yet, and its absence overstates deductible
+/// losses — so a loss the rule can actually reach must be flagged. Only those: a loss with no
+/// homogeneous acquisition in the ±2-month window is not affected by the rule at all, and flagging
+/// it too would bury the ones that matter.
 #[test]
-fn loss_making_disposals_are_flagged_for_the_unimplemented_wash_sale_rule() {
-    let spain = run_pipeline("loss", 2026, SpanishTaxRegime::Gipuzkoa);
-    assert_eq!(spain.wash_sale_unchecked, vec!["AAPL".to_string()]);
+fn only_losses_with_a_repurchase_in_the_window_are_flagged() {
+    // Sold 2026-03-10 at a loss, bought again 2026-04-20 — inside the +2-month window.
+    let repurchased = run_pipeline("wash_sale_after", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(repurchased.wash_sale_unchecked, vec!["AAPL".to_string()]);
 
-    // A year with only gains has nothing to defer, so nothing is flagged.
+    // The `loss` fixture buys 2025-03-10 and sells 2026-06-10: the window opens on 2026-04-10, so
+    // the acquisition is more than a year outside it and the rule cannot bite.
+    let untouched = run_pipeline("loss", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert!(untouched.wash_sale_unchecked.is_empty());
+
+    // A year with only gains has nothing to defer either.
     let gains = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
     assert!(gains.wash_sale_unchecked.is_empty());
 }

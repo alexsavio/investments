@@ -6,6 +6,7 @@
 mod csv_formatter;
 mod processor;
 mod statement;
+mod wash_sale;
 
 #[cfg(test)]
 mod tests;

@@ -1,5 +1,7 @@
 //! Turns a broker statement into a Spanish tax statement.
 
+use std::collections::BTreeSet;
+
 use chrono::Datelike;
 
 use log::warn;
@@ -16,6 +18,7 @@ use crate::taxes::spain::scale::SavingsScale;
 use crate::taxes::{SpanishTaxConfig, TaxConfig};
 use crate::types::{Date, Decimal};
 
+use super::wash_sale;
 use super::statement::{
     CapitalGainEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry, SpanishLotDetail,
     SpanishTaxStatement,
@@ -116,24 +119,7 @@ fn process_broker_statement(
     let has_fx = process_fx_gains(statement, broker_statement, params, converter)?;
     process_fees(statement, broker_statement, params, converter)?;
 
-    // The valores-homogéneos deferral is not implemented yet, so a loss on a repurchased holding
-    // is currently deducted in full. That overstates the deduction — the dangerous direction — so
-    // say so loudly rather than letting the number pass for a finished one.
-    statement.wash_sale_unchecked = statement
-        .capital_gains
-        .iter()
-        .filter(|entry| entry.fiscal_gain_loss < Decimal::ZERO)
-        .map(|entry| entry.symbol.clone())
-        .collect::<std::collections::BTreeSet<String>>()
-        .into_iter()
-        .collect();
-
-    if !statement.wash_sale_unchecked.is_empty() {
-        warn!(
-            "Losses were realized on {} and the valores-homogéneos rule (NF 3/2014 art. 43.g /              LIRPF art. 33.5.f) is NOT yet applied. If homogeneous securities were acquired within              two months before or after any of those sales, the loss must be deferred and the              figures below overstate the deductible amount. Check those windows by hand.",
-            statement.wash_sale_unchecked.join(", ")
-        );
-    }
+    flag_unchecked_wash_sales(statement, broker_statement);
 
     // Short positions get no automatic treatment; surface them for manual review.
     statement.short_positions = broker_statement
@@ -157,6 +143,49 @@ fn process_broker_statement(
     }
 
     Ok(has_trades || has_dividends || has_interest || has_fx)
+}
+
+/// Name the loss-making disposals the valores-homogéneos rule could bite on.
+///
+/// The deferral itself is not computed yet, so a loss whose shares were repurchased inside the
+/// window is still deducted in full — the direction that **overstates** the deduction. Only losses
+/// where a homogeneous acquisition actually falls in the ±2-month window are named: flagging every
+/// loss would bury the ones that matter under sales the rule cannot reach.
+fn flag_unchecked_wash_sales(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+) {
+    let instruments = &broker_statement.instrument_info;
+    let mut flagged = BTreeSet::new();
+
+    for entry in &statement.capital_gains {
+        if entry.fiscal_gain_loss >= Decimal::ZERO {
+            continue;
+        }
+
+        let key = wash_sale::instrument_key(instruments, &entry.symbol);
+        let repurchased = broker_statement.stock_buys.iter().any(|buy| {
+            wash_sale::is_acquisition(buy)
+                && wash_sale::instrument_key(instruments, &buy.symbol) == key
+                && wash_sale::in_window(entry.sale_date, buy.conclusion_time.date)
+        });
+
+        if repurchased {
+            flagged.insert(entry.symbol.clone());
+        }
+    }
+
+    statement.wash_sale_unchecked = flagged.into_iter().collect();
+
+    if !statement.wash_sale_unchecked.is_empty() {
+        warn!(
+            "Homogeneous securities were acquired within two months of a loss-making sale of {}, \
+             and the valores-homogéneos rule (NF 3/2014 art. 43.g / LIRPF art. 33.5.f) is NOT yet \
+             applied. Those losses must be deferred, so the figures below overstate the deductible \
+             amount. Work them out by hand.",
+            statement.wash_sale_unchecked.join(", ")
+        );
+    }
 }
 
 /// Turn each qualifying sale into a capital-gain entry with per-lot actualization.
