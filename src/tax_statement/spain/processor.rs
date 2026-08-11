@@ -1,6 +1,6 @@
 //! Turns a broker statement into a Spanish tax statement.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::Datelike;
 
@@ -15,13 +15,13 @@ use crate::currency::converter::CurrencyConverter;
 use crate::tax_statement::fx_fifo::compute_fx_fifo;
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::spain::scale::SavingsScale;
-use crate::taxes::{SpanishTaxConfig, TaxConfig};
+use crate::taxes::{DeferredLossConfig, SpanishTaxConfig, TaxConfig};
 use crate::types::{Date, Decimal};
 
 use super::wash_sale;
 use super::statement::{
     CapitalGainEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry, SpanishLotDetail,
-    SpanishTaxStatement,
+    SpanishTaxStatement, WashSaleReintegrationEntry, WashSaleWindowGap,
 };
 
 /// Everything about the filer's regime and tax year that the per-income processors need, resolved
@@ -193,8 +193,17 @@ fn process_trades(
             trade, broker_statement, &country, params, converter, &mut unpriced_years)?);
     }
 
-    let replay = apply_wash_sale_rule(&mut sales, broker_statement);
+    let replay = apply_wash_sale_rule(&mut sales, broker_statement, params)?;
     statement.wash_sale_unpriced_years = unpriced_years.into_iter().collect();
+    statement.deferred_losses_next = replay.carry_out;
+
+    // Only the filing year's releases are this year's income; the rest belong to the returns their
+    // disposals fall in.
+    statement.wash_sale_reintegrations = replay
+        .reintegrations
+        .into_iter()
+        .filter(|entry| entry.date.year() == params.year)
+        .collect();
 
     let mut has_income = false;
 
@@ -229,33 +238,46 @@ fn process_trades(
         });
     }
 
-    // Held back until the reintegration entries land, so a released amount is omitted from the base
-    // rather than double-counted. Omitting it overstates tax, the safe direction — but say so.
-    if replay.reintegrated > Decimal::ZERO {
-        let origins = replay
-            .reintegrated_origins
-            .iter()
-            .map(Date::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        warn!(
-            "€{} of losses deferred by the sales of {origins} were released when the shares \
-             blocking them were disposed of, and are NOT yet integrated into the savings base. The \
-             figures below therefore overstate the tax.",
-            replay.reintegrated
-        );
-    }
-
-    if replay.still_blocked > Decimal::ZERO {
-        warn!(
-            "€{} of losses are still deferred at the end of the statement, blocked by homogeneous \
-             securities acquired inside the two-month window and not yet disposed of. Carry them \
-             into next year's taxes.spain.deferred_losses by hand.",
-            replay.still_blocked
-        );
-    }
+    flag_open_wash_sale_windows(statement, broker_statement);
 
     Ok(has_income)
+}
+
+/// Name the losses whose repurchase window is still open when the statement ends.
+///
+/// A repurchase up to two months after the sale defers the loss, so a statement that stops before
+/// the window closes cannot settle it. The figure stands as computed — the deduction is taken in
+/// full — which is the direction that **overstates** it, so say so. Re-run once the statement
+/// extends past the window, or the return will claim a loss the rule may have deferred.
+fn flag_open_wash_sale_windows(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+) {
+    let last_date = broker_statement.period.last_date();
+
+    statement.wash_sale_window_gaps = statement
+        .capital_gains
+        .iter()
+        .filter(|entry| entry.integrable_amount < Decimal::ZERO)
+        .filter_map(|entry| {
+            let window_end = wash_sale::window(entry.sale_date).1;
+            (window_end > last_date).then(|| WashSaleWindowGap {
+                symbol: entry.symbol.clone(),
+                sale_date: entry.sale_date,
+                window_end,
+                loss_eur: -entry.integrable_amount,
+            })
+        })
+        .collect();
+
+    for gap in &statement.wash_sale_window_gaps {
+        warn!(
+            "The valores-homogéneos window for the {} loss of {} stays open until {}, past the \
+             statement's last date ({last_date}). A repurchase in that period would defer €{} of \
+             the loss, which is deducted in full below. Re-run once the statement covers the window.",
+            gap.symbol, gap.sale_date, gap.window_end, gap.loss_eur
+        );
+    }
 }
 
 /// Price one disposal against its own disposal year's actualization table.
@@ -363,42 +385,94 @@ fn price_sale(
     })
 }
 
-/// What the valores-homogéneos replay found, beyond the per-sale deferrals it wrote back.
+/// What the valores-homogéneos replay produced, beyond the per-sale deferrals it wrote back.
 #[derive(Default)]
-struct ReplaySummary {
-    /// Deferred losses released by disposals of the shares that blocked them.
-    reintegrated: Decimal,
-    /// The loss-making sales those released amounts originally came from.
-    reintegrated_origins: BTreeSet<Date>,
-    /// Losses still blocked at the end of the statement.
-    still_blocked: Decimal,
+struct ReplayResult {
+    /// Deferrals released by disposals of the shares blocking them, over the whole statement.
+    reintegrations: Vec<WashSaleReintegrationEntry>,
+    /// Blocked lots still standing when the statement ends, in next year's config shape.
+    carry_out: Vec<DeferredLossConfig>,
 }
 
 /// Replay the whole statement through the valores-homogéneos engine and write each sale's deferral
 /// back onto it.
 fn apply_wash_sale_rule(
-    sales: &mut [PricedSale], broker_statement: &BrokerStatement,
-) -> ReplaySummary {
+    sales: &mut [PricedSale],
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+) -> GenericResult<ReplayResult> {
     let instruments = &broker_statement.instrument_info;
 
-    let acquisitions = broker_statement
+    // Symbol and ISIN per instrument key, so a surviving blocked lot can be printed back as config
+    // the filer recognises rather than as a bare ISIN.
+    let mut identities: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
+
+    fn identify(
+        identities: &mut BTreeMap<String, (String, Option<String>)>,
+        instruments: &crate::instruments::InstrumentInfo,
+        symbol: &str,
+    ) -> String {
+        let key = wash_sale::instrument_key(instruments, symbol);
+        let isin = instruments
+            .get(symbol)
+            .and_then(|info| info.isin.iter().next())
+            .map(|isin| isin.to_string());
+        identities
+            .entry(key.clone())
+            .or_insert_with(|| (symbol.to_owned(), isin));
+        key
+    }
+
+    let acquisitions: Vec<wash_sale::Acquisition> = broker_statement
         .stock_buys
         .iter()
         .filter(|buy| wash_sale::is_acquisition(buy))
         .map(|buy| wash_sale::Acquisition {
-            key: wash_sale::instrument_key(instruments, &buy.symbol),
+            key: identify(&mut identities, instruments, &buy.symbol),
             date: buy.conclusion_time.date,
             quantity: buy.quantity,
-        });
+        })
+        .collect();
 
-    let mut engine = wash_sale::WashSaleEngine::new(acquisitions, []);
+    let mut opening = Vec::new();
+    for deferred in &params.config.deferred_losses {
+        if deferred.loss < Decimal::ZERO || deferred.blocked_quantity <= Decimal::ZERO {
+            return Err!(
+                "taxes.spain.deferred_losses entry for {} is invalid: record the loss as a positive \
+                 magnitude and the blocked quantity as a positive number of shares",
+                deferred.symbol);
+        }
+
+        // The configured ISIN wins over anything the statement knows: a deferral carried in from an
+        // earlier return may name an instrument this statement never traded.
+        let key = deferred
+            .isin
+            .clone()
+            .unwrap_or_else(|| wash_sale::instrument_key(instruments, &deferred.symbol));
+        identities
+            .entry(key.clone())
+            .or_insert_with(|| (deferred.symbol.clone(), deferred.isin.clone()));
+
+        opening.push((key, wash_sale::BlockedLot {
+            buy_date: deferred.acquisition_date,
+            blocked_quantity: deferred.blocked_quantity,
+            deferred_loss: deferred.loss,
+            origin_sale_date: deferred.sale_date,
+        }));
+    }
+
+    for sale in sales.iter_mut() {
+        sale.key = identify(&mut identities, instruments, &sale.symbol);
+    }
+
+    let mut engine = wash_sale::WashSaleEngine::new(acquisitions, opening);
 
     // Date order, not statement order: the rule is about what happened when, and a deferral created
     // by one sale is released by a later one.
     let mut order: Vec<usize> = (0..sales.len()).collect();
     order.sort_by_key(|&position| sales[position].sale_date);
 
-    let mut summary = ReplaySummary::default();
+    let mut result = ReplayResult::default();
 
     for position in order {
         let sale = &sales[position];
@@ -409,20 +483,41 @@ fn apply_wash_sale_rule(
             fiscal_result: sale.fiscal_gain_loss,
             consumed: sale.consumed.clone(),
         });
-        sales[position].deferred_loss = outcome.deferred_loss;
 
         for reintegration in outcome.reintegrations {
-            summary.reintegrated += reintegration.amount;
-            summary.reintegrated_origins.insert(reintegration.origin_sale_date);
+            result.reintegrations.push(WashSaleReintegrationEntry {
+                symbol: sale.symbol.clone(),
+                isin: sale.isin.clone(),
+                date: sale.sale_date,
+                acquisition_date: reintegration.buy_date,
+                origin_sale_date: reintegration.origin_sale_date,
+                released_eur: reintegration.amount,
+            });
         }
+
+        sales[position].deferred_loss = outcome.deferred_loss;
     }
 
-    summary.still_blocked = engine
-        .blocked_lots()
-        .map(|(_, lot)| lot.deferred_loss)
-        .sum();
+    for (key, lot) in engine.blocked_lots() {
+        if lot.deferred_loss <= Decimal::ZERO {
+            continue;
+        }
+        let (symbol, isin) = identities
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| (key.to_owned(), None));
 
-    summary
+        result.carry_out.push(DeferredLossConfig {
+            symbol,
+            isin,
+            loss: lot.deferred_loss,
+            blocked_quantity: lot.blocked_quantity,
+            acquisition_date: lot.buy_date,
+            sale_date: lot.origin_sale_date,
+        });
+    }
+
+    Ok(result)
 }
 
 /// Acquisition cost of one FIFO lot in EUR.

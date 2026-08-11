@@ -111,6 +111,8 @@ pub struct Disposal {
 /// One deferred amount becoming integrable again because the shares blocking it were disposed of.
 #[derive(Clone, Debug)]
 pub struct Reintegration {
+    /// Acquisition date of the shares that were blocking the loss.
+    pub buy_date: Date,
     /// The loss-making sale the released amount was deferred from.
     pub origin_sale_date: Date,
     /// Loss released, as a positive magnitude.
@@ -253,6 +255,7 @@ fn release(
 
         if released > Decimal::ZERO {
             reintegrations.push(Reintegration {
+                buy_date: lot.buy_date,
                 origin_sale_date: lot.origin_sale_date,
                 amount: released,
             });

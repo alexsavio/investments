@@ -4,6 +4,7 @@ use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::spain::carryforward::{LedgerApplication, LossLedger};
 use crate::taxes::spain::compensation::compensate_savings_base;
 use crate::taxes::spain::credit::double_taxation_credit;
+use crate::taxes::DeferredLossConfig;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::types::{Date, Decimal};
 
@@ -49,6 +50,37 @@ pub struct CapitalGainEntry {
     pub integrable_amount: Decimal,
     pub lots: Vec<SpanishLotDetail>,
     pub notes: Option<String>,
+}
+
+/// A previously deferred loss becoming integrable again.
+///
+/// Reintegration is triggered by the disposal of the securities that blocked the loss, so the entry
+/// is dated to that disposal and labelled with the sale the loss originally came from — a return can
+/// otherwise not tell real activity from the unwinding of an earlier deferral.
+#[derive(Clone, Debug)]
+pub struct WashSaleReintegrationEntry {
+    pub symbol: String,
+    pub isin: String,
+    /// Disposal of the blocking shares, i.e. when the loss became integrable again.
+    pub date: Date,
+    /// Acquisition date of the blocking shares.
+    pub acquisition_date: Date,
+    /// The loss-making sale the deferral came from.
+    pub origin_sale_date: Date,
+    /// Loss released, as a positive magnitude. It enters the ganancias group as a negative amount.
+    pub released_eur: Decimal,
+}
+
+/// A loss the deferral rule could not be settled for, because the statement ends before its
+/// repurchase window does.
+#[derive(Clone, Debug)]
+pub struct WashSaleWindowGap {
+    pub symbol: String,
+    pub sale_date: Date,
+    /// Last date on which a repurchase could still defer this loss.
+    pub window_end: Date,
+    /// Loss at risk, as a positive magnitude.
+    pub loss_eur: Decimal,
 }
 
 /// A dividend, taxed as rendimiento del capital mobiliario.
@@ -111,6 +143,8 @@ pub struct SpanishTaxStatement {
     pub scale: SavingsScale,
 
     pub capital_gains: Vec<CapitalGainEntry>,
+    /// Deferred losses this year's disposals made integrable again.
+    pub wash_sale_reintegrations: Vec<WashSaleReintegrationEntry>,
     pub dividends: Vec<DividendEntry>,
     pub interest: Vec<InterestEntry>,
     pub fees: Vec<FeeEntry>,
@@ -133,6 +167,19 @@ pub struct SpanishTaxStatement {
     /// release earlier deferrals — but their own result could not be priced, so a loss in one of
     /// them was never tested for deferral.
     pub wash_sale_unpriced_years: Vec<i32>,
+
+    /// Blocked lots still standing at the end of the statement, in the shape next year's
+    /// `taxes.spain.deferred_losses` takes.
+    pub deferred_losses_next: Vec<DeferredLossConfig>,
+
+    /// Loss-making disposals whose +2-month repurchase window reaches past the statement's last
+    /// date, so a repurchase that would defer the loss cannot be seen yet.
+    pub wash_sale_window_gaps: Vec<WashSaleWindowGap>,
+
+    /// Loss deferred by this year's disposals, as a positive magnitude.
+    pub total_deferred_loss: Decimal,
+    /// Deferred loss this year's disposals released, as a positive magnitude.
+    pub total_reintegrated_loss: Decimal,
 
     pub total_dividend_income: Decimal,
     pub total_interest_income: Decimal,
@@ -223,6 +270,11 @@ impl SpanishTaxStatement {
             fx_borrowed_review: Vec::new(),
             short_positions: Vec::new(),
             wash_sale_unpriced_years: Vec::new(),
+            wash_sale_reintegrations: Vec::new(),
+            deferred_losses_next: Vec::new(),
+            wash_sale_window_gaps: Vec::new(),
+            total_deferred_loss: Decimal::ZERO,
+            total_reintegrated_loss: Decimal::ZERO,
             total_dividend_income: Decimal::ZERO,
             total_interest_income: Decimal::ZERO,
             total_deductible_fees: Decimal::ZERO,
@@ -290,7 +342,20 @@ impl SpanishTaxStatement {
             .sum();
         let fx: Decimal = self.fx_gains.iter().map(|entry| entry.amount_eur).sum();
 
-        self.gyp_net = capital_gains + fx;
+        self.total_deferred_loss = self
+            .capital_gains
+            .iter()
+            .map(|entry| entry.deferred_loss)
+            .sum();
+        self.total_reintegrated_loss = self
+            .wash_sale_reintegrations
+            .iter()
+            .map(|entry| entry.released_eur)
+            .sum();
+
+        // A released deferral is a loss that was blocked when it arose and is deductible now, so it
+        // enters the group as a negative amount in the year the blocking shares left the estate.
+        self.gyp_net = capital_gains + fx - self.total_reintegrated_loss;
 
         let compensation = compensate_savings_base(
             self.year,

@@ -167,6 +167,13 @@ pub struct DeferredLossConfig {
     pub loss: Decimal,
     /// Shares still blocking the loss, i.e. those repurchased inside the window and not yet resold.
     pub blocked_quantity: Decimal,
+    /// When the blocking shares were acquired.
+    ///
+    /// Not bookkeeping trivia: reintegration triggers when *those* shares are disposed of, and a
+    /// FIFO lot identifies itself by its acquisition date. Without it the deferral could not be
+    /// matched to the sale that releases it.
+    #[serde(deserialize_with = "deserialize_spanish_date")]
+    pub acquisition_date: Date,
     /// Date of the loss-making sale the deferral came from.
     #[serde(deserialize_with = "deserialize_spanish_date")]
     pub sale_date: Date,
@@ -543,7 +550,7 @@ mod tests {
              rcm: {2025: '80.00'}\n  \
              deferred_losses:\n    \
              - {symbol: VUSA, isin: IE00B3XXRP09, loss: '420.00', blocked_quantity: '15', \
-             sale_date: '2025-12-10'}\n  \
+             acquisition_date: '2025-12-20', sale_date: '2025-12-10'}\n  \
              coefficients:\n    \
              2027: {2020: '1.11'}\n",
         )
@@ -560,6 +567,9 @@ mod tests {
         assert_eq!(deferred.isin.as_deref(), Some("IE00B3XXRP09"));
         assert_eq!(deferred.loss, dec!(420));
         assert_eq!(deferred.blocked_quantity, dec!(15));
+        // The acquisition date of the blocking shares is what reintegration matches on, so it is
+        // required alongside the sale the deferral came from.
+        assert_eq!(deferred.acquisition_date, date!(2025, 12, 20));
         assert_eq!(deferred.sale_date, date!(2025, 12, 10));
     }
 
@@ -703,14 +713,14 @@ mod tests {
     fn spanish_deferred_loss_accepts_iso_and_user_dates(raw: &str) {
         let config: TaxConfig = serde_yaml::from_str(&format!(
             "spain:\n  regime: gipuzkoa\n  deferred_losses:\n    \
-             - {{symbol: VUSA, loss: '420.00', blocked_quantity: '15', sale_date: '{raw}'}}\n"
+             - {{symbol: VUSA, loss: '420.00', blocked_quantity: '15', \
+             acquisition_date: '{raw}', sale_date: '{raw}'}}\n"
         ))
         .unwrap();
 
-        assert_eq!(
-            config.spanish().unwrap().deferred_losses[0].sale_date,
-            date!(2025, 12, 10)
-        );
+        let deferred = &config.spanish().unwrap().deferred_losses[0];
+        assert_eq!(deferred.sale_date, date!(2025, 12, 10));
+        assert_eq!(deferred.acquisition_date, date!(2025, 12, 10));
     }
 
     #[test]

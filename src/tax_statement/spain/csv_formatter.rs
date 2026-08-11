@@ -12,7 +12,7 @@ use crate::types::Decimal;
 
 use super::statement::{
     CapitalGainEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry, SpanishLotDetail,
-    SpanishTaxStatement,
+    SpanishTaxStatement, WashSaleReintegrationEntry,
 };
 
 /// Modelo 109 box numbers.
@@ -50,6 +50,10 @@ impl CsvFormatter {
             }
         }
 
+        for entry in &statement.wash_sale_reintegrations {
+            Self::write_reintegration_row(writer, entry)?;
+        }
+
         for entry in &statement.dividends {
             Self::write_dividend_row(writer, entry)?;
         }
@@ -72,6 +76,7 @@ impl CsvFormatter {
 
         Self::write_summary_rows(writer, statement)?;
         Self::write_carryforward(writer, statement)?;
+        Self::write_deferred_losses(writer, statement)?;
         Self::write_modelo_boxes(writer, statement)?;
         Self::write_warnings(writer, statement)?;
 
@@ -142,6 +147,33 @@ impl CsvFormatter {
             Self::format_decimal(lot.proceeds_eur),
             Self::format_decimal(lot.gain_eur),
             Self::escape_csv(&arithmetic)
+        )?;
+        Ok(())
+    }
+
+    fn write_reintegration_row<W: Write>(
+        writer: &mut W,
+        entry: &WashSaleReintegrationEntry,
+    ) -> GenericResult<()> {
+        // Negative amounts: a released deferral is a loss becoming deductible, so it reduces the
+        // ganancias group in the year the blocking shares left the estate.
+        let released = -entry.released_eur;
+        writeln!(
+            writer,
+            "Wash Sale Reintegration,{},,{},{},{},,,,,,,{},,{},,,GyP,{}",
+            Self::format_date(entry.date),
+            Self::escape_csv(&entry.symbol),
+            Self::escape_csv(&entry.isin),
+            Self::escape_csv(&format!(
+                "Deferred loss released by the disposal of shares acquired {}",
+                Self::format_date(entry.acquisition_date)
+            )),
+            Self::format_decimal(released),
+            Self::format_decimal(released),
+            Self::escape_csv(&format!(
+                "Deferred by the sale of {} (NF 3/2014 art. 43 closing ¶ / LIRPF art. 33.5 closing ¶)",
+                Self::format_date(entry.origin_sale_date)
+            ))
         )?;
         Ok(())
     }
@@ -306,6 +338,18 @@ impl CsvFormatter {
         )?;
         row(
             writer,
+            "SUMMARY_GYP_DEFERRED",
+            "Pérdidas diferidas por valores homogéneos (no deducibles este año)",
+            statement.total_deferred_loss,
+        )?;
+        row(
+            writer,
+            "SUMMARY_GYP_REINTEGRATED",
+            "Pérdidas diferidas reintegradas al transmitirse los valores que las bloqueaban",
+            statement.total_reintegrated_loss,
+        )?;
+        row(
+            writer,
             "SUMMARY_GYP_NET",
             "Saldo de ganancias y pérdidas patrimoniales",
             statement.gyp_net,
@@ -446,6 +490,47 @@ impl CsvFormatter {
                     Self::format_decimal(expired)
                 )?;
             }
+        }
+
+        Ok(())
+    }
+
+    fn write_deferred_losses<W: Write>(
+        writer: &mut W,
+        statement: &SpanishTaxStatement,
+    ) -> GenericResult<()> {
+        if statement.deferred_losses_next.is_empty() {
+            return Ok(());
+        }
+
+        writeln!(writer)?;
+        writeln!(
+            writer,
+            "# PÉRDIDAS DIFERIDAS PENDIENTES — put these in next year's taxes.spain.deferred_losses."
+        )?;
+        writeln!(
+            writer,
+            "# Each is a loss still blocked by homogeneous securities bought inside the two-month"
+        )?;
+        writeln!(
+            writer,
+            "# window and not yet disposed of; it becomes deductible as those shares are sold."
+        )?;
+
+        for (index, deferred) in statement.deferred_losses_next.iter().enumerate() {
+            let label = format!(
+                "{} — {} shares acquired {} blocking the loss of {}",
+                deferred.symbol,
+                deferred.blocked_quantity.normalize(),
+                Self::format_date(deferred.acquisition_date),
+                Self::format_date(deferred.sale_date)
+            );
+            writeln!(
+                writer,
+                "DEFERRED_LOSS_{index},{},{}",
+                Self::escape_csv(&label),
+                Self::format_decimal(deferred.loss)
+            )?;
         }
 
         Ok(())
@@ -595,6 +680,40 @@ impl CsvFormatter {
         writer: &mut W,
         statement: &SpanishTaxStatement,
     ) -> GenericResult<()> {
+        if !statement.wash_sale_window_gaps.is_empty() {
+            writeln!(writer)?;
+            writeln!(
+                writer,
+                "# WARNING: valores-homogéneos window still open when the statement ends. A"
+            )?;
+            writeln!(
+                writer,
+                "# repurchase up to two months after the sale defers the loss, and one made after"
+            )?;
+            writeln!(
+                writer,
+                "# the statement's last date cannot be seen — so the losses below are deducted in"
+            )?;
+            writeln!(
+                writer,
+                "# FULL and may be OVERSTATED. Re-run once the statement covers the window."
+            )?;
+            for gap in &statement.wash_sale_window_gaps {
+                let label = format!(
+                    "{} sold {} — window open until {}",
+                    gap.symbol,
+                    Self::format_date(gap.sale_date),
+                    Self::format_date(gap.window_end)
+                );
+                writeln!(
+                    writer,
+                    "WASH_SALE_WINDOW_OPEN,{},{}",
+                    Self::escape_csv(&label),
+                    Self::format_decimal(gap.loss_eur)
+                )?;
+            }
+        }
+
         if !statement.wash_sale_unpriced_years.is_empty() {
             let years = statement
                 .wash_sale_unpriced_years
@@ -732,6 +851,7 @@ mod tests {
         let rows = [
             render(|w| CsvFormatter::write_capital_gain_row(w, &entry)),
             render(|w| CsvFormatter::write_lot_row(w, &entry, &entry.lots[0])),
+            render(|w| CsvFormatter::write_reintegration_row(w, &reintegration())),
             render(|w| {
                 CsvFormatter::write_dividend_row(
                     w,
@@ -801,6 +921,97 @@ mod tests {
             assert_eq!(row.split(',').count(), COLUMNS, "wrong column count: {row}");
             assert!(!row.contains("N/A"), "row emits an N/A placeholder: {row}");
         }
+    }
+
+    fn reintegration() -> WashSaleReintegrationEntry {
+        WashSaleReintegrationEntry {
+            symbol: "AAPL".to_string(),
+            isin: "US0378331005".to_string(),
+            date: Date::from_ymd_opt(2026, 11, 15).unwrap(),
+            acquisition_date: Date::from_ymd_opt(2026, 4, 20).unwrap(),
+            origin_sale_date: Date::from_ymd_opt(2026, 3, 10).unwrap(),
+            released_eur: dec!(225),
+        }
+    }
+
+    /// A released deferral is a loss becoming deductible, so it must enter the ganancias group as a
+    /// **negative** amount — reported as a positive magnitude it would be added to the base instead.
+    #[test]
+    fn a_reintegration_enters_the_group_as_a_negative_amount() {
+        let header = render(CsvFormatter::write_header);
+        let columns: Vec<String> = header.split(',').map(str::to_string).collect();
+        let row = render(|w| CsvFormatter::write_reintegration_row(w, &reintegration()));
+
+        let cell = |name: &str| -> String {
+            let index = columns.iter().position(|column| column == name).unwrap();
+            row.split(',').nth(index).unwrap().to_string()
+        };
+
+        assert_eq!(cell("gain_loss_eur"), "-225.00");
+        assert_eq!(cell("integrable_amount_eur"), "-225.00");
+        assert_eq!(cell("savings_group"), "GyP");
+        // Dated to the disposal that released it, not to the sale it came from.
+        assert_eq!(cell("transaction_date"), "2026-11-15");
+        assert!(row.contains("2026-03-10"), "the origin sale must be named: {row}");
+    }
+
+    /// Surviving blocked lots are printed in the shape next year's config takes, keyed so the filer
+    /// can copy them straight into `taxes.spain.deferred_losses`.
+    #[test]
+    fn surviving_deferrals_are_printed_as_next_years_config() {
+        let mut spain = statement(SpanishTaxRegime::Gipuzkoa);
+        spain.deferred_losses_next = vec![crate::taxes::DeferredLossConfig {
+            symbol: "AAPL".to_string(),
+            isin: Some("US0378331005".to_string()),
+            loss: dec!(135),
+            blocked_quantity: dec!(15),
+            acquisition_date: Date::from_ymd_opt(2026, 4, 20).unwrap(),
+            sale_date: Date::from_ymd_opt(2026, 3, 10).unwrap(),
+        }];
+
+        let output = render(|w| CsvFormatter::write_deferred_losses(w, &spain));
+        let row = output
+            .lines()
+            .find(|line| line.starts_with("DEFERRED_LOSS_0,"))
+            .expect("carry-out row present");
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(row.as_bytes());
+        let record = reader.records().next().unwrap().unwrap();
+        assert_eq!(record.len(), 3, "must stay in the 3-column summary block: {row}");
+        assert!(record[1].contains("15 shares acquired 2026-04-20"));
+        assert!(record[1].contains("2026-03-10"));
+        assert_eq!(&record[2], "135.00");
+
+        // Nothing blocked, nothing printed.
+        let empty = render(|w| {
+            CsvFormatter::write_deferred_losses(w, &statement(SpanishTaxRegime::Gipuzkoa))
+        });
+        assert!(empty.is_empty());
+    }
+
+    /// A loss whose repurchase window outlives the statement is deducted in full, so the file has to
+    /// say the figure may be overstated rather than presenting it as settled.
+    #[test]
+    fn an_open_wash_sale_window_is_warned_about() {
+        let mut spain = statement(SpanishTaxRegime::Gipuzkoa);
+        spain.wash_sale_window_gaps = vec![super::super::statement::WashSaleWindowGap {
+            symbol: "AAPL".to_string(),
+            sale_date: Date::from_ymd_opt(2026, 12, 15).unwrap(),
+            window_end: Date::from_ymd_opt(2027, 2, 15).unwrap(),
+            loss_eur: dec!(900),
+        }];
+
+        let output = render(|w| CsvFormatter::write_warnings(w, &spain));
+        assert!(output.contains("# WARNING"));
+        assert!(output.contains("OVERSTATED"));
+        let row = output
+            .lines()
+            .find(|line| line.starts_with("WASH_SALE_WINDOW_OPEN,"))
+            .expect("window row present");
+        assert_eq!(row.split(',').count(), 3, "{row}");
+        assert!(row.contains("2027-02-15"));
     }
 
     /// Each value must land in the column the header names it by, or a consumer summing a named

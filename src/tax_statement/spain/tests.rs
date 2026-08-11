@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::converter::{CurrencyConverter, CurrencyConverterBackend};
 use crate::taxes::spain::SpanishTaxRegime;
-use crate::taxes::{SpanishTaxConfig, TaxConfig, TaxRemapping};
+use crate::taxes::{DeferredLossConfig, SpanishTaxConfig, TaxConfig, TaxRemapping};
 use crate::time::{self, Date};
 use crate::types::Decimal;
 
@@ -543,9 +543,145 @@ fn a_repurchase_inside_the_window_defers_the_matched_share_of_the_loss() {
     assert_eq!(later.fiscal_gain_loss, dec!(450));
     assert_eq!(later.deferred_loss, dec!(0));
 
-    // The €225 those 25 shares released is not integrated yet, so the group sits at −540 + 450.
-    // Integrating it takes it to −315.
-    assert_eq!(spain.gyp_net, dec!(-90));
+    // Selling 25 of the 40 blocked shares releases 360 × 25/40 = €225, dated to that disposal and
+    // labelled with the sale the deferral came from.
+    assert_eq!(spain.wash_sale_reintegrations.len(), 1);
+    let released = &spain.wash_sale_reintegrations[0];
+    assert_eq!(released.symbol, "AAPL");
+    assert_eq!(released.date, Date::from_ymd_opt(2026, 11, 15).unwrap());
+    assert_eq!(released.acquisition_date, Date::from_ymd_opt(2026, 4, 20).unwrap());
+    assert_eq!(released.origin_sale_date, Date::from_ymd_opt(2026, 3, 10).unwrap());
+    assert_eq!(released.released_eur, dec!(225));
+
+    // −540 + 450 − 225.
+    assert_eq!(spain.gyp_net, dec!(-315));
+    assert_eq!(spain.total_deferred_loss, dec!(360));
+    assert_eq!(spain.total_reintegrated_loss, dec!(225));
+    assert_eq!(spain.gyp_ledger_next.balances()[&2026], dec!(315));
+
+    // The 15 shares still held keep blocking the rest, printed back as next year's config.
+    assert_eq!(spain.deferred_losses_next.len(), 1);
+    let carried = &spain.deferred_losses_next[0];
+    assert_eq!(carried.symbol, "AAPL");
+    assert_eq!(carried.isin.as_deref(), Some("US0378331005"));
+    assert_eq!(carried.blocked_quantity, dec!(15));
+    assert_eq!(carried.loss, dec!(135));
+    assert_eq!(carried.acquisition_date, Date::from_ymd_opt(2026, 4, 20).unwrap());
+    assert_eq!(carried.sale_date, Date::from_ymd_opt(2026, 3, 10).unwrap());
+}
+
+/// A deferral carried in from an earlier return reintegrates when this year's sale disposes of the
+/// shares that blocked it, even though the statement never saw the loss-making sale itself.
+#[test]
+fn an_opening_deferred_loss_reintegrates_on_disposal() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    config.spain.as_mut().unwrap().deferred_losses = vec![DeferredLossConfig {
+        symbol: "AAPL".to_string(),
+        isin: Some("US0378331005".to_string()),
+        loss: dec!(600),
+        blocked_quantity: dec!(40),
+        acquisition_date: Date::from_ymd_opt(2026, 4, 20).unwrap(),
+        sale_date: Date::from_ymd_opt(2026, 3, 10).unwrap(),
+    }];
+
+    let spain = run_pipeline_with_config("wash_sale_after", 2026, &config);
+
+    // The statement's own 2026-03-10 loss blocks €360 against those same 40 shares, so the
+    // 2026-11-15 sale of 25 of them releases from the older deferral first: 600 × 25/40 = €375.
+    let released: Vec<Decimal> = spain
+        .wash_sale_reintegrations
+        .iter()
+        .map(|entry| entry.released_eur)
+        .collect();
+    assert_eq!(released, vec![dec!(375)]);
+
+    // Those 40 shares were already committed to the opening deferral, so nothing is left for the
+    // statement's own loss to block: it is deducted in full.
+    assert_eq!(spain.capital_gains[0].deferred_loss, dec!(0));
+    assert_eq!(spain.capital_gains[0].integrable_amount, dec!(-900));
+}
+
+/// A configured deferral that is not a positive loss against a positive number of shares is a
+/// config error, not something to quietly apply.
+#[test]
+fn a_malformed_opening_deferred_loss_is_rejected() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    config.spain.as_mut().unwrap().deferred_losses = vec![DeferredLossConfig {
+        symbol: "AAPL".to_string(),
+        isin: None,
+        loss: dec!(600),
+        blocked_quantity: dec!(0),
+        acquisition_date: Date::from_ymd_opt(2026, 4, 20).unwrap(),
+        sale_date: Date::from_ymd_opt(2026, 3, 10).unwrap(),
+    }];
+
+    let statement = read_fixture("wash_sale_after");
+    let converter = converter();
+    let error = super::compute_tax_year(&statement, 2026, &converter, &config)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("blocked quantity"), "{error}");
+}
+
+/// A repurchase after the statement's last date cannot be seen, so a loss whose window is still
+/// open when the statement ends is deducted in full and flagged rather than silently settled.
+#[test]
+fn a_loss_whose_window_outlives_the_statement_is_flagged() {
+    // The `loss` fixture sells 2026-06-10 and the statement ends 2026-12-31, so its window closed
+    // inside the statement: nothing to flag.
+    let settled = run_pipeline("loss", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert!(settled.wash_sale_window_gaps.is_empty());
+
+    // `wash_sale_before` sells 2026-03-10 — also well inside.
+    let also_settled = run_pipeline("wash_sale_before", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert!(also_settled.wash_sale_window_gaps.is_empty());
+
+    // `year_end_loss` sells on 2026-12-15; the window runs to 2027-02-15, past the statement.
+    let open = run_pipeline("year_end_loss", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(open.wash_sale_window_gaps.len(), 1);
+    let gap = &open.wash_sale_window_gaps[0];
+    assert_eq!(gap.symbol, "AAPL");
+    assert_eq!(gap.sale_date, Date::from_ymd_opt(2026, 12, 15).unwrap());
+    assert_eq!(gap.window_end, Date::from_ymd_opt(2027, 2, 15).unwrap());
+    assert_eq!(gap.loss_eur, dec!(900));
+}
+
+/// A partial repurchase spread over two acquisition dates splits the deferral pro rata, and a later
+/// sale releases from each in turn, leaving the untouched remainder as carry-out.
+///
+/// Buy 100 @ $100 on 2026-01-05, sell them @ $90 on 2026-03-10 at a €900 loss, buy 25 @ $80 on
+/// 2026-04-20 and 15 @ $60 on 2026-05-05 — both inside the window. 40 of the 100 sold shares match,
+/// so €360 defers, split €225 / €135 by quantity. Selling 30 on 2026-11-15 takes the whole 25-share
+/// lot and 5 of the 15, releasing €225 + €45.
+#[test]
+fn a_multi_lot_repurchase_defers_and_releases_pro_rata() {
+    let spain = run_pipeline("wash_sale_multi_lot", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    let loss = &spain.capital_gains[0];
+    assert_eq!(loss.fiscal_gain_loss, dec!(-900));
+    assert_eq!(loss.deferred_loss, dec!(360));
+    assert_eq!(loss.integrable_amount, dec!(-540));
+
+    // Proceeds €2,700 against a cost of €1,800 + €270.
+    let later = &spain.capital_gains[1];
+    assert_eq!(later.fiscal_gain_loss, dec!(630));
+
+    let released: Vec<Decimal> = spain
+        .wash_sale_reintegrations
+        .iter()
+        .map(|entry| entry.released_eur)
+        .collect();
+    assert_eq!(released, vec![dec!(225), dec!(45)]);
+
+    // −540 + 630 − 270.
+    assert_eq!(spain.gyp_net, dec!(-180));
+
+    // Only the 10 shares of the 2026-05-05 lot still block anything.
+    assert_eq!(spain.deferred_losses_next.len(), 1);
+    let carried = &spain.deferred_losses_next[0];
+    assert_eq!(carried.blocked_quantity, dec!(10));
+    assert_eq!(carried.loss, dec!(90));
+    assert_eq!(carried.acquisition_date, Date::from_ymd_opt(2026, 5, 5).unwrap());
 }
 
 /// A repurchase *before* the sale blocks only shares the sale did not itself consume.

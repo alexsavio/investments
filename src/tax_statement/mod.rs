@@ -247,8 +247,12 @@ fn generate_spanish_tax_statement(
     }
     println!("Net tax due: €{}", eur::format_eur(statement.net_tax_due));
 
-    if !statement.rcm_ledger_next.is_empty() || !statement.gyp_ledger_next.is_empty() {
+    let has_ledgers = !statement.rcm_ledger_next.is_empty() || !statement.gyp_ledger_next.is_empty();
+    if has_ledgers || !statement.deferred_losses_next.is_empty() {
         println!("\n{}", Color::Cyan.paint("=== Next year's taxes.spain config ==="));
+    }
+
+    if has_ledgers {
         println!("    loss_carryforward:");
         for (group, ledger) in [
             ("rcm", &statement.rcm_ledger_next),
@@ -267,6 +271,26 @@ fn generate_spanish_tax_statement(
         }
     }
 
+    if !statement.deferred_losses_next.is_empty() {
+        println!("    deferred_losses:");
+        for deferred in &statement.deferred_losses_next {
+            let isin = deferred
+                .isin
+                .as_deref()
+                .map(|isin| format!(", isin: {isin}"))
+                .unwrap_or_default();
+            println!(
+                "      - {{symbol: {}{isin}, loss: '{}', blocked_quantity: {}, \
+                 acquisition_date: {}, sale_date: {}}}",
+                deferred.symbol,
+                eur::format_eur(deferred.loss),
+                deferred.blocked_quantity.normalize(),
+                deferred.acquisition_date.format("%Y-%m-%d"),
+                deferred.sale_date.format("%Y-%m-%d")
+            );
+        }
+    }
+
     for (group, expired) in [
         ("RCM", statement.rcm_expired),
         ("ganancias", statement.gyp_expired),
@@ -282,15 +306,28 @@ fn generate_spanish_tax_statement(
         }
     }
 
-    let deferred: Decimal = statement
-        .capital_gains
-        .iter()
-        .map(|entry| entry.deferred_loss)
-        .sum();
-    if deferred > Decimal::ZERO {
+    if statement.total_deferred_loss > Decimal::ZERO
+        || statement.total_reintegrated_loss > Decimal::ZERO
+    {
         println!(
-            "Deferred under the valores-homogéneos rule: €{}",
-            eur::format_eur(deferred)
+            "Valores homogéneos: €{} deferred, €{} reintegrated",
+            eur::format_eur(statement.total_deferred_loss),
+            eur::format_eur(statement.total_reintegrated_loss)
+        );
+    }
+
+    for gap in &statement.wash_sale_window_gaps {
+        println!(
+            "{}",
+            Color::Yellow.paint(format!(
+                "WARNING: the valores-homogéneos window for the {} loss of {} stays open until {}, \
+                 past the statement's end. A repurchase in that period would defer €{} of the loss, \
+                 which is deducted in full above. Re-run once the statement covers the window.",
+                gap.symbol,
+                gap.sale_date,
+                gap.window_end,
+                eur::format_eur(gap.loss_eur)
+            ))
         );
     }
 
