@@ -4,6 +4,7 @@
 //! `BrokerStatement` dependency. The statement pipeline that feeds them lives in
 //! `crate::tax_statement::spain`.
 
+pub mod carryforward;
 pub mod scale;
 
 use serde::Deserialize;

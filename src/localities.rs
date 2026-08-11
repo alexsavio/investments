@@ -326,6 +326,18 @@ mod tests {
 
     use super::*;
 
+    fn spain_config(regime: SpanishTaxRegime) -> TaxConfig {
+        TaxConfig {
+            spain: Some(SpanishTaxConfig {
+                regime,
+                loss_carryforward: Default::default(),
+                deferred_losses: Vec::new(),
+                coefficients: Default::default(),
+            }),
+            ..Default::default()
+        }
+    }
+
     /// Spain files in EUR and its tax authorities take ECB reference rates, which is what makes
     /// `CurrencyConverter::for_jurisdiction` hand the Spanish flow the ECB backend rather than the
     /// Central Bank of Russia one used for the Russia/USA path.
@@ -353,11 +365,7 @@ mod tests {
     #[test]
     fn spain_approximation_follows_the_configured_regime() {
         let tax = |regime| {
-            let config = TaxConfig {
-                spain: Some(SpanishTaxConfig { regime }),
-                ..Default::default()
-            };
-            spain(&config)
+            spain(&spain_config(regime))
                 .tax_rate(2026)
                 .tax(IncomeType::Trading, dec!(10000))
         };
@@ -401,12 +409,7 @@ mod tests {
     /// year's scale for the other above €300,000.
     #[test]
     fn spain_comun_approximation_tracks_the_top_bracket_change() {
-        let country = spain(&TaxConfig {
-            spain: Some(SpanishTaxConfig {
-                regime: SpanishTaxRegime::Comun,
-            }),
-            ..Default::default()
-        });
+        let country = spain(&spain_config(SpanishTaxRegime::Comun));
 
         // 400,000: 71,880 cumulative at 300,000, then 100,000 at the top rate.
         assert_eq!(
