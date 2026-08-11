@@ -116,6 +116,25 @@ fn process_broker_statement(
     let has_fx = process_fx_gains(statement, broker_statement, params, converter)?;
     process_fees(statement, broker_statement, params, converter)?;
 
+    // The valores-homogéneos deferral is not implemented yet, so a loss on a repurchased holding
+    // is currently deducted in full. That overstates the deduction — the dangerous direction — so
+    // say so loudly rather than letting the number pass for a finished one.
+    statement.wash_sale_unchecked = statement
+        .capital_gains
+        .iter()
+        .filter(|entry| entry.fiscal_gain_loss < Decimal::ZERO)
+        .map(|entry| entry.symbol.clone())
+        .collect::<std::collections::BTreeSet<String>>()
+        .into_iter()
+        .collect();
+
+    if !statement.wash_sale_unchecked.is_empty() {
+        warn!(
+            "Losses were realized on {} and the valores-homogéneos rule (NF 3/2014 art. 43.g /              LIRPF art. 33.5.f) is NOT yet applied. If homogeneous securities were acquired within              two months before or after any of those sales, the loss must be deferred and the              figures below overstate the deductible amount. Check those windows by hand.",
+            statement.wash_sale_unchecked.join(", ")
+        );
+    }
+
     // Short positions get no automatic treatment; surface them for manual review.
     statement.short_positions = broker_statement
         .short_positions

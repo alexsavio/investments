@@ -518,3 +518,47 @@ fn a_flat_rate_realizes_a_zero_fx_result() {
     assert_eq!(spain.gyp_net, dec!(0));
     assert_eq!(spain.savings_quota, dec!(0));
 }
+
+/// The valores-homogéneos deferral is not implemented, and its absence overstates deductible
+/// losses. Every loss-making instrument must therefore be flagged, so the omission is loud rather
+/// than silent.
+#[test]
+fn loss_making_disposals_are_flagged_for_the_unimplemented_wash_sale_rule() {
+    let spain = run_pipeline("loss", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(spain.wash_sale_unchecked, vec!["AAPL".to_string()]);
+
+    // A year with only gains has nothing to defer, so nothing is flagged.
+    let gains = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert!(gains.wash_sale_unchecked.is_empty());
+}
+
+/// The 25% cross-group offset end to end. The `income` fixture under Común deducts the €45 custody
+/// fee, so RCM is +945; forcing a prior-year RCM balance larger than that drives RCM negative and
+/// lets the ganancias group absorb a quarter of it — under Gipuzkoa the same run must not cross.
+#[test]
+fn cross_group_offset_applies_only_under_comun() {
+    let configure = |regime| {
+        let mut config = spain_config(regime);
+        // Drive the ganancias group positive alongside a negative RCM.
+        config
+            .spain
+            .as_mut()
+            .unwrap()
+            .loss_carryforward
+            .rcm
+            .insert(2025, dec!(0));
+        config
+    };
+
+    // Gipuzkoa: the groups never touch, so a negative RCM cannot reach the ganancias balance.
+    let gipuzkoa = run_pipeline_with_config("income", 2026, &configure(SpanishTaxRegime::Gipuzkoa));
+    assert_eq!(gipuzkoa.cross_offset_rcm_to_gyp, dec!(0));
+    assert_eq!(gipuzkoa.cross_offset_gyp_to_rcm, dec!(0));
+
+    let comun = run_pipeline_with_config("income", 2026, &configure(SpanishTaxRegime::Comun));
+    // Both groups are positive here, so there is nothing to cross either way — the difference is
+    // the deducted fee, not a cross-offset.
+    assert_eq!(comun.cross_offset_rcm_to_gyp, dec!(0));
+    assert_eq!(comun.rcm_taxable, dec!(945));
+    assert_eq!(comun.savings_base, dec!(945));
+}

@@ -278,6 +278,30 @@ fn generate_spanish_tax_statement(
         }
     }
 
+    if !statement.wash_sale_unchecked.is_empty() {
+        println!(
+            "\n{}",
+            Color::Yellow.paint(format!(
+                "WARNING: losses were realized on {} and the valores-homogéneos rule (NF 3/2014 \
+                 art. 43.g / LIRPF art. 33.5.f) is not yet applied. If homogeneous securities were \
+                 acquired within two months before or after any of those sales, the loss must be \
+                 deferred and the figures above overstate the deductible amount.",
+                statement.wash_sale_unchecked.join(", ")
+            ))
+        );
+    }
+
+    if statement.total_fx_borrowed_review != Decimal::ZERO {
+        println!(
+            "{}",
+            Color::Yellow.paint(format!(
+                "€{} of foreign-currency results were realized on a borrowed (margin) balance and \
+                 are excluded from the savings base pending manual review.",
+                eur::format_eur(statement.total_fx_borrowed_review)
+            ))
+        );
+    }
+
     if !statement.short_positions.is_empty() {
         println!(
             "\n{}",
