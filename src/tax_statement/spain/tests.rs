@@ -765,10 +765,10 @@ fn a_repurchase_inside_the_window_defers_the_matched_share_of_the_loss() {
 /// A deferral carried in from an earlier return reintegrates when this year's sale disposes of the
 /// shares that blocked it, even though the statement never saw the loss-making sale itself.
 ///
-/// The opening entry blocks the 2026-01-05 lot against a €600 loss from a 2025-11-20 sale the
-/// statement does not contain. The 2026-03-10 sale consumes that whole lot, so the €600 becomes
-/// integrable again — and the statement's own loss still defers €360 against the 40 shares bought
-/// on 2026-04-20, which the later sale then releases €225 of.
+/// The opening entry blocks the `loss` fixture's 2025-03-10 lot against a €600 loss from a
+/// 2024-12-10 sale the statement does not contain. The 2026-06-10 sale consumes that whole lot and
+/// nothing is bought back inside its window, so the transfer is definitive and the whole €600
+/// becomes integrable again.
 #[test]
 fn an_opening_deferred_loss_reintegrates_on_disposal() {
     let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
@@ -777,28 +777,26 @@ fn an_opening_deferred_loss_reintegrates_on_disposal() {
         isin: Some("US0378331005".to_string()),
         loss: dec!(600),
         blocked_quantity: dec!(100),
-        acquisition_date: Date::from_ymd_opt(2026, 1, 5).unwrap(),
-        sale_date: Date::from_ymd_opt(2025, 11, 20).unwrap(),
+        acquisition_date: Date::from_ymd_opt(2025, 3, 10).unwrap(),
+        sale_date: Date::from_ymd_opt(2024, 12, 10).unwrap(),
     }];
 
-    let spain = run_pipeline_with_config("wash_sale_after", 2026, &config);
+    let spain = run_pipeline_with_config("loss", 2026, &config);
 
-    let released: Vec<Decimal> = spain
-        .wash_sale_reintegrations
-        .iter()
-        .map(|entry| entry.released_eur)
-        .collect();
-    assert_eq!(released, vec![dec!(600), dec!(225)]);
-    assert_eq!(
-        spain.wash_sale_reintegrations[0].origin_sale_date,
-        Date::from_ymd_opt(2025, 11, 20).unwrap()
-    );
+    assert_eq!(spain.wash_sale_reintegrations.len(), 1);
+    let released = &spain.wash_sale_reintegrations[0];
+    assert_eq!(released.released_eur, dec!(600));
+    assert_eq!(released.date, Date::from_ymd_opt(2026, 6, 10).unwrap());
+    assert_eq!(released.acquisition_date, Date::from_ymd_opt(2025, 3, 10).unwrap());
+    // Labelled with the sale the deferral came from, which this statement never saw.
+    assert_eq!(released.origin_sale_date, Date::from_ymd_opt(2024, 12, 10).unwrap());
 
-    // The statement's own deferral is untouched by the imported one: different shares.
-    assert_eq!(spain.capital_gains[0].deferred_loss, dec!(360));
-    assert_eq!(spain.capital_gains[0].integrable_amount, dec!(-540));
-    // −540 + 450 − 600 − 225.
-    assert_eq!(spain.gyp_net, dec!(-915));
+    // The sale's own loss has no repurchase to block it.
+    assert_eq!(spain.capital_gains[0].fiscal_gain_loss, dec!(-9360));
+    assert_eq!(spain.capital_gains[0].deferred_loss, dec!(0));
+    // −9,360 − 600.
+    assert_eq!(spain.gyp_net, dec!(-9960));
+    assert!(spain.deferred_losses_next.is_empty());
 }
 
 /// An opening `deferred_losses` entry whose loss-making sale the statement itself replays is a
@@ -1005,6 +1003,42 @@ fn a_repurchase_before_the_sale_blocks_only_the_shares_still_held() {
 
     assert_eq!(spain.gyp_net, dec!(-450));
     assert_eq!(spain.gyp_ledger_next.balances()[&2026], dec!(450));
+}
+
+/// A deferral is released only by a **definitive** transfer (DGT V3282-18). Selling the blocking
+/// shares and buying homogeneous ones straight back does not end the deferral — it moves it onto the
+/// new shares.
+///
+/// Fixture: buy 100 @ $100 on 2026-01-05, sell them @ $90 on 2026-03-10 (€900 loss), buy 40 back @
+/// $80 on 2026-04-20 (€360 deferred), sell those 40 @ $100 on 2026-08-10, buy 40 @ $90 on 2026-09-15
+/// — inside the August sale's window — and finally sell those @ $110 on 2026-12-20 with nothing
+/// bought back.
+#[test]
+fn a_deferral_survives_a_disposal_that_is_not_definitive() {
+    let spain = run_pipeline("wash_sale_chained", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert_eq!(spain.capital_gains.len(), 3);
+    assert_eq!(spain.capital_gains[0].fiscal_gain_loss, dec!(-900));
+    assert_eq!(spain.capital_gains[0].deferred_loss, dec!(360));
+    assert_eq!(spain.capital_gains[0].integrable_amount, dec!(-540));
+
+    // The August sale disposes of every blocking share, but the September repurchase covers the
+    // whole disposal, so nothing becomes integrable: the deferral moves to the new lot.
+    assert_eq!(spain.capital_gains[1].sale_date, Date::from_ymd_opt(2026, 8, 10).unwrap());
+    assert_eq!(spain.capital_gains[1].fiscal_gain_loss, dec!(720));
+
+    // Only the December sale — no repurchase in its window — is definitive.
+    assert_eq!(spain.wash_sale_reintegrations.len(), 1);
+    let released = &spain.wash_sale_reintegrations[0];
+    assert_eq!(released.date, Date::from_ymd_opt(2026, 12, 20).unwrap());
+    assert_eq!(released.acquisition_date, Date::from_ymd_opt(2026, 9, 15).unwrap());
+    // Still labelled with the sale the loss came from, three disposals back.
+    assert_eq!(released.origin_sale_date, Date::from_ymd_opt(2026, 3, 10).unwrap());
+    assert_eq!(released.released_eur, dec!(360));
+
+    // −540 + 720 + 720 − 360.
+    assert_eq!(spain.gyp_net, dec!(540));
+    assert!(spain.deferred_losses_next.is_empty());
 }
 
 /// A loss with no homogeneous acquisition in the window is deducted in full: the rule only reaches

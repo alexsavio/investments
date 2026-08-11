@@ -170,6 +170,12 @@ How the tool applies it:
    gone.
 6. Disposing of the blocking shares releases the deferral pro rata, dated to that disposal and
    labelled with the sale it came from.
+7. A release only counts to the extent that disposal was itself **definitive**. Both statutes make
+   the loss integrable "a medida que se transmitan los activos", and DGT V3282-18 reads that as
+   requiring a real exit: sell the blocking shares and buy homogeneous ones back inside the window
+   and the deferral does not end, it moves onto the new shares. The released amount is split by the
+   same matched fraction the rule uses everywhere else — the matched part is re-attached (keeping
+   the original sale's label), the rest becomes integrable.
 
 Worked example — sell 100 shares on 2026-03-10 at a €900 loss, buy 40 back on 2026-04-20:
 

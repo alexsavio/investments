@@ -193,26 +193,68 @@ impl WashSaleEngine {
     /// The order matters. A sale of blocked shares makes their deferred loss integrable *before*
     /// the same sale's own result is tested, and the freed shares must not then count as available
     /// to block that very sale.
+    ///
+    /// A release only counts to the extent the disposal was **definitive**. Both statutes make the
+    /// deferred loss integrable "a medida que se transmitan los activos", and DGT V3282-18 reads
+    /// that as requiring a real exit: selling the blocking shares and buying homogeneous ones back
+    /// inside the window does not end the deferral, it moves it onto the new shares. The released
+    /// amount is therefore split by the same matched fraction the rule uses everywhere else —
+    /// the matched part is re-attached, the rest becomes integrable.
     pub fn process(&mut self, disposal: &Disposal) -> DisposalOutcome {
         let state = self.instruments.entry(disposal.key.clone()).or_default();
         let mut outcome = DisposalOutcome::default();
 
+        let mut released = Vec::new();
         for &(lot_date, quantity) in &disposal.consumed {
             state
                 .acquisitions
                 .entry(lot_date)
                 .or_default()
                 .consumed += quantity;
-            release(state, lot_date, quantity, &mut outcome.reintegrations);
+            release(state, lot_date, quantity, &mut released);
         }
         state.blocked.retain(|lot| lot.blocked_quantity > Decimal::ZERO);
 
-        if let Some(result) = disposal.fiscal_result
-            && result < Decimal::ZERO
-            && disposal.quantity > Decimal::ZERO
-        {
-            outcome.deferred_loss = defer(state, disposal, -result);
+        let own_loss = match disposal.fiscal_result {
+            Some(result) if result < Decimal::ZERO => -result,
+            _ => Decimal::ZERO,
+        };
+
+        if own_loss.is_zero() && released.is_empty() {
+            return outcome;
         }
+
+        let (matched, matched_total) = match_window(state, disposal);
+        let blocked_fraction = if disposal.quantity > Decimal::ZERO {
+            matched_total / disposal.quantity
+        } else {
+            Decimal::ZERO
+        };
+
+        // Each deferred amount the matched shares end up carrying, with the sale it came from.
+        let mut placements: Vec<(Date, Decimal)> = Vec::new();
+
+        outcome.deferred_loss = own_loss * blocked_fraction;
+        if outcome.deferred_loss > Decimal::ZERO {
+            placements.push((disposal.date, outcome.deferred_loss));
+        }
+
+        for reintegration in released {
+            let re_attached = reintegration.amount * blocked_fraction;
+            let integrable = reintegration.amount - re_attached;
+
+            if integrable > Decimal::ZERO {
+                outcome.reintegrations.push(Reintegration {
+                    amount: integrable,
+                    ..reintegration
+                });
+            }
+            if re_attached > Decimal::ZERO {
+                placements.push((reintegration.origin_sale_date, re_attached));
+            }
+        }
+
+        block(state, &matched, matched_total, &placements);
 
         outcome
     }
@@ -266,12 +308,12 @@ fn release(
     }
 }
 
-/// Block as much of `loss` as homogeneous acquisitions inside the window can cover.
+/// Homogeneous acquisitions inside the disposal's window that can still block, oldest first.
 ///
-/// Each acquired share blocks at most one sold share, so the deferral is the loss scaled by the
-/// matched fraction of the disposal. Acquisitions are matched oldest first, and an acquisition
-/// already consumed — by this sale or an earlier one — cannot block anything: those shares are gone.
-fn defer(state: &mut InstrumentState, disposal: &Disposal, loss: Decimal) -> Decimal {
+/// Each acquired share blocks at most one sold share, so the match is capped at the disposal's own
+/// quantity. An acquisition already consumed — by this sale or an earlier one — or already blocking
+/// cannot block again: those shares are gone or spoken for.
+fn match_window(state: &InstrumentState, disposal: &Disposal) -> (Vec<(Date, Decimal)>, Decimal) {
     let (start, end) = window(disposal.date);
 
     let mut matched: Vec<(Date, Decimal)> = Vec::new();
@@ -300,22 +342,35 @@ fn defer(state: &mut InstrumentState, disposal: &Disposal, loss: Decimal) -> Dec
         matched_total += taken;
     }
 
-    if matched_total <= Decimal::ZERO {
-        return Decimal::ZERO;
+    (matched, matched_total)
+}
+
+/// Attach the deferred amounts to the matched shares.
+///
+/// The matched shares are shared out between the placements in proportion to their amounts, so the
+/// blocked quantity across every lot this disposal creates stays exactly `matched_total` — one
+/// blocked share per matched share, however many separate deferrals ride on them.
+fn block(
+    state: &mut InstrumentState,
+    matched: &[(Date, Decimal)],
+    matched_total: Decimal,
+    placements: &[(Date, Decimal)],
+) {
+    let total: Decimal = placements.iter().map(|&(_, amount)| amount).sum();
+    if matched_total <= Decimal::ZERO || total <= Decimal::ZERO {
+        return;
     }
 
-    let deferred = loss * matched_total / disposal.quantity;
-
-    for (date, quantity) in matched {
-        state.blocked.push(BlockedLot {
-            buy_date: date,
-            blocked_quantity: quantity,
-            deferred_loss: deferred * quantity / matched_total,
-            origin_sale_date: disposal.date,
-        });
+    for &(date, quantity) in matched {
+        for &(origin_sale_date, amount) in placements {
+            state.blocked.push(BlockedLot {
+                buy_date: date,
+                blocked_quantity: quantity * amount / total,
+                deferred_loss: amount * quantity / matched_total,
+                origin_sale_date,
+            });
+        }
     }
-
-    deferred
 }
 
 #[cfg(test)]
@@ -537,6 +592,10 @@ mod tests {
     /// blocked, and the shares it consumes release the first deferral on the way through — release
     /// before deferral, so the freed shares are gone rather than available to block the sale that
     /// freed them.
+    ///
+    /// The second sale is itself only 40% definitive — 60 of its 100 shares were bought back on
+    /// 2026-04-20 — so 60% of the released deferral is re-attached to those shares rather than
+    /// becoming integrable (DGT V3282-18).
     #[test]
     fn shares_already_blocking_cannot_block_again() {
         let mut engine = WashSaleEngine::new(
@@ -556,12 +615,60 @@ mod tests {
 
         let second = engine.process(&disposal(
             date!(2026, 3, 20), dec!(100), dec!(-500), &[(date!(2026, 2, 1), dec!(100))]));
-        // Selling the blocking shares releases the whole first deferral...
+        // Selling the blocking shares releases the whole first deferral, but only 40 of the 100
+        // shares left the estate for good: 900 × 40% = 360 becomes integrable.
         assert_eq!(second.reintegrations.len(), 1);
-        assert_eq!(second.reintegrations[0].amount, dec!(900));
-        // ...and leaves only the 60 shares bought on 2026-04-20 free to block this loss, so
-        // 500 × 60/100 defers. The shares it just freed are gone, not available to itself.
+        assert_eq!(second.reintegrations[0].amount, dec!(360));
+        assert_eq!(second.reintegrations[0].origin_sale_date, date!(2026, 3, 10));
+        // Only the 60 shares bought on 2026-04-20 are free to block this loss, so 500 × 60/100
+        // defers. The shares it just freed are gone, not available to itself.
         assert_eq!(second.deferred_loss, dec!(300));
+
+        // The 60 shares now carry both deferrals: this sale's 300 and the re-attached 540.
+        let blocked: Decimal =
+            engine.blocked_lots().map(|(_, lot)| lot.deferred_loss).sum();
+        assert_eq!(blocked, dec!(840));
+        let blocked_quantity: Decimal =
+            engine.blocked_lots().map(|(_, lot)| lot.blocked_quantity).sum();
+        assert_eq!(blocked_quantity, dec!(60), "one blocked share per matched share");
+    }
+
+    /// A disposal with a homogeneous repurchase inside its own window is not a "transmisión
+    /// definitiva", so it does not make an earlier deferral integrable — it moves it onto the
+    /// shares that were bought back (DGT V3282-18). A later clean sale then releases it.
+    #[test]
+    fn a_release_needs_a_definitive_disposal() {
+        let mut engine = WashSaleEngine::new(
+            [
+                acquisition(date!(2026, 1, 5), dec!(100)),
+                acquisition(date!(2026, 4, 20), dec!(40)),
+                acquisition(date!(2026, 9, 15), dec!(40)),
+            ],
+            [],
+        );
+
+        engine.process(&disposal(
+            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+
+        // Sells every blocking share, but buys 40 back inside the window: nothing is integrable.
+        let chained = engine.process(&disposal(
+            date!(2026, 8, 10), dec!(40), dec!(720), &[(date!(2026, 4, 20), dec!(40))]));
+        assert!(chained.reintegrations.is_empty());
+
+        let blocked: Vec<&BlockedLot> = engine.blocked_lots().map(|(_, lot)| lot).collect();
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].buy_date, date!(2026, 9, 15));
+        assert_eq!(blocked[0].deferred_loss, dec!(360));
+        // Still labelled with the sale it originally came from, not the one that moved it.
+        assert_eq!(blocked[0].origin_sale_date, date!(2026, 3, 10));
+
+        // Nothing bought back this time, so the transfer is definitive.
+        let definitive = engine.process(&disposal(
+            date!(2026, 12, 20), dec!(40), dec!(720), &[(date!(2026, 9, 15), dec!(40))]));
+        assert_eq!(definitive.reintegrations.len(), 1);
+        assert_eq!(definitive.reintegrations[0].amount, dec!(360));
+        assert_eq!(definitive.reintegrations[0].origin_sale_date, date!(2026, 3, 10));
+        assert_eq!(engine.blocked_lots().count(), 0);
     }
 
     /// A disposal the tool cannot price still releases earlier deferrals — the release does not
