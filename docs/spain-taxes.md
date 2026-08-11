@@ -190,6 +190,23 @@ At the end of a run the tool prints a paste-ready block:
 Put it in next year's config. `acquisition_date` is what matches the deferral to the sale that
 releases it, so it is required.
 
+The block is a snapshot of what is still blocked on **31 December of the filing year**. Disposals
+after that date are still replayed — that is how the two-month window closes — but only to report
+releases against the following return; they never rewrite this year's carry-out.
+
+**Never carry in a deferral whose loss-making sale the statement also contains.** The tool computes
+that sale's deferral from the statement itself, so the config entry would both block the shares the
+statement's own deferral needed and release separately, deducting the loss twice. It refuses to run
+in that case:
+
+```text
+taxes.spain.deferred_losses entry for AAPL names a loss-making sale on 2026-03-10 that this
+statement already contains, so the tool computes that deferral itself. Keeping both would deduct
+the loss twice — remove the config entry
+```
+
+The entries to carry in are the ones whose loss-making sale predates the statement.
+
 ### Statement-window caveat
 
 A repurchase after the statement's last date cannot be seen. A loss sold in, say, December has a

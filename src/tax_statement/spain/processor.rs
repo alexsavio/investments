@@ -434,6 +434,10 @@ fn apply_wash_sale_rule(
         })
         .collect();
 
+    for sale in sales.iter_mut() {
+        sale.key = identify(&mut identities, instruments, &sale.symbol);
+    }
+
     let mut opening = Vec::new();
     for deferred in &params.config.deferred_losses {
         if deferred.loss < Decimal::ZERO || deferred.blocked_quantity <= Decimal::ZERO {
@@ -449,6 +453,22 @@ fn apply_wash_sale_rule(
             .isin
             .clone()
             .unwrap_or_else(|| wash_sale::instrument_key(instruments, &deferred.symbol));
+
+        // A carried-in deferral whose own loss-making sale is in the statement is a double
+        // deduction: the replay prices that sale and computes its deferral, while the config lot
+        // blocks the shares it would have used and then releases separately when they are sold.
+        if sales
+            .iter()
+            .any(|sale| sale.key == key && sale.sale_date == deferred.sale_date)
+        {
+            return Err!(
+                "taxes.spain.deferred_losses entry for {} names a loss-making sale on {} that this \
+                 statement already contains, so the tool computes that deferral itself. Keeping \
+                 both would deduct the loss twice — remove the config entry",
+                deferred.symbol,
+                deferred.sale_date.format("%Y-%m-%d"));
+        }
+
         identities
             .entry(key.clone())
             .or_insert_with(|| (deferred.symbol.clone(), deferred.isin.clone()));
@@ -461,10 +481,6 @@ fn apply_wash_sale_rule(
         }));
     }
 
-    for sale in sales.iter_mut() {
-        sale.key = identify(&mut identities, instruments, &sale.symbol);
-    }
-
     let mut engine = wash_sale::WashSaleEngine::new(acquisitions, opening);
 
     // Date order, not statement order: the rule is about what happened when, and a deferral created
@@ -474,7 +490,19 @@ fn apply_wash_sale_rule(
 
     let mut result = ReplayResult::default();
 
+    // The carry-out is what is still blocked on 31 December of the filing year. The documented
+    // workflow asks for a statement that runs at least two months past year end so the repurchase
+    // window can close, and a disposal in those extra weeks releases a deferral that belongs to the
+    // *following* return — snapshotting after it would print an empty block and lose the deferral.
+    let year_end = Date::from_ymd_opt(params.year, 12, 31).expect("31 December is a valid date");
+    let mut carry_out_taken = false;
+
     for position in order {
+        if !carry_out_taken && sales[position].sale_date > year_end {
+            result.carry_out = snapshot_blocked_lots(&engine, &identities);
+            carry_out_taken = true;
+        }
+
         let sale = &sales[position];
         let outcome = engine.process(&wash_sale::Disposal {
             key: sale.key.clone(),
@@ -498,26 +526,37 @@ fn apply_wash_sale_rule(
         sales[position].deferred_loss = outcome.deferred_loss;
     }
 
-    for (key, lot) in engine.blocked_lots() {
-        if lot.deferred_loss <= Decimal::ZERO {
-            continue;
-        }
-        let (symbol, isin) = identities
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| (key.to_owned(), None));
-
-        result.carry_out.push(DeferredLossConfig {
-            symbol,
-            isin,
-            loss: lot.deferred_loss,
-            blocked_quantity: lot.blocked_quantity,
-            acquisition_date: lot.buy_date,
-            sale_date: lot.origin_sale_date,
-        });
+    if !carry_out_taken {
+        result.carry_out = snapshot_blocked_lots(&engine, &identities);
     }
 
     Ok(result)
+}
+
+/// Blocked lots still standing, in the shape next year's `taxes.spain.deferred_losses` takes.
+fn snapshot_blocked_lots(
+    engine: &wash_sale::WashSaleEngine,
+    identities: &BTreeMap<String, (String, Option<String>)>,
+) -> Vec<DeferredLossConfig> {
+    engine
+        .blocked_lots()
+        .filter(|(_, lot)| lot.deferred_loss > Decimal::ZERO)
+        .map(|(key, lot)| {
+            let (symbol, isin) = identities
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| (key.to_owned(), None));
+
+            DeferredLossConfig {
+                symbol,
+                isin,
+                loss: lot.deferred_loss,
+                blocked_quantity: lot.blocked_quantity,
+                acquisition_date: lot.buy_date,
+                sale_date: lot.origin_sale_date,
+            }
+        })
+        .collect()
 }
 
 /// Acquisition cost of one FIFO lot in EUR.
