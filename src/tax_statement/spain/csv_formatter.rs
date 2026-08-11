@@ -435,14 +435,14 @@ impl CsvFormatter {
         row(
             writer,
             "SUMMARY_RCM_LOSSES_APPLIED",
-            "Saldos negativos de ejercicios anteriores aplicados (RCM)",
-            statement.rcm_applied.used_total,
+            "Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — fase 2ª-1º",
+            statement.rcm_own_group_losses_applied(),
         )?;
         row(
             writer,
             "SUMMARY_GYP_LOSSES_APPLIED",
-            "Saldos negativos de ejercicios anteriores aplicados (ganancias)",
-            statement.gyp_applied.used_total,
+            "Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — fase 2ª-1º",
+            statement.gyp_own_group_losses_applied(),
         )?;
         row(
             writer,
@@ -952,6 +952,8 @@ impl CsvFormatter {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use rstest::rstest;
 
     use super::*;
@@ -1363,6 +1365,66 @@ mod tests {
                 "summary row must stay within its 3 columns: {row}"
             );
         }
+    }
+
+    /// The two prior-year compensation rows must be **disjoint**: the own-group row carries what
+    /// Fase 2ª-1º applied inside the group, the cross row what Fase 2ª-2º took out of it, and their
+    /// sum is the ledger consumption. Printing the ledger total in both would show the crossed
+    /// amount twice, and a filer transcribing the two rows would claim it twice.
+    ///
+    /// The AEAT Manual cap. 12 example: current GyP +4,000, current RCM −800, prior GyP 2,800,
+    /// prior RCM 500. The whole €200 the prior RCM balance managed to use was crossed.
+    #[test]
+    fn own_group_and_crossed_compensation_rows_are_disjoint() {
+        let regime = SpanishTaxRegime::Comun;
+        let mut spain = SpanishTaxStatement::new(
+            2026,
+            regime,
+            SavingsScale::for_year(regime, 2026).unwrap(),
+            LossLedger::from_config(&BTreeMap::from([(2024, dec!(500))]), 2026, "rcm").unwrap(),
+            LossLedger::from_config(&BTreeMap::from([(2024, dec!(2800))]), 2026, "gyp").unwrap(),
+            dec!(0.25),
+            dec!(0.15),
+            Decimal::ZERO,
+        );
+
+        spain.fees.push(FeeEntry {
+            date: date(),
+            description: "CUSTODY FEE".to_string(),
+            amount_eur: dec!(800),
+            deductible: true,
+            notes: None,
+        });
+        let mut gain = capital_gain();
+        gain.fiscal_gain_loss = dec!(4000);
+        gain.integrable_amount = dec!(4000);
+        spain.capital_gains.push(gain);
+        spain.calculate_totals();
+
+        assert_eq!(spain.rcm_net, dec!(-800));
+        assert_eq!(spain.gyp_net, dec!(4000));
+        assert_eq!(spain.savings_base, dec!(200));
+        assert_eq!(spain.rcm_applied.used_total, dec!(200));
+        assert_eq!(spain.prior_cross_offset_rcm_to_gyp, dec!(200));
+
+        let output = render(|w| CsvFormatter::write_summary_rows(w, &spain));
+        let value = |key: &str| {
+            output
+                .lines()
+                .find(|line| line.starts_with(&format!("{key},")))
+                .unwrap_or_else(|| panic!("no {key} row in {output}"))
+                .rsplit(',')
+                .next()
+                .unwrap()
+                .to_string()
+        };
+
+        // All €200 crossed, so the own-group row is empty of it.
+        assert_eq!(value("SUMMARY_RCM_LOSSES_APPLIED"), "0.00");
+        assert_eq!(value("SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP"), "200.00");
+        // The ganancias balance was absorbed entirely inside its own group.
+        assert_eq!(value("SUMMARY_GYP_LOSSES_APPLIED"), "2800.00");
+        assert_eq!(value("SUMMARY_PRIOR_CROSS_OFFSET_GYP_TO_RCM"), "0.00");
     }
 
     /// The Modelo box numbers are unverified for every supported year, so each regime's block must

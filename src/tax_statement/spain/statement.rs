@@ -506,6 +506,22 @@ impl SpanishTaxStatement {
         );
     }
 
+    /// Prior-year RCM balances this year applied **within their own group** — the Fase 2ª-1º
+    /// consumption alone.
+    ///
+    /// `rcm_applied.used_total` is the whole ledger consumption and already contains what Fase 2ª-2º
+    /// crossed into the ganancias group, which `prior_cross_offset_rcm_to_gyp` reports on its own.
+    /// Reporting both in full prints the crossed amount twice, and a filer transcribing the two
+    /// rows claims it twice. The rows are therefore disjoint, and their sum is the consumption.
+    pub fn rcm_own_group_losses_applied(&self) -> Decimal {
+        self.rcm_applied.used_total - self.prior_cross_offset_rcm_to_gyp
+    }
+
+    /// The ganancias mirror of [`Self::rcm_own_group_losses_applied`].
+    pub fn gyp_own_group_losses_applied(&self) -> Decimal {
+        self.gyp_applied.used_total - self.prior_cross_offset_gyp_to_rcm
+    }
+
     /// The credit's first limb, summed payment by payment.
     ///
     /// Two things make this a per-row figure rather than a year-level one:

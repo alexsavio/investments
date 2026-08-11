@@ -285,6 +285,12 @@ The manual's own worked example — current GyP +4,000, current RCM −800, prio
 
 Savings base **200**; 300 of the prior RCM balance survives with its original vintage.
 
+The CSV reports the two prior-year steps **disjointly**, so nothing is counted twice:
+`SUMMARY_RCM_LOSSES_APPLIED` carries only what Fase 2ª-1º applied inside the RCM group, and
+`SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP` carries only what Fase 2ª-2º crossed out of it. Their sum is
+the prior-year RCM balance this year consumed — €200 in the example above, all of it crossed, so the
+own-group row reads 0. The ganancias pair works the same way.
+
 ### Both regimes
 
 A balance whose fourth year has passed is dropped with a warning rather than carried — next year's

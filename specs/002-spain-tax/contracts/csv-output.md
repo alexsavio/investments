@@ -71,7 +71,7 @@ Rows are `summary_key,label,value_eur`. Keys are stable; labels are prose and ma
 | `SUMMARY_REGIME` | Regime and tax year (value column carries the year) |
 | `SUMMARY_RCM_DIVIDENDS` / `_INTEREST` / `_DEDUCTIBLE_FEES` / `_NET` | The RCM group, built up |
 | `SUMMARY_GYP_CAPITAL_GAINS` / `_FX` / `_NET` | The ganancias group, built up |
-| `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` | Prior-year balances consumed this year |
+| `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` | Prior-year balances consumed **inside their own group** this year (Fase 2ª-1º) |
 | `SUMMARY_CROSS_OFFSET_RCM_TO_GYP` / `_GYP_TO_RCM` | The 25% cross-group offset (Común only; always 0 under Gipuzkoa) |
 | `SUMMARY_RCM_TAXABLE` / `SUMMARY_GYP_TAXABLE` | Each group after compensation |
 | `SUMMARY_SAVINGS_BASE` | Base liquidable del ahorro |
