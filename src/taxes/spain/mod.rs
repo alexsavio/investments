@@ -5,6 +5,7 @@
 //! `crate::tax_statement::spain`.
 
 pub mod carryforward;
+pub mod coefficients;
 pub mod scale;
 
 use serde::Deserialize;

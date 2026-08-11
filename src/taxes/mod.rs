@@ -95,6 +95,25 @@ impl SpanishTaxConfig {
         spain::scale::SavingsScale::for_year(self.regime, year)
     }
 
+    /// The coefficient a FIFO lot's acquisition cost is actualized by before the gain is computed.
+    ///
+    /// Always 1 under Territorio Común: Ley 26/2014 deleted LIRPF art. 35.2 with effect from 2015,
+    /// and even before that actualization applied only to real estate, never to securities.
+    pub fn actualization_coefficient(
+        &self,
+        disposal_year: i32,
+        acquisition_date: Date,
+    ) -> GenericResult<Decimal> {
+        match self.regime {
+            spain::SpanishTaxRegime::Gipuzkoa => spain::coefficients::gipuzkoa_coefficient(
+                disposal_year,
+                acquisition_date,
+                &self.coefficients,
+            ),
+            spain::SpanishTaxRegime::Comun => Ok(Decimal::ONE),
+        }
+    }
+
     /// The two savings-base loss ledgers as of `filing_year`, validated against the 4-year
     /// carry-forward window.
     ///
@@ -590,6 +609,36 @@ mod tests {
         assert!(error.contains("taxes.spain"), "{error}");
         assert!(error.contains("gipuzkoa"), "{error}");
         assert!(error.contains("comun"), "{error}");
+    }
+
+    /// Actualization is the single largest structural difference between the regimes on a capital
+    /// gain, so the regime switch must reach it.
+    #[test]
+    fn spanish_actualization_is_gipuzkoa_only() {
+        let config = |regime: &str| -> TaxConfig {
+            serde_yaml::from_str(&format!("spain:\n  regime: {regime}\n")).unwrap()
+        };
+
+        assert_eq!(
+            config("gipuzkoa")
+                .spanish()
+                .unwrap()
+                .actualization_coefficient(2026, date!(2021, 3, 10))
+                .unwrap(),
+            dec!(1.212)
+        );
+        // Territorio Común never actualizes, so the year pair is irrelevant and it never errors —
+        // not even for a disposal year no foral table is shipped for.
+        for year in [2024, 2026, 2030] {
+            assert_eq!(
+                config("comun")
+                    .spanish()
+                    .unwrap()
+                    .actualization_coefficient(year, date!(2021, 3, 10))
+                    .unwrap(),
+                dec!(1)
+            );
+        }
     }
 
     /// The scale follows the configured regime, so the same base is taxed differently under each.
