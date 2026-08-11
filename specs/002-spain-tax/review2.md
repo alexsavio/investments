@@ -147,10 +147,11 @@ F1's acceptance numbers reproduce exactly as the reviewer hand-computed them:
 
 ### Left open
 
-- The four `TODO(verify)` markers: the custody-fee keyword list (`processor.rs`), the window
-  endpoints (`wash_sale.rs`, now carrying the Código Civil art. 5.1 "de fecha a fecha" basis), the
-  Modelo 109 casillas (`csv_formatter.rs`), and the new one F6 added — whether a US-listed share
-  falls under the two-month or the one-year limb under Directive 2014/65's EEA-only definition of a
-  regulated market. The tool applies two months to every instrument and says so in the docs.
+- The four `TODO(verify)` markers left open here — the custody-fee keyword list (`processor.rs`),
+  the window endpoints (`wash_sale.rs`), the Modelo 109 casillas (`csv_formatter.rs`), and F6's
+  venue question — are all **closed** by the open-items round (`open-items.md`, tasks O1–O4). The
+  venue marker is settled by DGT V0778-25 / V0951-25 for equivalence-decision venues, with a
+  warn-only review for the rest; the residual questions are catalogued in the open-interpretations
+  register in `docs/spain-taxes.md`.
 - Everything under "Accepted as-is" above, unchanged.
 - The pre-existing 33 `parse_real` failures and 4 clippy errors in untouched files.

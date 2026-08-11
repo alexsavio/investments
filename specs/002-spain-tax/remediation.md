@@ -109,17 +109,19 @@ Verified on the output:
 
 ### Left open
 
-- **Three `TODO(verify)` markers remain by design**: the custody-fee keyword list in
-  `processor.rs` (art. 26.1.a names the service, not a broker's wording; unrecognised fees are
-  reported, not deducted), whether the two-month window's endpoints are inside it in
-  `wash_sale.rs` (treated as inclusive), and the Modelo 109 casillas in `csv_formatter.rs`, which
-  come from the AÑO 2019 map because nothing newer is published.
+- **Three `TODO(verify)` markers remained at the end of this round** — the custody-fee keyword list
+  in `processor.rs`, the two-month window's endpoints in `wash_sale.rs`, and the Modelo 109 casillas
+  in `csv_formatter.rs`. All three are **resolved** by the open-items round (`open-items.md`, tasks
+  O1–O4): the fees now follow per-type DGT doctrine with two flagged types, the endpoints carry the
+  CC art. 5.1 / STS 552/2022 basis with boundary warnings, and the casillas come from the official
+  per-ejercicio specimens. See the open-interpretations register in `docs/spain-taxes.md`.
 - **Instituciones de inversión colectiva.** The €1,500 exemption does not cover fund/ETF/SICAV
   distributions, and an IB statement does not distinguish them from company dividends. The tool
   exempts them anyway and names every payer it exempted in a `warn!`, a console line and a CSV
   `# WARNING`. A filer holding distributing funds must reduce the exemption by hand.
-- **Modelo 109 casillas stay 2019-vintage** and the DDII casilla stays `CASILLA_UNKNOWN`; Modelo 100
-  numbers come from a consultation draft. All under `# WARNING` banners.
+- **Modelo 109 casillas** were 2019-vintage with the DDII casilla emitted as `CASILLA_UNKNOWN`;
+  O4 replaced both with the per-ejercicio Hoja numbering from the official specimens. Modelo 100
+  numbers still come from a consultation draft, under a `# WARNING` banner.
 - Items recorded as accepted below (L5, L6, the settlement-vs-conclusion FX date) are unchanged.
 - Carried-in `deferred_losses` quantities are taken in the units the prior return reported; a split
   between that acquisition and the current statement is not applied to them.

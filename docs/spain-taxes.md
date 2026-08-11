@@ -635,6 +635,146 @@ adds on top of the ones above it. Only the total is order-independent.
 8. **Tax advisor.** Wash-sale timing, joint ownership, and cross-border residency questions should be
    reviewed with a qualified adviser.
 
+## Open interpretations
+
+Every point where the tool had to choose a reading, what settles it, and what the tool says when a
+case actually turns on it. Each runtime warning names this section.
+
+### 1. Which valores-homogéneos window a listing takes — SETTLED, with edge cases
+
+**Authority.** DGT CV V0778-25 (05-05-2025) and V0951-25 (30-05-2025), via
+`petete.tributos.hacienda.gob.es` (retrieved 2026-08-11); Commission Implementing Decisions (EU)
+2017/2320 (US), 2017/2318 (Australia), 2017/2319 (Hong Kong).
+
+**The tool's reading.** Two months for every instrument. That is the DGT's own criterion for any
+third-country venue covered by an in-force MiFID II art. 25(4)(a) equivalence decision, and following
+a published criterion also shields the filer from penalties (LGT art. 179.2.d). For Gipuzkoa those
+criteria are persuasive rather than binding: NF 3/2014 art. 43.g clones the state wording, but no
+foral pronouncement exists.
+
+**Edges that stay open.** Switzerland's decisions lapsed on 30-06-2019; the United Kingdom, Canada
+and Japan have none. And V1872-25 (14-10-2025), while confirming that dual-listed lines of the same
+class are homogeneous, expressly declines to say whether an ADR is homogeneous with its underlying
+ordinary share — they carry different ISINs, so the tool treats them as different securities.
+
+**What you see** when a repurchase falls outside the two months but inside the year on such a venue:
+
+```text
+# WARNING: the deduction below turns on which valores-homogéneos window the listing venue takes.
+WASH_SALE_VENUE_REVIEW,SWCH sold 2026-03-10 — listed on EBS,900.00
+```
+
+**What to do.** The loss is deducted in full. If the amount matters, either check whether the venue is
+covered by a decision that is in force for your filing year, or defer the amount by hand.
+
+### 2. Where the window's edges fall — SETTLED, with edge cases
+
+**Authority.** Código Civil art. 5.1 (via LGT art. 7.2); STS 552/2022 (10-05-2022, RC 1874/2021),
+STS 02-07-2020 (RC 3780/2019), STS 02-04-2008 (rec. 323/2004); Ley 39/2015 art. 30.4.
+
+**The tool's reading.** Two calendar months de fecha a fecha, both ends inclusive, clamped to the last
+day of a short month. No authority applies that arithmetic to art. 33.5.f with concrete dates, so a
+deferral decided by a single day is named.
+
+**What you see**, in the sale row's `notes`, on the console and in the log:
+
+```text
+€900.00 of the AAPL loss of 2026-03-10 turns on window-boundary arithmetic: homogeneous securities
+were acquired on the window's own terminal day, … The tool puts that edge on 2026-05-10; the other
+reading puts it on 2026-05-09. …
+```
+
+**What to do.** Nothing is wrong with the figure; it is simply the one that hangs on the convention.
+Take advice before filing if the amount is material, and keep the dates — they are what an inspector
+would ask about.
+
+### 3. Which broker fees are deductible — SETTLED per type, two types open
+
+**Authority.** DGT V2117-19, V2629-13, V1047-16, consulta 03-04-1998; AEAT Manual de Renta cap. 5
+(2024/2025). Per-type table under [Custody and administration fees](#custody-and-administration-fees).
+
+**The tool's reading.** Under Común, custody / administration / depósito is deducted, dividend
+collection and corporate-event handling are deducted at medium confidence, trading commissions adjust
+the acquisition and transmission values instead, and management / advisory / performance, market data
+and cash-movement fees are not deductible. A foreign broker charging the fee does not change the
+answer (medium confidence: no consulta is on point, but the wording is not territorially limited).
+Under Gipuzkoa nothing is deductible whatever the type is, so no question arises there.
+
+**Still open**, and therefore not deducted: inactivity / minimum-activity / maintenance /
+connectivity fees, standalone currency-conversion fees, and securities transfer-out (traspaso) fees.
+
+```text
+€27.00 of inactivity, minimum-activity or maintenance fee on 2026-09-15 is NOT deducted from the
+savings base: no DGT doctrine settles whether it is a gasto de administración y depósito under
+LIRPF art. 26.1.a. …
+```
+
+**What to do.** Not deducting overstates the tax rather than understating it. Consult a gestor if the
+amount is material, and deduct it by hand on the return if advised to.
+
+### 4. Modelo 109 casillas — VERIFIED 2023–2025, open beyond
+
+**Authority.** Hacienda Foral de Gipuzkoa "Propuesta de autoliquidación" specimens per ejercicio
+(`gipuzkoa.eus/es/web/ogasuna/impuestos/modelo/109/<ejercicio>/propuesta-autoliquidacion`, retrieved
+2026-08-11).
+
+**The tool's reading.** Hoja de liquidación numbers as published, with the NF 1/2025 renumbering of
+the deduction block applied from ejercicio 2025. No casilla is guessed.
+
+**Still open.** Anexo 3's internal numbering is confirmed only through ejercicio 2024 and was
+renumbered in 2025, so the íntegros / gastos breakdown rows stop there; and no form exists for a year
+that has not been filed yet, so ejercicio 2026 gets the 2025 layout:
+
+```text
+# WARNING: no form is published for ejercicio 2026 yet — it is filed in 2027.
+# WARNING: the rendimientos íntegros / gastos breakdown lives in Anexo 3,
+```
+
+**What to do.** Check each casilla against your own proposal in Zergabidea — it is generated for you,
+and it is the authoritative numbering for your year.
+
+### 5. Modelo 100 casillas — DRAFT SOURCE
+
+**Authority.** Anexo I of the Orden HAC/277/2026 **consultation draft**. The AEAT publishes a filing
+year's form in the spring of the following one, so no enacted numbering exists yet. A `# WARNING`
+above the box rows says so. Verify against the published form before filing.
+
+### 6. The €1,500 exemption and fund distributions — OPEN, by data limit
+
+NF 3/2014 art. 9.24 does **not** cover distributions from instituciones de inversión colectiva, and a
+broker statement does not distinguish a fund distribution from a company dividend. The tool exempts
+both and names every payer it exempted:
+
+```text
+# WARNING: €<x> of dividends were exempted under NF 3/2014 art. 9.24. The exemption
+# does NOT cover distributions from instituciones de inversión colectiva (funds,
+```
+
+**What to do.** Check each payer named and reduce the exemption by hand if any of them is a fund.
+
+### 7. Foreign-currency results on a borrowed balance — OPEN
+
+Repaying a currency loan is not clearly a transfer of a patrimonial element, and neither NF 3/2014 nor
+the LIRPF settles it. Those results are **excluded** from the savings base and reported for manual
+review instead (`FX Borrowed (review)` rows and `SUMMARY_FX_BORROWED_REVIEW`), with a console warning.
+
+### 8. Fecha de transmisión — SETTLED, no warning
+
+Trade date, not settlement date (LIRPF art. 14.1.c; NF 3/2014 art. 57.1.b; DGT V0152-26). It decides
+which tax year a December sale falls in.
+
+### 9. Deferred-loss quantities across a split — DOCUMENTED LIMITATION
+
+A `deferred_losses` entry carried in from a prior return is taken in the units that return reported. A
+split between that acquisition and the current statement is **not** applied to it; adjust
+`blocked_quantity` by hand if one happened. Quantities inside a single statement are normalized.
+
+### 10. Repurchase window still open when the statement ends — DATA COVERAGE
+
+Not an interpretation but the same kind of risk: a loss whose +2-month window runs past the
+statement's last date is deducted in full and flagged (`WASH_SALE_WINDOW_OPEN`). Export a statement
+that extends at least two months past year end and re-run.
+
 ## Troubleshooting
 
 ### "No Spanish savings-base scale is shipped for … tax year"
