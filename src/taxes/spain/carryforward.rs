@@ -37,6 +37,20 @@ pub struct LedgerApplication {
     pub used_by_year: BTreeMap<i32, Decimal>,
 }
 
+impl LedgerApplication {
+    /// Fold a second application of the **same** ledger into this one.
+    ///
+    /// Territorio Común consumes a group's ledger twice in a year — once against its own group, then
+    /// against the other's remainder — and the statement reports one figure per group, so the two
+    /// passes have to add up rather than overwrite each other.
+    pub fn merge(&mut self, other: LedgerApplication) {
+        self.used_total += other.used_total;
+        for (origin, amount) in other.used_by_year {
+            *self.used_by_year.entry(origin).or_insert(Decimal::ZERO) += amount;
+        }
+    }
+}
+
 impl LossLedger {
     /// Build a ledger from the user's `taxes.spain.loss_carryforward.<group>` map.
     ///

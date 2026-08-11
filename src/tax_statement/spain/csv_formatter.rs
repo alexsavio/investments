@@ -378,14 +378,26 @@ impl CsvFormatter {
         row(
             writer,
             "SUMMARY_CROSS_OFFSET_RCM_TO_GYP",
-            "Compensación cruzada RCM → ganancias (25% — sólo Territorio Común)",
+            "Compensación cruzada RCM → ganancias — fase 1ª (25% — sólo Territorio Común)",
             statement.cross_offset_rcm_to_gyp,
         )?;
         row(
             writer,
             "SUMMARY_CROSS_OFFSET_GYP_TO_RCM",
-            "Compensación cruzada ganancias → RCM (25% — sólo Territorio Común)",
+            "Compensación cruzada ganancias → RCM — fase 1ª (25% — sólo Territorio Común)",
             statement.cross_offset_gyp_to_rcm,
+        )?;
+        row(
+            writer,
+            "SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP",
+            "Compensación cruzada RCM → ganancias — fase 2ª-2º (saldos de ejercicios anteriores)",
+            statement.prior_cross_offset_rcm_to_gyp,
+        )?;
+        row(
+            writer,
+            "SUMMARY_PRIOR_CROSS_OFFSET_GYP_TO_RCM",
+            "Compensación cruzada ganancias → RCM — fase 2ª-2º (saldos de ejercicios anteriores)",
+            statement.prior_cross_offset_gyp_to_rcm,
         )?;
 
         row(

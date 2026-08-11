@@ -217,9 +217,14 @@ pub struct SpanishTaxStatement {
     pub rcm_applied: LedgerApplication,
     pub gyp_applied: LedgerApplication,
 
-    /// Current-year negative of one group set against the other (Territorio Común only).
+    /// Current-year negative of one group set against the other (Territorio Común only, Fase 1ª).
     pub cross_offset_rcm_to_gyp: Decimal,
     pub cross_offset_gyp_to_rcm: Decimal,
+
+    /// Prior-year balance of one group its own group could not absorb, set against the other's
+    /// remainder (Territorio Común only, Fase 2ª-2º).
+    pub prior_cross_offset_rcm_to_gyp: Decimal,
+    pub prior_cross_offset_gyp_to_rcm: Decimal,
 
     /// Balances to carry into next year's config, and those lost to the four-year window.
     pub rcm_ledger_next: LossLedger,
@@ -268,6 +273,8 @@ impl SpanishTaxStatement {
             gyp_applied: LedgerApplication::default(),
             cross_offset_rcm_to_gyp: Decimal::ZERO,
             cross_offset_gyp_to_rcm: Decimal::ZERO,
+            prior_cross_offset_rcm_to_gyp: Decimal::ZERO,
+            prior_cross_offset_gyp_to_rcm: Decimal::ZERO,
             rcm_expired: Decimal::ZERO,
             gyp_expired: Decimal::ZERO,
             total_foreign_tax_credit: Decimal::ZERO,
@@ -393,6 +400,8 @@ impl SpanishTaxStatement {
         self.gyp_applied = compensation.gyp_applied;
         self.cross_offset_rcm_to_gyp = compensation.cross_offset_rcm_to_gyp;
         self.cross_offset_gyp_to_rcm = compensation.cross_offset_gyp_to_rcm;
+        self.prior_cross_offset_rcm_to_gyp = compensation.prior_cross_offset_rcm_to_gyp;
+        self.prior_cross_offset_gyp_to_rcm = compensation.prior_cross_offset_gyp_to_rcm;
         self.rcm_ledger_next = compensation.rcm_ledger_next;
         self.gyp_ledger_next = compensation.gyp_ledger_next;
         self.rcm_expired = compensation.rcm_expired;

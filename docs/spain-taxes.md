@@ -239,22 +239,47 @@ The savings base has two groups:
 - **GyP** — ganancias y pérdidas patrimoniales: results from transfers, including foreign-currency
   conversions.
 
-Compensation runs in this order:
+### Gipuzkoa
 
-1. Each group's prior-year pending balances reduce its own positive result, **oldest vintage first**.
-   Art. 49.2 requires absorbing the maximum each year and forbids stretching the window by rolling an
-   old balance into a later year's losses.
-2. **Territorio Común only**: a group's own negative result may then reduce the other group's
-   positive, capped at **25%** of it (LIRPF art. 49.1). Gipuzkoa integrates the groups
-   "exclusivamente entre sí" and skips this entirely.
-3. Whatever negative remains becomes a pending balance labelled with the filing year, so its own
-   four-year window starts now.
+The groups are integrated "exclusivamente entre sí" (Manual de Renta cap. 9) and never touch. Each
+group's prior-year pending balances reduce its own positive result, **oldest vintage first** — art.
+49.2's foral equivalent requires absorbing the maximum each year and forbids stretching the window by
+rolling an old balance into a later year's losses. Whatever negative remains becomes a pending
+balance labelled with the filing year, so its own four-year window starts now.
+
+### Territorio Común
+
+Two phases, per the AEAT Manual Práctico de Renta cap. 12 (LIRPF art. 49):
+
+1. **Fase 1ª** — the year's own results meet each other first: a current-year negative in one group
+   reduces the other group's current-year positive.
+2. **Fase 2ª-1º** — prior-year pending balances reduce what is left of **their own** group, oldest
+   vintage first.
+3. **Fase 2ª-2º** — a prior-year balance its own group could not absorb crosses into the other
+   group's remainder.
+
+The **25% limit is one allowance per group**, measured on that group's *original* current-year
+positive and shared by steps 1 and 3. It is not re-measured after prior-year balances are absorbed.
+
+The manual's own worked example — current GyP +4,000, current RCM −800, prior-year GyP balance
+2,800, prior-year RCM balance 500:
+
+| Step | Effect | GyP left | Allowance left |
+|---|---|---|---|
+| Allowance | 25% × 4,000 | 4,000 | 1,000 |
+| Fase 1ª | current RCM −800 crosses | 3,200 | 200 |
+| Fase 2ª-1º | prior GyP 2,800 absorbed | 400 | 200 |
+| Fase 2ª-2º | prior RCM crosses, capped at 200 | **200** | 0 |
+
+Savings base **200**; 300 of the prior RCM balance survives with its original vintage.
+
+### Both regimes
 
 A balance whose fourth year has passed is dropped with a warning rather than carried — next year's
 config must not claim an offset the tax office will refuse. A balance older than the window in the
 config is a hard error, not a silent skip.
 
-Example, RCM −2,000 against GyP +6,000:
+Simple example with no prior-year balances, RCM −2,000 against GyP +6,000:
 
 | | Cross-offset | GyP taxable | Carried forward |
 |---|---|---|---|

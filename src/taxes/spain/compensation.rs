@@ -18,9 +18,14 @@ pub struct CompensationResult {
     pub rcm_applied: LedgerApplication,
     pub gyp_applied: LedgerApplication,
 
-    /// Current-year negative of one group set against the other's positive (Común only).
+    /// Fase 1ª: current-year negative of one group set against the other's positive (Común only).
     pub cross_offset_rcm_to_gyp: Decimal,
     pub cross_offset_gyp_to_rcm: Decimal,
+
+    /// Fase 2ª-2º: prior-year balance of one group its own group could not absorb, set against the
+    /// other's remaining positive (Común only).
+    pub prior_cross_offset_rcm_to_gyp: Decimal,
+    pub prior_cross_offset_gyp_to_rcm: Decimal,
 
     /// Balances carried into the following return.
     pub rcm_ledger_next: LossLedger,
@@ -34,12 +39,20 @@ pub struct CompensationResult {
 /// Compensate one year's savings-base groups against each other and against prior-year balances.
 ///
 /// `cross_offset_fraction` is 0 under Gipuzkoa, where the groups are integrated "exclusivamente
-/// entre sí" and never touch, and 0.25 under Territorio Común (LIRPF art. 49.1).
-// TODO(verify): the order of operations within a year. This applies prior-year balances to each
-// group first, then sets a current-year negative against the other group's *remaining* positive,
-// capping at 25% of that remainder. Art. 49.1 says the cap is "el 25 por ciento de dicho saldo
-// positivo" without settling whether "dicho saldo" is measured before or after prior-year balances
-// are absorbed. Measuring it after is the conservative reading — it yields a smaller cross-offset.
+/// entre sí" and never touch (Gipuzkoa Manual de Renta cap. 9), and 0.25 under Territorio Común.
+///
+/// The Común order follows the AEAT Manual Práctico de Renta cap. 12 (LIRPF art. 49):
+///
+/// 1. **Fase 1ª** — the year's own results meet each other: a current-year negative reduces the
+///    other group's current-year positive.
+/// 2. **Fase 2ª-1º** — prior-year balances reduce what is left of *their own* group. Art. 49.2
+///    requires absorbing the maximum each year, which `LossLedger::apply` does oldest vintage first.
+/// 3. **Fase 2ª-2º** — a prior-year balance its own group could not absorb crosses into the other
+///    group's remainder.
+///
+/// The 25% limit is one allowance per group, measured on that group's **original** current-year
+/// positive and consumed across steps 1 and 3 together. That is what makes the manual's own example
+/// come out at a base of 200 rather than 0 or 300.
 pub fn compensate_savings_base(
     filing_year: i32,
     rcm_net: Decimal,
@@ -50,38 +63,58 @@ pub fn compensate_savings_base(
 ) -> CompensationResult {
     let zero = Decimal::ZERO;
 
-    // Step 1: each group's prior-year balances reduce its own positive result. Art. 49.2 requires
-    // absorbing the maximum each year, which `LossLedger::apply` does, oldest vintage first.
     let rcm_positive = std::cmp::max(zero, rcm_net);
     let gyp_positive = std::cmp::max(zero, gyp_net);
-
-    let rcm_applied = rcm_ledger.apply(rcm_positive, None);
-    let gyp_applied = gyp_ledger.apply(gyp_positive, None);
-
-    let mut rcm_taxable = rcm_positive - rcm_applied.used_total;
-    let mut gyp_taxable = gyp_positive - gyp_applied.used_total;
-
-    // Step 2: Territorio Común only. A group's own negative result may reduce the other group's
-    // positive, but only up to a fraction of it. Gipuzkoa skips this entirely.
     let mut rcm_negative = std::cmp::max(zero, -rcm_net);
     let mut gyp_negative = std::cmp::max(zero, -gyp_net);
 
+    // One allowance per group, on the original positive.
+    let mut rcm_allowance = rcm_positive * cross_offset_fraction;
+    let mut gyp_allowance = gyp_positive * cross_offset_fraction;
+
+    let mut rcm_taxable = rcm_positive;
+    let mut gyp_taxable = gyp_positive;
+
+    // Fase 1ª. Only one direction can apply in a given year: a group cannot be both negative and
+    // positive, so at most one of these two has anything to work with.
     let mut cross_offset_rcm_to_gyp = zero;
     let mut cross_offset_gyp_to_rcm = zero;
 
     if cross_offset_fraction > zero {
-        // Only one direction can apply in a given year: a group cannot be both negative and
-        // positive, so at most one of these two has anything to work with.
-        cross_offset_rcm_to_gyp = std::cmp::min(rcm_negative, gyp_taxable * cross_offset_fraction);
+        cross_offset_rcm_to_gyp = rcm_negative.min(gyp_taxable).min(gyp_allowance);
         gyp_taxable -= cross_offset_rcm_to_gyp;
+        gyp_allowance -= cross_offset_rcm_to_gyp;
         rcm_negative -= cross_offset_rcm_to_gyp;
 
-        cross_offset_gyp_to_rcm = std::cmp::min(gyp_negative, rcm_taxable * cross_offset_fraction);
+        cross_offset_gyp_to_rcm = gyp_negative.min(rcm_taxable).min(rcm_allowance);
         rcm_taxable -= cross_offset_gyp_to_rcm;
+        rcm_allowance -= cross_offset_gyp_to_rcm;
         gyp_negative -= cross_offset_gyp_to_rcm;
     }
 
-    // Step 3: whatever negative remains is this year's pending balance, labelled with this year so
+    // Fase 2ª-1º.
+    let mut rcm_applied = rcm_ledger.apply(rcm_taxable, None);
+    let mut gyp_applied = gyp_ledger.apply(gyp_taxable, None);
+    rcm_taxable -= rcm_applied.used_total;
+    gyp_taxable -= gyp_applied.used_total;
+
+    // Fase 2ª-2º, within what is left of the same allowance.
+    let mut prior_cross_offset_rcm_to_gyp = zero;
+    let mut prior_cross_offset_gyp_to_rcm = zero;
+
+    if cross_offset_fraction > zero {
+        let crossed = rcm_ledger.apply(gyp_taxable, Some(gyp_allowance));
+        prior_cross_offset_rcm_to_gyp = crossed.used_total;
+        gyp_taxable -= crossed.used_total;
+        rcm_applied.merge(crossed);
+
+        let crossed = gyp_ledger.apply(rcm_taxable, Some(rcm_allowance));
+        prior_cross_offset_gyp_to_rcm = crossed.used_total;
+        rcm_taxable -= crossed.used_total;
+        gyp_applied.merge(crossed);
+    }
+
+    // Whatever negative remains is this year's pending balance, labelled with this year so
     // its own four-year window starts now.
     rcm_ledger.add(filing_year, rcm_negative);
     gyp_ledger.add(filing_year, gyp_negative);
@@ -113,6 +146,8 @@ pub fn compensate_savings_base(
         gyp_applied,
         cross_offset_rcm_to_gyp,
         cross_offset_gyp_to_rcm,
+        prior_cross_offset_rcm_to_gyp,
+        prior_cross_offset_gyp_to_rcm,
         rcm_ledger_next: rcm_ledger,
         gyp_ledger_next: gyp_ledger,
         rcm_expired,
@@ -123,6 +158,8 @@ pub fn compensate_savings_base(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+
+    use rstest::rstest;
 
     use super::*;
 
@@ -215,6 +252,119 @@ mod tests {
         assert_eq!(result.savings_base, dec!(6000));
         assert_eq!(result.cross_offset_rcm_to_gyp, dec!(0));
         assert_eq!(result.rcm_ledger_next.balances()[&2026], dec!(2000));
+    }
+
+    /// The AEAT Manual Práctico de Renta, cap. 12, worked example — the acceptance test for the
+    /// two-phase order.
+    ///
+    /// Current ganancias +4,000, current RCM −800, prior-year ganancias balance 2,800, prior-year
+    /// RCM balance 500. The manual's answer is a savings base of **200**:
+    ///
+    /// - Fase 1ª: the current RCM −800 meets the current +4,000 first, inside the 25% allowance of
+    ///   1,000 measured on that original positive → ganancias 3,200, allowance left 200.
+    /// - Fase 2ª-1º: the prior-year ganancias balance 2,800 attacks the remainder → 400 left.
+    /// - Fase 2ª-2º: the prior-year RCM balance crosses into that 400, but only for what is left of
+    ///   the same 25% allowance → 200.
+    #[test]
+    fn comun_follows_the_manual_two_phase_order() {
+        let result = compensate_savings_base(
+            2026,
+            dec!(-800),
+            dec!(4000),
+            ledger(&[(2024, "500")], 2026),
+            ledger(&[(2024, "2800")], 2026),
+            comun(),
+        );
+
+        assert_eq!(result.cross_offset_rcm_to_gyp, dec!(800));
+        assert_eq!(result.gyp_applied.used_total, dec!(2800));
+        assert_eq!(result.prior_cross_offset_rcm_to_gyp, dec!(200));
+        assert_eq!(result.rcm_applied.used_total, dec!(200));
+
+        assert_eq!(result.gyp_taxable, dec!(200));
+        assert_eq!(result.rcm_taxable, dec!(0));
+        assert_eq!(result.savings_base, dec!(200));
+
+        // 300 of the prior RCM balance could not be used and keeps its 2024 vintage.
+        assert_eq!(result.rcm_ledger_next.balances()[&2024], dec!(300));
+        assert!(result.gyp_ledger_next.is_empty());
+    }
+
+    /// The 25% allowance is measured on the **original** current-year positive, not on what prior
+    /// years left of it, and it is a single allowance shared by both cross-offset steps.
+    ///
+    /// Current RCM −2,000 against current ganancias +6,000 with a prior-year ganancias balance of
+    /// 4,000. The allowance is 25% × 6,000 = 1,500, all of it consumed in Fase 1ª. The prior-year
+    /// balance then attacks 4,500 and leaves 500, and nothing crosses in Fase 2ª-2º because the
+    /// allowance is spent. Measuring the cap after the prior-year balance instead would cross only
+    /// 500 and leave a base of 1,500.
+    #[test]
+    fn the_cross_offset_cap_is_measured_on_the_original_positive() {
+        let result = compensate_savings_base(
+            2026,
+            dec!(-2000),
+            dec!(6000),
+            LossLedger::default(),
+            ledger(&[(2024, "4000")], 2026),
+            comun(),
+        );
+
+        assert_eq!(result.cross_offset_rcm_to_gyp, dec!(1500));
+        assert_eq!(result.gyp_applied.used_total, dec!(4000));
+        assert_eq!(result.prior_cross_offset_rcm_to_gyp, dec!(0));
+        assert_eq!(result.savings_base, dec!(500));
+        assert_eq!(result.rcm_ledger_next.balances()[&2026], dec!(500));
+    }
+
+    /// Only one direction of the current-year cross-offset can apply in a year: a group is either
+    /// positive or negative, never both, so Fase 1ª always has at most one negative to place.
+    #[rstest]
+    #[case(dec!(-2000), dec!(6000))]
+    #[case(dec!(6000), dec!(-2000))]
+    fn only_one_current_year_direction_can_apply(#[case] rcm: Decimal, #[case] gyp: Decimal) {
+        let result = compensate_savings_base(
+            2026,
+            rcm,
+            gyp,
+            LossLedger::default(),
+            LossLedger::default(),
+            comun(),
+        );
+
+        assert!(
+            result.cross_offset_rcm_to_gyp.is_zero() || result.cross_offset_gyp_to_rcm.is_zero()
+        );
+        assert_eq!(
+            result.cross_offset_rcm_to_gyp + result.cross_offset_gyp_to_rcm,
+            dec!(1500)
+        );
+    }
+
+    /// Gipuzkoa integrates the groups "exclusivamente entre sí" (Manual de Renta cap. 9), so the
+    /// two-phase order changes nothing there: neither a current-year negative nor an unabsorbed
+    /// prior-year balance ever reaches the other group, in either phase.
+    #[test]
+    fn gipuzkoa_is_unchanged_by_the_two_phase_order() {
+        let result = compensate_savings_base(
+            2026,
+            dec!(-800),
+            dec!(4000),
+            ledger(&[(2024, "500")], 2026),
+            ledger(&[(2024, "2800")], 2026),
+            GIPUZKOA,
+        );
+
+        // Same inputs as the AEAT example; under Gipuzkoa the answer is 1,200, not 200.
+        assert_eq!(result.cross_offset_rcm_to_gyp, dec!(0));
+        assert_eq!(result.prior_cross_offset_rcm_to_gyp, dec!(0));
+        assert_eq!(result.prior_cross_offset_gyp_to_rcm, dec!(0));
+        assert_eq!(result.gyp_applied.used_total, dec!(2800));
+        assert_eq!(result.rcm_applied.used_total, dec!(0));
+        assert_eq!(result.gyp_taxable, dec!(1200));
+        assert_eq!(result.savings_base, dec!(1200));
+        // The whole prior RCM balance survives, plus this year's own negative.
+        assert_eq!(result.rcm_ledger_next.balances()[&2024], dec!(500));
+        assert_eq!(result.rcm_ledger_next.balances()[&2026], dec!(800));
     }
 
     /// Territorio Común: RCM −2,000 against ganancias +6,000 crosses at 25% of 6,000 = 1,500, so
