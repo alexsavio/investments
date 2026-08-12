@@ -11,7 +11,7 @@ Verified-correct by the reviewers (do not touch): the `NavarraOrdered` compensat
 - **V1 — Regime-correct summary labels.** Status: DONE (`78e813e6`)
   `csv_formatter.rs:569/575` label the `SUMMARY_CROSS_OFFSET_*` rows "fase 1ª (25% — sólo Territorio Común)" — emitted with non-zero values under Navarra (a passing test asserts €1,300). Make the four cross/prior-cross row labels regime-dependent (AEAT "fase" vocabulary for Común; "art. 54.2" vocabulary for Navarra; Gipuzkoa keeps its current never-fires wording) via the params, so Común/Gipuzkoa bytes are unchanged. Update the contract's row descriptions to note the per-regime label.
   Commit: `fix(navarra-tax): label the cross-offset rows with the regime's own statute`
-- **V2 — H3 loss-year guidance.** Status: TODO
+- **V2 — H3 loss-year guidance.** Status: DONE (`f05dca17`)
   `csv_formatter.rs:1150-1165`: the fallback comment tells a loss-year filer the H3 amount is "the H1 row above with the sign reversed" — but that row is `max(0, gyp_net)` = 0.00 exactly then. Emit the real figure: a `MODELO_F93_8816` row carrying the negative-transmissions saldo (specimen evidence: the H3 box column mirrors H4's, running `8816 / 817`; cite it and mark the number medium-confidence in the label note), and fix the comment to point at it. Close plan Left-open item 5 accordingly.
   Commit: `fix(navarra-tax): report the H3 negative-transmissions saldo in its own box`
 - **V3 — Discriminating fixtures for the pinned readings.** Status: TODO
