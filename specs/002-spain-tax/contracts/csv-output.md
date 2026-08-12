@@ -107,6 +107,15 @@ at full precision.
 | `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` | Prior-year balances consumed **inside their own group** this year (Fase 2ª-1º) |
 | `SUMMARY_CROSS_OFFSET_RCM_TO_GYP` / `_GYP_TO_RCM` | Current-year cross-group offset: Fase 1ª under Común, TRLFIRPF art. 54.2's own cross under Navarra; always 0 under Gipuzkoa |
 | `SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP` / `_GYP_TO_RCM` | Prior-year balance crossed into the other group: Fase 2ª-2º under Común, and under Navarra the part of the cross that only the broad reading of art. 54.2 allows |
+
+The label on those four rows is **per regime**, because the amount comes from a different statute in
+each. Común and Gipuzkoa carry the AEAT numbering (`fase 1ª (25% — sólo Territorio Común)` and
+`fase 2ª-2º (saldos de ejercicios anteriores)`); Navarra carries TRLFIRPF art. 54.2's own, where
+letra a) is the capital-mobiliario group and letra b) the transmisiones one, so the RCM row cites
+`art. 54.2.a` and the ganancias row `art. 54.2.b`, each capped at 25% of the *other* letra's positive
+after that letra absorbed its own carryforwards. Gipuzkoa's rows are structurally zero — it
+integrates the groups "exclusivamente entre sí" — and keep the state wording rather than earning a
+third vocabulary for a row that cannot fire. The keys never change; only the label cell does.
 | `SUMMARY_RCM_TAXABLE` / `SUMMARY_GYP_TAXABLE` | Each group after compensation |
 | `SUMMARY_SAVINGS_BASE` | Base liquidable del ahorro |
 | `SUMMARY_SAVINGS_QUOTA` | Cuota íntegra del ahorro |

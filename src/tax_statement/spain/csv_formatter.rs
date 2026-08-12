@@ -563,28 +563,54 @@ impl CsvFormatter {
             "Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — fase 2ª-1º",
             statement.gyp_own_group_losses_applied(),
         )?;
+        // Each regime crosses under its own statute, and these rows carry a real amount under two
+        // of them, so they name the article that produced it. TRLFIRPF art. 54.2 letra a) is the
+        // capital-mobiliario group and letra b) the transmisiones one; a negative in either is
+        // capped at 25% of the other's positive *after* that other absorbed its own carryforwards,
+        // which is exactly what the AEAT "fase" numbering does not describe. Gipuzkoa integrates
+        // the groups "exclusivamente entre sí", so its rows are structurally zero and keep the
+        // state wording rather than earning a third vocabulary for a row that cannot fire.
+        let (cross_rcm, cross_gyp, prior_rcm, prior_gyp) = match statement.regime {
+            SpanishTaxRegime::Gipuzkoa | SpanishTaxRegime::Comun => (
+                "Compensación cruzada RCM → ganancias — fase 1ª (25% — sólo Territorio Común)",
+                "Compensación cruzada ganancias → RCM — fase 1ª (25% — sólo Territorio Común)",
+                "Compensación cruzada RCM → ganancias — fase 2ª-2º (saldos de ejercicios anteriores)",
+                "Compensación cruzada ganancias → RCM — fase 2ª-2º (saldos de ejercicios anteriores)",
+            ),
+            SpanishTaxRegime::Navarra => (
+                "Compensación cruzada RCM → ganancias — art. 54.2.a: 25% del saldo positivo \
+                 resultante de la letra b) — sólo Navarra",
+                "Compensación cruzada ganancias → RCM — art. 54.2.b: 25% del saldo positivo \
+                 resultante de la letra a) — sólo Navarra",
+                "Compensación cruzada RCM → ganancias — art. 54.2.a en el mismo orden (saldos de \
+                 ejercicios anteriores)",
+                "Compensación cruzada ganancias → RCM — art. 54.2.b en el mismo orden (saldos de \
+                 ejercicios anteriores)",
+            ),
+        };
+
         row(
             writer,
             "SUMMARY_CROSS_OFFSET_RCM_TO_GYP",
-            "Compensación cruzada RCM → ganancias — fase 1ª (25% — sólo Territorio Común)",
+            cross_rcm,
             statement.cross_offset_rcm_to_gyp,
         )?;
         row(
             writer,
             "SUMMARY_CROSS_OFFSET_GYP_TO_RCM",
-            "Compensación cruzada ganancias → RCM — fase 1ª (25% — sólo Territorio Común)",
+            cross_gyp,
             statement.cross_offset_gyp_to_rcm,
         )?;
         row(
             writer,
             "SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP",
-            "Compensación cruzada RCM → ganancias — fase 2ª-2º (saldos de ejercicios anteriores)",
+            prior_rcm,
             statement.prior_cross_offset_rcm_to_gyp,
         )?;
         row(
             writer,
             "SUMMARY_PRIOR_CROSS_OFFSET_GYP_TO_RCM",
-            "Compensación cruzada ganancias → RCM — fase 2ª-2º (saldos de ejercicios anteriores)",
+            prior_gyp,
             statement.prior_cross_offset_gyp_to_rcm,
         )?;
 
@@ -1884,6 +1910,55 @@ mod tests {
                 "summary row must stay within its 3 columns: {row}"
             );
         }
+    }
+
+    /// The cross-offset rows carry a non-zero amount under Navarra, so they must cite the statute
+    /// that produced it. The AEAT "fase" numbering is Territorio Común's own scheme and describes
+    /// nothing in TRLFIRPF art. 54.2, whose letra a) is the capital-mobiliario group and letra b)
+    /// the transmisiones one.
+    ///
+    /// Gipuzkoa integrates the groups "exclusivamente entre sí", so its rows are structurally zero;
+    /// it keeps the state wording rather than gaining a third vocabulary for a row that can never
+    /// fire, which is also what keeps its emitted bytes unchanged.
+    #[test]
+    fn the_cross_offset_rows_name_the_regimes_own_statute() {
+        let labels = |regime| {
+            let mut spain = statement(regime);
+            spain.calculate_totals();
+            let output = render(|w| CsvFormatter::write_summary_rows(w, &spain));
+            output
+                .lines()
+                .filter(|line| line.contains("CROSS_OFFSET_"))
+                .map(|line| line.split(',').nth(1).unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+
+        for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+            let rows = labels(regime);
+            assert_eq!(rows.len(), 4, "{regime:?}: {rows:?}");
+            assert!(rows[0].ends_with("fase 1ª (25% — sólo Territorio Común)"), "{rows:?}");
+            assert!(rows[1].ends_with("fase 1ª (25% — sólo Territorio Común)"), "{rows:?}");
+            assert!(
+                rows[2].ends_with("fase 2ª-2º (saldos de ejercicios anteriores)"),
+                "{rows:?}"
+            );
+            assert!(
+                rows[3].ends_with("fase 2ª-2º (saldos de ejercicios anteriores)"),
+                "{rows:?}"
+            );
+        }
+
+        let navarra = labels(SpanishTaxRegime::Navarra);
+        assert_eq!(navarra.len(), 4, "{navarra:?}");
+        for label in &navarra {
+            assert!(label.contains("art. 54.2"), "{label}");
+            assert!(!label.contains("fase"), "{label}");
+            assert!(!label.contains("Territorio Común"), "{label}");
+        }
+        // The direction each row reports decides which letra caps it: a negative in letra a) is
+        // capped at 25% of letra b)'s positive, and vice versa.
+        assert!(navarra[0].contains("art. 54.2.a"), "{navarra:?}");
+        assert!(navarra[1].contains("art. 54.2.b"), "{navarra:?}");
     }
 
     /// The fee-ceiling rows exist only where a ceiling does, and stay inside the summary block's
