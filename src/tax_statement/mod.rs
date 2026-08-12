@@ -148,25 +148,9 @@ fn generate_german_tax_statement(
 ) -> GenericResult<TelemetryRecordBuilder> {
     let year = year.ok_or("Tax year must be specified for German tax statement")?;
     let portfolio = config.get_portfolio(portfolio_name)?;
-    let broker = portfolio
-        .broker
-        .get_info(config, portfolio.plan.as_deref())?;
-
-    let broker_statement = BrokerStatement::read(
-        broker,
-        portfolio.statements_path()?,
-        &portfolio.symbol_remapping,
-        &portfolio.instrument_internal_ids,
-        &portfolio.instrument_names,
-        portfolio.get_tax_remapping()?,
-        &portfolio.tax_exemptions,
-        &portfolio.corporate_actions,
-        ReadingStrictness::TRADE_SETTLE_DATE
-            | ReadingStrictness::OTC_INSTRUMENTS
-            | ReadingStrictness::TAX_EXEMPTIONS
-            | ReadingStrictness::REPO_TRADES
-            | ReadingStrictness::GRANTS,
-    )?;
+    let broker_statement = BrokerStatement::load(config, portfolio,
+        ReadingStrictness::TRADE_SETTLE_DATE | ReadingStrictness::OTC_INSTRUMENTS | ReadingStrictness::TAX_EXEMPTIONS |
+        ReadingStrictness::REPO_TRADES | ReadingStrictness::GRANTS)?;
 
     broker_statement.check_period_against_tax_year(year)?;
 

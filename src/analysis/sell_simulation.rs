@@ -85,7 +85,7 @@ pub fn simulate_sell(
             // year-end holdings behind the §19 InvStG "fully disposed" test — so deferring every
             // step to the end of the loop would judge each disposal against a book where all the
             // others had already been sold, and pile their combined effect onto the first row.
-            statement.process_trades(None)?;
+            statement.process_trades(None, false)?;
             german.observe(&statement, &converter, tax_config, portfolio)?;
         }
     }
@@ -374,7 +374,7 @@ fn print_results(
                 let to_pay = country.cash(german.marginal(index));
                 Tax {
                     expected,
-                    paid: Cash::zero(country.currency),
+                    withheld: Cash::zero(country.currency),
                     deduction: expected - to_pay,
                     to_pay,
                 }

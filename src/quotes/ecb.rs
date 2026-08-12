@@ -17,7 +17,7 @@ use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::forex;
 use crate::formatting;
-use crate::http;
+use crate::network::http;
 use crate::quotes::{CurrencyRate, QuotesMap, QuotesProvider};
 use crate::time::{self, Date};
 use crate::types::Decimal;

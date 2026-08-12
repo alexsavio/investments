@@ -466,7 +466,7 @@ fn process_dividends(
         );
         let gross_amount_eur = convert_to_eur(converter, dividend.date, dividend.amount, &context)?;
         let foreign_withholding_tax =
-            convert_to_eur(converter, dividend.date, dividend.paid_tax, &context)?;
+            convert_to_eur(converter, dividend.date, dividend.tax_withheld, &context)?;
 
         // Get instrument info
         let instrument_info = broker_statement.instrument_info.get(&dividend.issuer);
@@ -1929,7 +1929,7 @@ mod tests {
             issuer: "NVDA".to_string(),
             original_issuer: "NVDA".to_string(),
             amount: Cash::new(currency, dec!(10)),
-            paid_tax: Cash::new(currency, dec!(0)),
+            tax_withheld: Cash::new(currency, dec!(0)),
             taxation_type: IssuerTaxationType::Manual { country_code: None },
             skip_from_cash_flow: false,
         };

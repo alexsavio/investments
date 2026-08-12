@@ -8,11 +8,10 @@
 use std::path::PathBuf;
 
 use crate::broker_statement::{BrokerStatement, ReadingStrictness};
-use crate::brokers::Broker;
-use crate::config::{Config, ForeignCurrencyTaxation};
+use crate::config::{Config, ForeignCurrencyTaxation, PortfolioConfig};
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::converter::{CurrencyConverter, CurrencyConverterBackend};
-use crate::taxes::{TaxConfig, TaxRemapping};
+use crate::taxes::TaxConfig;
 use crate::time::{self, Date};
 use crate::types::Decimal;
 
@@ -57,22 +56,15 @@ fn converter() -> CurrencyConverter {
 }
 
 fn read_fixture(name: &str) -> BrokerStatement {
-    let broker = Broker::InteractiveBrokers
-        .get_info(&Config::mock(), None)
-        .unwrap();
-    let path = PathBuf::from(format!("src/tax_statement/germany/testdata/{name}"));
-    BrokerStatement::read(
-        broker,
-        &path,
-        &Default::default(),
-        &Default::default(),
-        &Default::default(),
-        TaxRemapping::new(),
-        &[],
-        &[],
-        ReadingStrictness::all(),
-    )
-    .unwrap()
+    // The fixture path is repo-relative, so it is assigned after deserialization: the config
+    // deserializer requires an absolute path, which a checked-out test tree cannot provide.
+    let mut portfolio: PortfolioConfig =
+        serde_yaml::from_str("name: test\nbroker: interactive-brokers\n").unwrap();
+    portfolio.statements = Some(PathBuf::from(format!(
+        "src/tax_statement/germany/testdata/{name}"
+    )));
+
+    BrokerStatement::load(&Config::mock(), &portfolio, ReadingStrictness::all()).unwrap()
 }
 
 /// Run the full German tax pipeline over a fixture with an explicit tax config, defaulting to the
