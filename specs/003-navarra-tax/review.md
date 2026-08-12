@@ -43,7 +43,7 @@ Everything below is text/contract/coverage; both reviewers independently reprodu
 - **W3 — Re-derive Appendix A §A.4 edge 3.** Status: DONE (`bfcf9a90`)
   plan.md:229-233 still says the exemption is "suppressed for any year with an FX conversion realization" — V4a narrowed that, and the plan's own primacy rule demands the amendment in its own `docs(plan)` commit. State the three boundaries as shipped (docs §13 already has them).
   Commit: `docs(plan): re-derive Appendix A for the narrowed exemption caveat`
-- **W4 — Discriminate and register the exemption-ceiling choice.** Status: TODO
+- **W4 — Discriminate and register the exemption-ceiling choice.** Status: DONE (`7f2a66a5`; Appendix A hand-computation in `e6b69ef3`, no discrepancy found)
   The implementation measures 2.º's 50% ceiling on ALL transmissions' proceeds while `I` is gains-only; no fixture can distinguish that from a gains-only ceiling, and the choice's failure direction is LESS tax (non-conservative), unregistered. Add the discriminating fixture (gain sale ~€400 proceeds/+€300; loss sale ~€2,000/−€600 → all-proceeds ceiling exempts 300, gains-only 200; use converter-representable euros, record in Appendix A first), pin the implemented all-proceeds reading, and add the register §13 entry (art. 39.5.d.2.º "importe global de la transmisión", direction noted).
   Commit: `test(navarra-tax): pin the exemption ceiling on all transmissions' proceeds`
 - **W5 — Low/record batch.** Status: TODO — one commit:
