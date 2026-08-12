@@ -30,7 +30,7 @@ Key existing infrastructure you must reuse (details in Appendix B):
 
 ### T0. Integration fixture test for the Flex Query → German CSV pipeline
 
-**Status: ✅ Done** (commit `457fdf10`) — fixtures + harness under `src/tax_statement/germany/testdata/{fifo,income_edge}` and `tests.rs`; parser-edge test in `flex_query.rs`.
+**Status: ✅ Done** (commit `20eba90e`) — fixtures + harness under `src/tax_statement/germany/testdata/{fifo,income_edge}` and `tests.rs`; parser-edge test in `flex_query.rs`.
 
 **Problem**: no test exercises the real pipeline. All five CRITICAL bugs live in code paths with zero coverage.
 
@@ -55,7 +55,7 @@ Key existing infrastructure you must reuse (details in Appendix B):
 
 ### T1. Wire ECB exchange rates; stop converting EUR amounts through the Russian Central Bank
 
-**Status: ✅ Done** (commit `9e2938a6`) — `pub mod ecb;` wired; rate direction inverted (`price = 1/parsed_rate`); `CurrencyConverter::new_ecb` with a cache-key-namespaced EUR-base backend; German flow switched to it.
+**Status: ✅ Done** (commit `5e7ab094`) — `pub mod ecb;` wired; rate direction inverted (`price = 1/parsed_rate`); `CurrencyConverter::new_ecb` with a cache-key-namespaced EUR-base backend; German flow switched to it.
 
 **Problem (CRITICAL)**: `src/quotes/ecb.rs` is dead code — there is no `mod ecb;` declaration in `src/quotes/mod.rs`, so the file is never compiled. The German flow (`src/tax_statement/mod.rs:203`) builds `CurrencyConverter::new(database, None, true)` whose backend is hardwired to CBR (`src/currency/converter.rs:139`, `cbr::Cbr::new("https://www.cbr.ru")`, `cbr::BASE_CURRENCY = "RUB"`). Every USD→EUR conversion is a USD→RUB→EUR cross-rate from cbr.ru, with fallback windows governed by `localities::get_russian_central_bank_min_last_working_day`. Docs (`docs/germany-taxes.md:180`) claim ECB rates; the error message in `processor.rs:36` blames "missing ECB exchange rates".
 
@@ -88,7 +88,7 @@ Key existing infrastructure you must reuse (details in Appendix B):
 
 ### T2. Replace the hand-rolled cost basis with `StockSell::calculate()` / per-lot FIFO
 
-**Status: ✅ Done** (commit `8494c7ef`) — `process_trades` uses `StockSell::calculate()`; grant lots costed at vest-date FMV; per-lot Altbestand; tax year keyed off conclusion date; dead `taxes/germany/capital_gains.rs` deleted.
+**Status: ✅ Done** (commit `d4842a78`) — `process_trades` uses `StockSell::calculate()`; grant lots costed at vest-date FMV; per-lot Altbestand; tax year keyed off conclusion date; dead `taxes/germany/capital_gains.rs` deleted.
 
 **Problem (CRITICAL)**: `calculate_cost_basis` (`src/tax_statement/germany/processor.rs:285-333`):
 - Re-matches every sale against **all** buys from the beginning without consuming lots used by earlier sales. Buy 100 @ €10 (Jan), buy 100 @ €20 (Feb), sell 100 (Mar), sell 100 (Apr) → both sales get the €10 lot; April's true cost basis (€2,000) is reported as €1,000, overstating the gain by €1,000.
@@ -149,7 +149,7 @@ Read Appendix A before starting this phase; every formula and worked example you
 
 ### T4. Church tax: fix config scaling and implement the §32d(1) formula
 
-**Status: ✅ Done** (commit `b7f8e237`) — one shared `GermanTaxRates::compute_taxes` implements `max(0, e−4q)/(4+k)` with Soli and KiSt off the post-credit tax; config accepts 0/8/9 or 0.08/0.09 and rejects the rest; per-item `q = min(WHT, 15% gross, 25% taxable)` with `q=0` for funds; pre-2009 returns an error not a panic; dead `calculate_german_taxes`/`calculate_dividend_tax` deleted; docs and effective-rate table corrected.
+**Status: ✅ Done** (commit `ede9a6d3`) — one shared `GermanTaxRates::compute_taxes` implements `max(0, e−4q)/(4+k)` with Soli and KiSt off the post-credit tax; config accepts 0/8/9 or 0.08/0.09 and rejects the rest; per-item `q = min(WHT, 15% gross, 25% taxable)` with `q=0` for funds; pre-2009 returns an error not a panic; dead `calculate_german_taxes`/`calculate_dividend_tax` deleted; docs and effective-rate table corrected.
 
 **Problem (CRITICAL)**:
 1. Docs (`docs/germany-taxes.md:19`, `docs/config-example.yaml:193`) tell users `church_tax_rate: 9`, but the value flows raw into the math (`src/tax_statement/mod.rs:190` → `rates.rs:31`), where it is used as a *fraction*: `kirchensteuer = abgeltungssteuer * 9` → **900% church tax**. All unit tests pass `dec!(0.09)`, masking it.
@@ -175,7 +175,7 @@ Read Appendix A before starting this phase; every formula and worked example you
 
 ### T5. Loss offsetting pots, Sparer-Pauschbetrag, and removal of the illegal fee deduction
 
-**Status: ✅ Done** (commit `1466588e`) — `calculate_totals` keeps separate §20(6) stock and general pots (gain/loss by `taxable_amount` sign), each with its own prior-year carryforward and next-year residual; the general pot offsets dividends and interest; Sparer-Pauschbetrag (config split into stock/other single amounts) reduces the combined positive result; fees are informational only (§20(9)); the summary tax is computed once on the final base, not summed from rows.
+**Status: ✅ Done** (commit `a7353b27`) — `calculate_totals` keeps separate §20(6) stock and general pots (gain/loss by `taxable_amount` sign), each with its own prior-year carryforward and next-year residual; the general pot offsets dividends and interest; Sparer-Pauschbetrag (config split into stock/other single amounts) reduces the combined positive result; fees are informational only (§20(9)); the summary tax is computed once on the final base, not summed from rows.
 
 **Problem (HIGH ×3)** in `GermanTaxStatement::calculate_totals` (`src/tax_statement/germany/statement.rs:318-492`):
 1. `net_capital_gain_loss = gains − losses + fx_gains − fx_losses − fees` merges everything into one pot and applies one carryforward. §20(6) S.4 EStG: losses from **share** sales (Aktien — direct stock only, *not* fund/ETF units) offset only share-sale gains. Everything else (fund-sale losses, FX losses, general losses) lives in the general pot, which offsets **all** capital income *including dividends and interest* — which the code explicitly refuses to do (`statement.rs:409` comment).
@@ -202,7 +202,7 @@ Read Appendix A before starting this phase; every formula and worked example you
 
 ### T6. Fix the Anlage KAP mapping
 
-**Status: ✅ Done** (commit `9283aeb7`) — Anlage KAP reports non-fund income only (Zeile 19 net of contained losses, Zeile 20 share-sale gains, Zeilen 22/23 split non-share vs share-sale losses, Zeile 41 credit); fund income (any Teilfreistellung class, incl. bond) moves to a gross-value Anlage KAP-INV section by fund type; Zeile 19/20 built from Altbestand-adjusted `taxable_amount` so a pure pre-2009 sale lands on neither line; docs describe the KAP/KAP-INV split and the not-yet-computed Vorabpauschale. The `TODO(verify)` markers this task asked for were closed on 2026-08-11 against the official 2024 and 2025 forms — see `open-items.md`; every emitted line number was already correct.
+**Status: ✅ Done** (commit `a5f947ab`) — Anlage KAP reports non-fund income only (Zeile 19 net of contained losses, Zeile 20 share-sale gains, Zeilen 22/23 split non-share vs share-sale losses, Zeile 41 credit); fund income (any Teilfreistellung class, incl. bond) moves to a gross-value Anlage KAP-INV section by fund type; Zeile 19/20 built from Altbestand-adjusted `taxable_amount` so a pure pre-2009 sale lands on neither line; docs describe the KAP/KAP-INV split and the not-yet-computed Vorabpauschale. The `TODO(verify)` markers this task asked for were closed on 2026-08-11 against the official 2024 and 2025 forms — see `open-items.md`; every emitted line number was already correct.
 
 **Problem (HIGH)** (`statement.rs:432-491`): Zeile 19 is computed from **gains only**, while Zeilen 22/23 declare losses that the official form defines as "contained in" lines 18/19 — a Finanzamt processing these numbers double-counts the losses. Zeile 20 (contained gains from *share* sales, needed to operate the stock pot) is missing entirely. Fund income is reported on KAP although foreign-held **investment fund** income belongs on **Anlage KAP-INV** (gross, pre-Teilfreistellung — the Finanzamt applies the exemption itself).
 
@@ -229,7 +229,7 @@ Read Appendix A before starting this phase; every formula and worked example you
 
 ### T7. Replace the FX margin-loan magnitude heuristic
 
-**Status: ✅ Done** (commit `fd8ca9af`) — one balance-based classifier for both parse paths: a conversion is a non-taxable margin-loan repayment only when the converted currency carried a negative starting balance (from the CashReport `startingCash`); unknown balance fails open to taxable + a warning. Whole-conversion classification (pro-rata split noted as a simplification). Deleted `determine_fx_is_margin_loan` + `parse_forex_notional`.
+**Status: ✅ Done** (commit `2b8c1889`) — one balance-based classifier for both parse paths: a conversion is a non-taxable margin-loan repayment only when the converted currency carried a negative starting balance (from the CashReport `startingCash`); unknown balance fails open to taxable + a warning. Whole-conversion classification (pro-rata split noted as a simplification). Deleted `determine_fx_is_margin_loan` + `parse_forex_notional`.
 
 **Problem (HIGH)**: `determine_fx_is_margin_loan` (`flex_query.rs:760-781`) classifies any FX conversion with `|quantity| > 100` as a non-taxable margin-loan repayment; `processor.rs:559` then drops the gain from taxable income. Converting $5,000 of accumulated dividend cash to EUR at a profit → silently untaxed (§20 Abs. 2 EStG exposure). The threshold is also unit-confused (FX units, not EUR as the comments claim) and the StmtFunds fallback path (lines 666-668) uses a *different* heuristic.
 
@@ -239,7 +239,7 @@ Read Appendix A before starting this phase; every formula and worked example you
 
 ### T8. Remove symbol-pattern derivative detection
 
-**Status: ✅ Done** (commit `e9a8c6d0`) — deleted `is_derivative`/`warn_if_derivative`; selection is by IB `assetCategory` at the parser (`parse_trade` keeps STK only, warns naming symbol + category on any skipped non-stock, FR-016). Same guard on the StmtFunds fallback. `test_derivative_detection` → parser-level test; new `derivative` fixture proves GLW (a 'W'-ending real ticker) is no longer dropped.
+**Status: ✅ Done** (commit `5d9e44d0`) — deleted `is_derivative`/`warn_if_derivative`; selection is by IB `assetCategory` at the parser (`parse_trade` keeps STK only, warns naming symbol + category on any skipped non-stock, FR-016). Same guard on the StmtFunds fallback. `test_derivative_detection` → parser-level test; new `derivative` fixture proves GLW (a 'W'-ending real ticker) is no longer dropped.
 
 **Problem (HIGH)**: `is_derivative` (`processor.rs:45-83`) drops any symbol ending in `W` or containing `WS`/`WT`/`NOTE`/`CERT` — real tickers (GLW Corning, WST West Pharmaceutical, …) silently vanish from the tax report (income omission). For the Flex path the check is redundant: IB provides `assetCategory` and `parse_trade` already keeps only `STK`.
 
@@ -247,7 +247,7 @@ Read Appendix A before starting this phase; every formula and worked example you
 
 ### T9. Explicit rounding at output
 
-**Status: ✅ Done** (commit `ced12337`) — `format_decimal` rounds once with `MidpointAwayFromZero` then `rescale(2)` (half-up, trailing zeros rendered) instead of the truncating `{:.2}`.
+**Status: ✅ Done** (commit `d08cf8d8`) — `format_decimal` rounds once with `MidpointAwayFromZero` then `rescale(2)` (half-up, trailing zeros rendered) instead of the truncating `{:.2}`.
 
 **Problem (MEDIUM, empirically verified)**: `GermanCsvFormatter::format_decimal` uses `format!("{:.2}", value)`, which on `rust_decimal` **truncates** (verified: `0.518 → "0.51"`, `0.015675 → "0.01"`). The shipped sample CSV contains a row whose components don't sum (GOOG: 1.60 + 0.08 + 0.00 vs. total 1.69).
 
@@ -265,7 +265,7 @@ Round **once** per reported figure (components and totals each rounded from full
 
 ### T10. Cleanup batch (one commit, mechanical)
 
-**Status: ✅ Done** (commit `8d2fda8a`) — all 8 items: `TaxJurisdiction` serde enum (typo → hard error); CSV numeric `N/A` → empty, `notes` escaped, empty dividend quantity, summary block 3-column header + `contracts/csv-output.md`; UTF-8-safe `get(..8)` datetime slice; FOREX-arm `collapsible_match` fix; `/german-tax-*.csv` gitignored; withholding-regex miss → warn+skip; localities `germany` approximation comment. (Pre-existing nightly-clippy lints in untouched files — `broker_statement/mod.rs`, `rebalancing.rs`, `cbr`, `ecb`, `statistics.rs`, `xls/table.rs` — left as out-of-scope.)
+**Status: ✅ Done** (commit `a42c9f22`) — all 8 items: `TaxJurisdiction` serde enum (typo → hard error); CSV numeric `N/A` → empty, `notes` escaped, empty dividend quantity, summary block 3-column header + `contracts/csv-output.md`; UTF-8-safe `get(..8)` datetime slice; FOREX-arm `collapsible_match` fix; `/german-tax-*.csv` gitignored; withholding-regex miss → warn+skip; localities `germany` approximation comment. (Pre-existing nightly-clippy lints in untouched files — `broker_statement/mod.rs`, `rebalancing.rs`, `cbr`, `ecb`, `statistics.rs`, `xls/table.rs` — left as out-of-scope.)
 
 1. `jurisdiction` config: replace the `Option<String>` + `Some("germany") | Some("Germany")` match (`config.rs`, `get_tax_country`) with a serde enum `Jurisdiction { Russia, Germany }` (lowercase rename attr) so a typo is a config **error**, not a silent fallback to Russia.
 2. CSV structure (`csv_formatter.rs`): give summary/KAP rows the full 21-column shape (pad with empty fields) or move them to a clearly separated second block after a blank line with their own 3-column header; escape `notes` through `escape_csv`; replace `N/A` in numeric columns with empty fields. Update `contracts/csv-output.md` to match.
@@ -282,7 +282,7 @@ Round **once** per reported figure (components and totals each rounded from full
 
 ### T11. Vorabpauschale (advance lump-sum taxation for funds)
 
-**Interim done** (commit `88866a53`) — the "until implemented" warning is live: `fund_identifiers()` drives a console `warn!` and a `# WARNING` CSV block naming any fund holding, so the omission is loud, not silent. The full calc remains deferred (blocked on year-boundary per-fund NAVs — `OpenPosition` only carries a single report-date `markPrice`, so `nav_jan1` needs the prior year's statement or a config carry-in — plus per-lot cross-year netting at sale, plus BMF Basiszins verification).
+**Interim done** (commit `32c15edd`) — the "until implemented" warning is live: `fund_identifiers()` drives a console `warn!` and a `# WARNING` CSV block naming any fund holding, so the omission is loud, not silent. The full calc remains deferred (blocked on year-boundary per-fund NAVs — `OpenPosition` only carries a single report-date `markPrice`, so `nav_jan1` needs the prior year's statement or a config carry-in — plus per-lot cross-year netting at sale, plus BMF Basiszins verification).
 
 Missing entirely and *not* in the spec's out-of-scope list; for accumulating ETFs at a foreign broker this is a mandatory yearly taxable event since 2023. It is deferred because it needs year-start/year-end NAVs per fund (new data dependency).
 

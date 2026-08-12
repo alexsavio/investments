@@ -31,26 +31,26 @@ Source: Hacienda Foral de Gipuzkoa "Propuesta de autoliquidación" specimen PDFs
 
 ## Tasks
 
-- **O1 — Venue-aware wash-sale disclosure.** Status: ✅ Done (`d97b88e2`)
+- **O1 — Venue-aware wash-sale disclosure.** Status: ✅ Done (`272c1fbd`)
   (a) Upgrade the marker + docs from "unresolved" to CONFIRMED-2-months for equivalence-decision venues, citing V0778-25/V0951-25, Decision 2017/2320 (+2318/2319), the in-force condition, and the foral persuasive-not-binding note. The engine's 2-month window is now the DGT's own criterion — behavior unchanged.
   (b) NEW runtime warning: using the instrument's listing-exchange metadata where the Flex statement provides it (SecurityInfo listing exchange; fall back to "unknown"), classify venues against a hardcoded equivalent-set table (US 2017/2320 list, EEA venues, ASX, SEHK; sourced comment). For every loss whose homogeneous repurchases fall ONLY in the (2-months, 1-year] zone AND whose venue is non-equivalent or unknown-non-US, emit a warning (log + console + CSV `WASH_SALE_VENUE_REVIEW` row) quantifying the loss that the 1-year limb would defer. Equivalent-venue instruments in that zone need no warning (settled). Do NOT change deferral behavior — warn-only, documented as such.
   (c) ADR note in docs (V1872-25: dual-listed same-class homogeneous; ADR↔ordinary open; ISIN matching aligns with the consulta).
   Tests: fixture or unit tests with a fabricated non-equivalent-venue instrument (repurchase at 3 months → warning; at 1 month → normal deferral, no warning) and an NYSE instrument (no warning either way).
   Commit: `feat(spain-tax): warn when the wash-sale window turns on venue equivalence`
-- **O2 — Endpoint citations + boundary warnings.** Status: ✅ Done (`e894a33e`)
+- **O2 — Endpoint citations + boundary warnings.** Status: ✅ Done (`36012b77`)
   (a) Replace the `wash_sale.rs:33` marker with the settled basis (CC 5.1; STS 552/2022 RC 1874/2021; STS 287/2009; Ley 39/2015 art. 30.4; OnTax worked dates). Behavior unchanged (inclusive, last-day clamp).
   (b) NEW warnings when an outcome actually turns on residual arithmetic ambiguity: a repurchase landing EXACTLY on the anterior/posterior boundary ordinal that causes a deferral (or is the nearest miss just outside), and any window whose boundary was month-end CLAMPED where a repurchase falls within the clamp-affected span. Emit log + console + CSV note on the affected sale row; message names the two dates and the euro amount at stake.
   Tests: rstest boundary cases (repurchase on D+2-months exactly → deferred + warned; sale 31-12 with repurchase 28-02 → clamp warning; mid-window repurchase → no warning).
   Commit: `feat(spain-tax): warn when a wash-sale deferral turns on window-boundary arithmetic`
-- **O3 — Doctrine-based fee classifier.** Status: ✅ Done (`88a15f72`)
+- **O3 — Doctrine-based fee classifier.** Status: ✅ Done (`90ed30c6`)
   Replace the keyword heuristic with the three-bucket + WARN classifier from V3 (Común path; Gipuzkoa untouched — everything stays informational there). Bucket A deducts; C is non-deductible with the citation in the row note; WARN types are non-deductible AND emit a warning naming the open interpretation ("no DGT doctrine on <type>; not deducted — consult a gestor if material") with log + console + CSV note. Replace the `processor.rs` fee marker with the citations (V2117-19, V2629-13, V1047-16, 03-04-1998, AEAT Manual cap. 5); docs get the per-type verdict table incl. the foreign-broker medium-confidence note.
   Tests: unit tests per bucket keyword; fixture with a custody fee (deducted, Común), a market-data fee (denied, note), an inactivity fee (denied + warning).
   Commit: `feat(spain-tax): classify broker fees per DGT doctrine and warn on unresolved types`
-- **O4 — Per-ejercicio Modelo 109 casillas.** Status: ✅ Done (`1a16e565`)
+- **O4 — Per-ejercicio Modelo 109 casillas.** Status: ✅ Done (`b889f575`)
   Replace the single 2019 map with per-ejercicio Hoja tables (V4): savings-relevant rows keyed to Hoja numbers (28, 29, 30, 31, 33, 38, and DDI 60/70, cuota líquida 64/74 by year); the DDI row LOSES `CASILLA_UNKNOWN` for 2023–2025 (real numbers) and 2026 emits the 2025 layout with a "2025-layout, 2026 form unpublished" warning. Keep the Anexo-3 rows (`06+16`, `17`) for ejercicios ≤2024 only, with keys renamed to say the sheet (`MODELO_109_ANEXO3_...` vs `MODELO_109_HOJA_...`); for ≥2025 emit the Hoja rows only plus a warning that Anexo-level internals are unverified post-reform. Cite the specimen-PDF sources + retrieval date in the code comment and contract. Update the CSV contract (key shapes, per-year mapping table) and `docs/spain-taxes.md`.
   Tests: formatter tests pinning the 2024 vs 2025 vs 2026 mappings (DDI 60 vs 70 vs 70+warning).
   Commit: `feat(spain-tax): map Modelo 109 boxes per ejercicio from the official specimens`
-- **O5 — "Open interpretations" documentation section.** Status: ✅ Done (`7ad7e081`)
+- **O5 — "Open interpretations" documentation section.** Status: ✅ Done (`efb7b0d1`)
   New section in `docs/spain-taxes.md` — one entry per item, each with: status (SETTLED / SETTLED-WITH-EDGE-CASES / OPEN), the authority (consulta/sentencia/specimen with URL + retrieval date), the tool's implemented reading, the exact warning text the tool emits when the case arises, and what the filer should do on seeing it. Entries: venue equivalence (incl. Switzerland lapse, ADR question), window endpoints (incl. the two boundary warn-cases), fee types (per-type table, two warn-types, foreign-broker note), Modelo 109 casillas (Hoja verified 2023–2025, Anexo ≥2025 unverified, 2026 unpublished), and the carried items with their existing warnings (IIC distributions inside the €1,500 exemption; borrowed-balance FX; fecha de transmisión trade-vs-settlement; deferred-loss quantities across splits; Modelo 100 numbers from the consultation draft). Cross-link every runtime warning to its entry. Update `review2.md`/`remediation.md` marker inventories (fee + endpoint + casilla markers now resolved; venue marker resolved for equivalent venues, residual warn-case documented).
   Commit: `docs(spain-tax): add the open-interpretations register`
 - **O6 — Gate, smoke, close-out.** Status: ✅ Done — see the close-out at the end of this file.
@@ -64,17 +64,17 @@ Source: Hacienda Foral de Gipuzkoa "Propuesta de autoliquidación" specimen PDFs
 
 ## Close-out (O6)
 
-**Date**: 2026-08-11 · Branch `002-spain-tax`, five tasks on top of `c0bc4f6b`.
+**Date**: 2026-08-11 · Branch `002-spain-tax`, five tasks on top of `55cf7791`.
 
 ### Commits
 
 | Task | Commit |
 |---|---|
-| O1 venue-aware wash-sale disclosure | `d97b88e2` |
-| O2 endpoint citations + boundary warnings | `e894a33e` |
-| O3 doctrine-based fee classifier | `88a15f72` |
-| O4 per-ejercicio Modelo 109 casillas | `1a16e565` |
-| O5 open-interpretations register | `7ad7e081` |
+| O1 venue-aware wash-sale disclosure | `272c1fbd` |
+| O2 endpoint citations + boundary warnings | `36012b77` |
+| O3 doctrine-based fee classifier | `90ed30c6` |
+| O4 per-ejercicio Modelo 109 casillas | `b889f575` |
+| O5 open-interpretations register | `efb7b0d1` |
 
 Plus two `docs(plan)` status commits and this one.
 

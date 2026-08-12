@@ -61,7 +61,7 @@ year's Freigrenze.
 
 ## What changed
 
-- **`fix(germany-tax)` (`bf1b6bbb`)** — both `TODO(verify)` markers replaced by citations naming the
+- **`fix(germany-tax)` (`0c2a1fc6`)** — both `TODO(verify)` markers replaced by citations naming the
   form, print id, source URL and retrieval date. The CSV banners over the KAP and KAP-INV blocks now
   say the Zeilen are verified for 2024 and 2025 instead of asking the filer to re-check them. Two new
   formatter tests pin the mappings (`kap_inv_zeilen_match_the_official_form`,
