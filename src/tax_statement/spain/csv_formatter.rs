@@ -105,6 +105,54 @@ mod modelo_100 {
     pub const RCM_WITHHOLDING: &str = "0597";
 }
 
+/// Modelo F-93 box numbers, read from the fully numbered form the Boletín Oficial de Navarra
+/// publishes as Anexo I of each campaign's Orden Foral.
+///
+/// Verified against the ejercicio-2025 specimen (Orden Foral 24/2026, BON nº 66 of 07-04-2026),
+/// retrieved 2026-08-12. Where the form states its own arithmetic the constants below reproduce it,
+/// so a wrong mapping shows up as a sum that does not close rather than as a plausible number.
+mod modelo_f93 {
+    /// Ejercicio whose specimen these numbers were read from.
+    pub const VERIFIED_EJERCICIO: i32 = 2025;
+
+    /// Página 2, rendimientos del capital mobiliario — parte especial del ahorro.
+    pub const RCM_DIVIDENDS: &str = "031";
+    pub const RCM_INTEREST: &str = "037";
+    pub const RCM_EXPENSES: &str = "047";
+    pub const RCM_NET: &str = "050";
+    /// Total retenciones del capital mobiliario — Spanish withholding only, and one of the
+    /// components of casilla 579. Named so the warning can point at it; never emitted as a row.
+    pub const RCM_WITHHOLDING: &str = "030 (suma en 579)";
+
+    /// Anexo 1, transmisiones: the "incremento o disminución PARTE ESPECIAL DEL AHORRO" column
+    /// total, and the per-transmission "incremento exento, otros supuestos" cells the art. 39.5.d
+    /// relief is entered in.
+    pub const TRANSFERS_TOTAL: &str = "706";
+    pub const TRANSFERS_EXEMPT: &str = "1658-1672";
+
+    /// Anexo 2, apartado H — resumen de la parte especial del ahorro.
+    pub const H1_TRANSFERS_POSITIVE: &str = "8808";
+    pub const H1_OWN_LOSSES: &str = "809";
+    pub const H1_RCM_LOSSES_CROSSED: &str = "8815";
+    pub const H1_NET: &str = "8809";
+    pub const H2_RCM_POSITIVE: &str = "8810";
+    pub const H2_OWN_LOSSES: &str = "8825";
+    pub const H2_TRANSFER_LOSSES_CROSSED: &str = "8805";
+    pub const H2_NET: &str = "8840";
+    pub const H4_RCM_NEGATIVE: &str = "8850";
+    pub const TOTAL: &str = "8841";
+    /// Base and cuota, each with the página-7 summary box that repeats it.
+    pub const SAVINGS_BASE: &str = "815 (= 524)";
+    pub const SAVINGS_QUOTA: &str = "829 (= 527)";
+    /// Saldos negativos a compensar en los ejercicios siguientes.
+    pub const TRANSFERS_CARRYFORWARD: &str = "818";
+    pub const RCM_CARRYFORWARD: &str = "8875";
+
+    /// Deducción por doble imposición internacional. **Not** 613, which is the transparencia fiscal
+    /// internacional deduction and a different relief entirely.
+    pub const FOREIGN_TAX_CREDIT: &str = "572";
+}
+
 /// CSV formatter for Spanish tax statements.
 pub struct CsvFormatter;
 
@@ -926,8 +974,186 @@ impl CsvFormatter {
                 )?;
                 writeln!(
                     writer,
-                    "# publishes as Anexo I of the campaign's Orden Foral (retrieved 2026-08-12)."
+                    "# publishes as Anexo I of the campaign's Orden Foral: the ejercicio-{}",
+                    modelo_f93::VERIFIED_EJERCICIO
                 )?;
+                writeln!(
+                    writer,
+                    "# specimen (Orden Foral 24/2026, BON nº 66 of 07-04-2026, retrieved 2026-08-12)."
+                )?;
+
+                if statement.year < modelo_f93::VERIFIED_EJERCICIO {
+                    writeln!(
+                        writer,
+                        "# WARNING: the ejercicio-{} form has the same structure but its own",
+                        statement.year
+                    )?;
+                    writeln!(
+                        writer,
+                        "# numbering was not checked against a specimen. Verify every casilla."
+                    )?;
+                } else if statement.year > modelo_f93::VERIFIED_EJERCICIO {
+                    writeln!(
+                        writer,
+                        "# WARNING: no form is published for ejercicio {} yet — it is filed in {}.",
+                        statement.year,
+                        statement.year + 1
+                    )?;
+                    writeln!(
+                        writer,
+                        "# These are the ejercicio-{} numbers, the last published layout.",
+                        modelo_f93::VERIFIED_EJERCICIO
+                    )?;
+                }
+
+                let zero = Decimal::ZERO;
+                let boxes = [
+                    (
+                        modelo_f93::RCM_DIVIDENDS,
+                        "Dividendos y participación en beneficios (art. 28.a y b) — importe íntegro                          (página 2)",
+                        statement.total_dividend_income,
+                    ),
+                    (
+                        modelo_f93::RCM_INTEREST,
+                        "Intereses de cuentas y otros rendimientos por cesión de capitales propios                          (página 2)",
+                        statement.total_interest_income,
+                    ),
+                    (
+                        modelo_f93::RCM_EXPENSES,
+                        "Gastos de administración y depósito, tras el límite del 3% (art. 32.1.a)                          (página 2)",
+                        statement.total_deductible_fees,
+                    ),
+                    (
+                        modelo_f93::RCM_NET,
+                        "Rendimiento neto del capital mobiliario (página 2)",
+                        statement.rcm_net,
+                    ),
+                    (
+                        modelo_f93::TRANSFERS_TOTAL,
+                        "Incremento o disminución de la parte especial del ahorro por transmisiones                          (anexo 1)",
+                        statement.gyp_net,
+                    ),
+                    (
+                        modelo_f93::H1_TRANSFERS_POSITIVE,
+                        "H1 — saldo positivo procedente de transmisiones (anexo 2)",
+                        std::cmp::max(zero, statement.gyp_net),
+                    ),
+                    (
+                        modelo_f93::H1_OWN_LOSSES,
+                        "H1 — compensación con saldos negativos propios de transmisiones (anexo 2)",
+                        statement.gyp_own_group_losses_applied(),
+                    ),
+                    (
+                        modelo_f93::H1_RCM_LOSSES_CROSSED,
+                        "H1 — compensación con saldos negativos del capital mobiliario (anexo 2)",
+                        statement.cross_offset_rcm_to_gyp + statement.prior_cross_offset_rcm_to_gyp,
+                    ),
+                    (
+                        modelo_f93::H1_NET,
+                        "H1 — parte positiva neta procedente de transmisiones (anexo 2)",
+                        statement.gyp_taxable,
+                    ),
+                    (
+                        modelo_f93::H2_RCM_POSITIVE,
+                        "H2 — saldo positivo procedente de rendimientos del capital mobiliario                          (anexo 2)",
+                        std::cmp::max(zero, statement.rcm_net),
+                    ),
+                    (
+                        modelo_f93::H2_OWN_LOSSES,
+                        "H2 — compensación con saldos negativos propios del capital mobiliario                          (anexo 2)",
+                        statement.rcm_own_group_losses_applied(),
+                    ),
+                    (
+                        modelo_f93::H2_TRANSFER_LOSSES_CROSSED,
+                        "H2 — compensación con saldos negativos procedentes de transmisiones                          (anexo 2)",
+                        statement.cross_offset_gyp_to_rcm + statement.prior_cross_offset_gyp_to_rcm,
+                    ),
+                    (
+                        modelo_f93::H2_NET,
+                        "H2 — parte positiva neta procedente del capital mobiliario (anexo 2)",
+                        statement.rcm_taxable,
+                    ),
+                    (
+                        modelo_f93::TOTAL,
+                        "Total parte especial del ahorro (anexo 2)",
+                        statement.savings_base,
+                    ),
+                    (
+                        modelo_f93::SAVINGS_BASE,
+                        "Base liquidable especial del ahorro (anexo 2, repetida en la página 7)",
+                        statement.savings_base,
+                    ),
+                    (
+                        modelo_f93::SAVINGS_QUOTA,
+                        "Cuota íntegra especial del ahorro (anexo 2, repetida en la página 7)",
+                        statement.savings_quota,
+                    ),
+                    (
+                        modelo_f93::FOREIGN_TAX_CREDIT,
+                        "Deducción por doble imposición internacional (página 6)",
+                        statement.total_foreign_tax_credit,
+                    ),
+                ];
+
+                for (casilla, label, value) in boxes {
+                    writeln!(
+                        writer,
+                        "MODELO_F93_{casilla},{label},{}",
+                        Self::format_decimal(value)
+                    )?;
+                }
+
+                // Only emitted when they carry something: a zero in a negative-saldo box invites a
+                // filer to fill in a block the year does not have.
+                let conditional = [
+                    (
+                        modelo_f93::TRANSFERS_EXEMPT,
+                        "Incremento exento, otros supuestos — exención de transmisiones hasta                          3.000 € (art. 39.5.d; una celda por transmisión, anexo 1)",
+                        statement.small_disposals_exemption,
+                    ),
+                    (
+                        modelo_f93::H4_RCM_NEGATIVE,
+                        "H4 — saldo negativo procedente de rendimientos del capital mobiliario                          (anexo 2)",
+                        std::cmp::max(zero, -statement.rcm_net),
+                    ),
+                    (
+                        modelo_f93::TRANSFERS_CARRYFORWARD,
+                        "Saldo negativo de transmisiones a compensar en los ejercicios siguientes                          (anexo 2; las casillas por año están rotuladas en el propio impreso)",
+                        statement.gyp_ledger_next.total(),
+                    ),
+                    (
+                        modelo_f93::RCM_CARRYFORWARD,
+                        "Saldo negativo del capital mobiliario a compensar en los ejercicios                          siguientes (anexo 2; las casillas por año están rotuladas en el impreso)",
+                        statement.rcm_ledger_next.total(),
+                    ),
+                ];
+
+                for (casilla, label, value) in conditional {
+                    if value > zero {
+                        writeln!(
+                            writer,
+                            "MODELO_F93_{casilla},{label},{}",
+                            Self::format_decimal(value)
+                        )?;
+                    }
+                }
+
+                if statement.gyp_net < zero {
+                    writeln!(
+                        writer,
+                        "# The year's transmissions are negative, so apartado H3 applies rather than"
+                    )?;
+                    writeln!(
+                        writer,
+                        "# H1; its casillas are year-labelled on the form itself. The amount is the"
+                    )?;
+                    writeln!(
+                        writer,
+                        "# H1 row above with the sign reversed."
+                    )?;
+                }
+
+                Self::write_withholding_warning(writer, statement, modelo_f93::RCM_WITHHOLDING)?;
             }
         }
 
@@ -1695,6 +1921,135 @@ mod tests {
         let comun = render_for(SpanishTaxRegime::Comun, None);
         assert!(!comun.contains("SUMMARY_RCM_FEE_CAP"), "{comun}");
         assert!(!comun.contains("SUMMARY_RCM_FEES_OVER_CAP"), "{comun}");
+    }
+
+    /// The F-93 rows must reproduce the form's own arithmetic, or a wrong casilla would show up as
+    /// a plausible number rather than a sum that does not close. The specimen states three
+    /// identities in apartado H: `8809 = 8808 − 809 − 810 − 8815`, `8840 = 8810 − 8825 − 8835 −
+    /// 8805`, and `8841 = 8809 + 8840`.
+    #[test]
+    fn the_f93_boxes_reproduce_the_forms_own_arithmetic() {
+        let regime = SpanishTaxRegime::Navarra;
+        let mut spain = SpanishTaxStatement::new(
+            2025,
+            regime,
+            SavingsScale::for_year(regime, 2025).unwrap(),
+            LossLedger::from_config(&BTreeMap::from([(2024, dec!(2000))]), 2025, "rcm").unwrap(),
+            LossLedger::from_config(&BTreeMap::from([(2024, dec!(2800))]), 2025, "gyp").unwrap(),
+            CrossOffset::NavarraOrdered,
+            dec!(0.15),
+            Decimal::ZERO,
+            Some(dec!(0.03)),
+            true,
+        );
+        spain.capital_gains.push(capital_gain());
+        spain.dividends.push(DividendEntry {
+            symbol: "AAPL".to_string(),
+            isin: String::new(),
+            description: String::new(),
+            date: date(),
+            gross_eur: dec!(1000),
+            withheld_eur: Decimal::ZERO,
+            treaty_capped_credit: Decimal::ZERO,
+            exemption_eligible: true,
+            notes: None,
+        });
+        spain.fees.push(FeeEntry {
+            date: date(),
+            description: "CUSTODY FEE".to_string(),
+            amount_eur: dec!(800),
+            deductible: true,
+            review: None,
+            notes: None,
+        });
+        spain.calculate_totals();
+
+        let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
+        let cell = |key: &str| -> Decimal {
+            output
+                .lines()
+                .find(|line| line.starts_with(&format!("MODELO_F93_{key},")))
+                .unwrap_or_else(|| panic!("no row for casilla {key} in:\n{output}"))
+                .rsplit(',')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        };
+
+        // 8809 = 8808 − 809 − 8815 (810 is the joint-return row, always zero here).
+        assert_eq!(
+            cell("8809"),
+            cell("8808") - cell("809") - cell("8815"),
+            "{output}"
+        );
+        // 8840 = 8810 − 8825 − 8805 (8835 likewise).
+        assert_eq!(
+            cell("8840"),
+            cell("8810") - cell("8825") - cell("8805"),
+            "{output}"
+        );
+        assert_eq!(cell("8841"), cell("8809") + cell("8840"), "{output}");
+        assert_eq!(cell("815 (= 524)"), cell("8841"), "{output}");
+        // 050 = 031 + 037 − 047, with 047 already clamped to 3% of 031.
+        assert_eq!(cell("047"), dec!(30), "{output}");
+        assert_eq!(cell("050"), cell("031") + cell("037") - cell("047"), "{output}");
+        // The cross row carries something, so the first identity is not satisfied trivially.
+        assert!(cell("8815") > dec!(0), "{output}");
+    }
+
+    /// The Navarra block must name F-93 and nothing else: emitting a Modelo 109 or 100 casilla
+    /// there would send a filer to a form they are not filing.
+    #[test]
+    fn the_navarra_block_names_only_the_f93() {
+        let regime = SpanishTaxRegime::Navarra;
+        let mut spain = statement(regime);
+        spain.capital_gains.push(capital_gain());
+        spain.calculate_totals();
+
+        let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
+
+        assert!(output.contains("MODELO F-93"), "{output}");
+        assert!(!output.contains("MODELO_109"), "{output}");
+        assert!(!output.contains("MODELO_100"), "{output}");
+        // The DDI box, and specifically not 613.
+        assert!(output.contains("MODELO_F93_572,"), "{output}");
+        assert!(!output.contains("_613,"), "{output}");
+    }
+
+    /// The specimen covers ejercicio 2025. An earlier year gets the same numbers with an explicit
+    /// "not verified" caveat, a later one with the "not published yet" caveat the other regimes
+    /// already use.
+    #[rstest]
+    #[case(2024, "was not checked against a specimen")]
+    #[case(2025, "")]
+    #[case(2026, "no form is published for ejercicio 2026 yet")]
+    fn the_f93_layout_is_labelled_by_ejercicio(#[case] year: i32, #[case] caveat: &str) {
+        let regime = SpanishTaxRegime::Navarra;
+        let mut spain = SpanishTaxStatement::new(
+            year,
+            regime,
+            SavingsScale::for_year(regime, year).unwrap(),
+            LossLedger::default(),
+            LossLedger::default(),
+            CrossOffset::NavarraOrdered,
+            dec!(0.15),
+            Decimal::ZERO,
+            Some(dec!(0.03)),
+            true,
+        );
+        spain.capital_gains.push(capital_gain());
+        spain.calculate_totals();
+
+        let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
+        // The box numbers themselves never move: only the caveat does.
+        assert!(output.contains("MODELO_F93_8841,"), "{output}");
+
+        if caveat.is_empty() {
+            assert!(!output.contains("# WARNING"), "{output}");
+        } else {
+            assert!(output.contains(caveat), "{output}");
+        }
     }
 
     /// The two prior-year compensation rows must be **disjoint**: the own-group row carries what

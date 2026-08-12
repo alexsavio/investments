@@ -210,6 +210,19 @@ fn generate_spanish_tax_statement(
         "Net ganancias y pérdidas: €{}",
         eur::format_eur(statement.gyp_net)
     );
+    if statement.small_disposals_exemption > Decimal::ZERO {
+        println!(
+            "Exención de transmisiones hasta 3.000 € (art. 39.5.d): €{}",
+            eur::format_eur(statement.small_disposals_exemption)
+        );
+    }
+    if statement.total_capped_fees > Decimal::ZERO {
+        println!(
+            "Gastos de administración y depósito: €{} deducidos, €{} excluidos por el límite del 3%",
+            eur::format_eur(statement.total_deductible_fees),
+            eur::format_eur(statement.total_capped_fees)
+        );
+    }
     println!(
         "Base liquidable del ahorro: €{}",
         eur::format_eur(statement.savings_base)
