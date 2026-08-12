@@ -5,6 +5,7 @@ mod net_calculator;
 mod payment_day;
 mod rates;
 pub mod remapping;
+pub mod spain;
 
 use std::collections::BTreeMap;
 
@@ -16,7 +17,7 @@ use crate::core::{EmptyResult, GenericResult};
 use crate::currency;
 use crate::instruments::EtfClassification;
 use crate::localities::Jurisdiction;
-use crate::types::Decimal;
+use crate::types::{Date, Decimal};
 
 pub use self::calculator::{Tax, TaxCalculator, TaxWithheld};
 pub use self::long_term_ownership::{
@@ -36,6 +37,8 @@ pub enum TaxJurisdiction {
     Russia,
     #[serde(alias = "Germany")]
     Germany,
+    #[serde(alias = "Spain")]
+    Spain,
 }
 
 /// Year-boundary redemption prices (EUR per unit) for a fund, used to compute the Vorabpauschale
@@ -55,6 +58,192 @@ pub struct FundNav {
     pub acquired_month: Option<u32>,
 }
 
+/// Spanish IRPF configuration. Required when `jurisdiction: spain`.
+#[derive(Clone, Debug)]
+pub struct SpanishTaxConfig {
+    /// Which regime the filer is subject to. Deliberately has no default: the regimes differ in
+    /// the savings scale, in whether acquisition costs are actualized, in whether the two
+    /// savings-base groups may offset each other, and in whether custody fees are deductible, so a
+    /// guessed default would silently file under the wrong tax code.
+    pub regime: spain::SpanishTaxRegime,
+
+    /// Pending negative savings-base balances (saldos negativos pendientes de compensación)
+    /// brought in from prior returns, keyed by the year each arose in. Both groups carry forward
+    /// for four years, so the origin year is part of the data, not bookkeeping trivia.
+    pub loss_carryforward: SpanishLossCarryforward,
+
+    /// Wash-sale losses already deferred by an earlier return or another tool, seeding the
+    /// valores-homogéneos replay with blocked lots the statement itself cannot see.
+    pub deferred_losses: Vec<DeferredLossConfig>,
+
+    /// Actualization coefficients, keyed by disposal year then acquisition year. Overrides and
+    /// extends the Decreto Foral tables the tool ships, so a newly published year can be used
+    /// without waiting for a release.
+    pub coefficients: BTreeMap<i32, BTreeMap<i32, Decimal>>,
+}
+
+/// Deserialized shape of `taxes.spain`, with `regime` optional so its absence can be reported by
+/// name rather than as serde's bare "missing field".
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpanishTaxConfigShape {
+    regime: Option<spain::SpanishTaxRegime>,
+    #[serde(default)]
+    loss_carryforward: SpanishLossCarryforward,
+    #[serde(default)]
+    deferred_losses: Vec<DeferredLossConfig>,
+    #[serde(default)]
+    coefficients: BTreeMap<i32, BTreeMap<i32, Decimal>>,
+}
+
+impl<'de> Deserialize<'de> for SpanishTaxConfig {
+    /// Every other Spanish validation names the config path it is about; this one has to do the
+    /// same, and serde's own message for a missing required field does not.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let shape = SpanishTaxConfigShape::deserialize(deserializer)?;
+
+        let regime = shape.regime.ok_or_else(|| serde::de::Error::custom(
+            "taxes.spain.regime is not set: set it to `gipuzkoa` or `comun`. There is no default \
+             — the two regimes differ in the savings scale, in whether acquisition costs are \
+             actualized, in whether the savings-base groups may offset each other, and in whether \
+             custody fees are deductible"
+        ))?;
+
+        Ok(SpanishTaxConfig {
+            regime,
+            loss_carryforward: shape.loss_carryforward,
+            deferred_losses: shape.deferred_losses,
+            coefficients: shape.coefficients,
+        })
+    }
+}
+
+impl SpanishTaxConfig {
+    /// The savings-base scale in force for this filer's regime in `year`.
+    ///
+    /// Errors for a year the tool ships no scale for: a savings scale is set by statute each year,
+    /// so extrapolating one would file real money under an invented rate.
+    pub fn savings_scale(&self, year: i32) -> GenericResult<spain::scale::SavingsScale> {
+        spain::scale::SavingsScale::for_year(self.regime, year)
+    }
+
+    /// Reject nonsensical `taxes.spain.coefficients` overrides before any lot is priced.
+    ///
+    /// Not a `serde` check: the shape is valid YAML either way, and the failure a bad coefficient
+    /// produces is a plausible-looking number on a tax return rather than a parse error.
+    pub fn validate_coefficients(&self) -> EmptyResult {
+        spain::coefficients::validate_overrides(&self.coefficients)
+    }
+
+    /// Whether a disposal in `year` can be priced at all.
+    ///
+    /// Always true under Territorio Común, where the coefficient is 1 for every year.
+    pub fn has_actualization_table(&self, year: i32) -> bool {
+        match self.regime {
+            spain::SpanishTaxRegime::Gipuzkoa => {
+                spain::coefficients::has_table(year, &self.coefficients)
+            }
+            spain::SpanishTaxRegime::Comun => true,
+        }
+    }
+
+    /// The coefficient a FIFO lot's acquisition cost is actualized by before the gain is computed.
+    ///
+    /// Always 1 under Territorio Común: Ley 26/2014 deleted LIRPF art. 35.2 with effect from 2015,
+    /// and even before that actualization applied only to real estate, never to securities.
+    pub fn actualization_coefficient(
+        &self,
+        disposal_year: i32,
+        acquisition_date: Date,
+    ) -> GenericResult<Decimal> {
+        match self.regime {
+            spain::SpanishTaxRegime::Gipuzkoa => spain::coefficients::gipuzkoa_coefficient(
+                disposal_year,
+                acquisition_date,
+                &self.coefficients,
+            ),
+            spain::SpanishTaxRegime::Comun => Ok(Decimal::ONE),
+        }
+    }
+
+    /// The two savings-base loss ledgers as of `filing_year`, validated against the 4-year
+    /// carry-forward window.
+    ///
+    /// Validation lives here rather than in `serde` because the window is relative to the year
+    /// being filed: the same config is valid for one return and expired for the next, so it cannot
+    /// be checked at deserialization time.
+    pub fn loss_ledgers(
+        &self,
+        filing_year: i32,
+    ) -> GenericResult<(spain::carryforward::LossLedger, spain::carryforward::LossLedger)> {
+        Ok((
+            spain::carryforward::LossLedger::from_config(
+                &self.loss_carryforward.rcm,
+                filing_year,
+                "rcm",
+            )?,
+            spain::carryforward::LossLedger::from_config(
+                &self.loss_carryforward.gyp,
+                filing_year,
+                "gyp",
+            )?,
+        ))
+    }
+}
+
+/// Pending negative balances per savings-base group, keyed by the year each arose in.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpanishLossCarryforward {
+    /// Rendimientos del capital mobiliario (dividends, interest).
+    #[serde(default)]
+    pub rcm: BTreeMap<i32, Decimal>,
+    /// Ganancias y pérdidas patrimoniales from transfers.
+    #[serde(default)]
+    pub gyp: BTreeMap<i32, Decimal>,
+}
+
+/// A loss deferred under the valores-homogéneos rule, blocked against a repurchased holding.
+///
+/// Doubles as the tool's own carry-out format: the statement prints surviving blocked lots in
+/// exactly this shape so next year's config is a copy-paste rather than a manual reconstruction.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeferredLossConfig {
+    /// Ticker of the instrument whose loss is blocked.
+    pub symbol: String,
+    /// ISIN, preferred over the symbol for identity when present (tickers get reused and renamed).
+    #[serde(default)]
+    pub isin: Option<String>,
+    /// Deferred loss magnitude in EUR, as a positive number.
+    pub loss: Decimal,
+    /// Shares still blocking the loss, i.e. those repurchased inside the window and not yet resold.
+    pub blocked_quantity: Decimal,
+    /// When the blocking shares were acquired.
+    ///
+    /// Not bookkeeping trivia: reintegration triggers when *those* shares are disposed of, and a
+    /// FIFO lot identifies itself by its acquisition date. Without it the deferral could not be
+    /// matched to the sale that releases it.
+    #[serde(deserialize_with = "deserialize_spanish_date")]
+    pub acquisition_date: Date,
+    /// Date of the loss-making sale the deferral came from.
+    #[serde(deserialize_with = "deserialize_spanish_date")]
+    pub sale_date: Date,
+}
+
+/// Accepts ISO `YYYY-MM-DD` as well as the `YYYY.MM.DD` / `DD.MM.YYYY` forms the rest of the config
+/// takes. ISO is what the tool prints in its own carry-out block, so its output round-trips back
+/// into the config without the user having to reformat every date by hand.
+fn deserialize_spanish_date<'de, D>(deserializer: D) -> Result<Date, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    crate::time::parse_date(&raw, "%Y-%m-%d")
+        .or_else(|_| crate::time::parse_user_date(&raw))
+        .map_err(D::Error::custom)
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaxConfig {
@@ -67,6 +256,10 @@ pub struct TaxConfig {
     /// Kirchensteuer (church tax) rate for Germany (8% or 9%), default 0
     #[serde(default)]
     pub church_tax_rate: Option<Decimal>,
+    /// Spanish IRPF settings. Nested per-jurisdiction block (the flat `german_*` fields above are
+    /// the older pattern; nesting is the pattern for jurisdictions added since).
+    #[serde(default)]
+    pub spain: Option<SpanishTaxConfig>,
     /// Festgestellter Verlustvortrag for the stock pot (Verlustverrechnungstopf Aktien, §20(6)
     /// S.4 EStG) as of Dec 31 of the prior year, in EUR. Offsets only future share-sale gains.
     #[serde(default)]
@@ -102,6 +295,37 @@ pub struct TaxConfig {
 }
 
 impl TaxConfig {
+    /// The `taxes.spain` block, required by the Spanish filing path.
+    ///
+    /// Unlike [`spanish_regime`](Self::spanish_regime), which defaults so the analysis views keep
+    /// working, this errors: a filed statement computed under a guessed regime would be wrong in
+    /// the scale, the coefficients, the cross-group offset and fee deductibility all at once.
+    pub fn spanish(&self) -> GenericResult<&SpanishTaxConfig> {
+        match self.spain {
+            Some(ref spain) => Ok(spain),
+            None => Err!(
+                "`taxes.jurisdiction` is `spain` but there is no `taxes.spain` block. Add one and \
+                 set `regime` to `gipuzkoa` or `comun` — the two regimes differ in the savings \
+                 scale, in whether acquisition costs are actualized, in whether the savings-base \
+                 groups may offset each other, and in whether custody fees are deductible, so \
+                 there is no safe default"
+            ),
+        }
+    }
+
+    /// Regime driving the `localities::spain` analysis approximation.
+    ///
+    /// Falls back to Gipuzkoa when the `taxes.spain` block is absent, because the analysis and
+    /// rebalancing views must still produce a rate rather than fail. The filing path does not share
+    /// this leniency: it reads the block directly and errors when it is missing, so a real
+    /// statement is never generated under a guessed regime.
+    pub fn spanish_regime(&self) -> spain::SpanishTaxRegime {
+        self.spain
+            .as_ref()
+            .map(|spain| spain.regime)
+            .unwrap_or(spain::SpanishTaxRegime::Gipuzkoa)
+    }
+
     /// Get the ETF classification for a given ISIN, defaulting to None (no exemption)
     pub fn get_etf_classification(&self, isin: &str) -> EtfClassification {
         self.etf_classification.get(isin).copied().unwrap_or_default()
@@ -368,6 +592,194 @@ mod tests {
     }
 
     #[test]
+    fn spanish_config_parses_the_full_block() {
+        let config: TaxConfig = serde_yaml::from_str(
+            "jurisdiction: spain\n\
+             spain:\n  \
+             regime: gipuzkoa\n  \
+             loss_carryforward:\n    \
+             gyp: {2024: '1200.50'}\n    \
+             rcm: {2025: '80.00'}\n  \
+             deferred_losses:\n    \
+             - {symbol: VUSA, isin: IE00B3XXRP09, loss: '420.00', blocked_quantity: '15', \
+             acquisition_date: '2025-12-20', sale_date: '2025-12-10'}\n  \
+             coefficients:\n    \
+             2027: {2020: '1.11'}\n",
+        )
+        .unwrap();
+
+        let spain = config.spanish().unwrap();
+        assert_eq!(spain.regime, spain::SpanishTaxRegime::Gipuzkoa);
+        assert_eq!(spain.loss_carryforward.gyp[&2024], dec!(1200.50));
+        assert_eq!(spain.loss_carryforward.rcm[&2025], dec!(80));
+        assert_eq!(spain.coefficients[&2027][&2020], dec!(1.11));
+
+        let deferred = &spain.deferred_losses[0];
+        assert_eq!(deferred.symbol, "VUSA");
+        assert_eq!(deferred.isin.as_deref(), Some("IE00B3XXRP09"));
+        assert_eq!(deferred.loss, dec!(420));
+        assert_eq!(deferred.blocked_quantity, dec!(15));
+        // The acquisition date of the blocking shares is what reintegration matches on, so it is
+        // required alongside the sale the deferral came from.
+        assert_eq!(deferred.acquisition_date, date!(2025, 12, 20));
+        assert_eq!(deferred.sale_date, date!(2025, 12, 10));
+    }
+
+    /// Only `regime` is required: a filer with no prior-year balances and no deferred losses should
+    /// not have to write four empty sections to get a statement.
+    #[test]
+    fn spanish_config_defaults_everything_but_the_regime() {
+        let config: TaxConfig = serde_yaml::from_str("spain:\n  regime: comun\n").unwrap();
+
+        let spain = config.spanish().unwrap();
+        assert_eq!(spain.regime, spain::SpanishTaxRegime::Comun);
+        assert!(spain.loss_carryforward.gyp.is_empty());
+        assert!(spain.loss_carryforward.rcm.is_empty());
+        assert!(spain.deferred_losses.is_empty());
+        assert!(spain.coefficients.is_empty());
+    }
+
+    /// The regime drives the scale, the coefficients, the cross-group offset and fee
+    /// deductibility, so omitting it must fail rather than default to either regime.
+    #[test]
+    fn spanish_config_requires_the_regime() {
+        let error = match serde_yaml::from_str::<TaxConfig>("spain: {}\n") {
+            Ok(_) => panic!("a config without a regime must be rejected"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("taxes.spain.regime"), "{error}");
+        // A typo is a hard error too, not a silent fallback.
+        assert!(serde_yaml::from_str::<TaxConfig>("spain:\n  regime: guipuzcoa\n").is_err());
+        // `deny_unknown_fields` catches a misspelled key rather than ignoring the setting.
+        assert!(
+            serde_yaml::from_str::<TaxConfig>("spain:\n  regime: comun\n  coeficients: {}\n")
+                .is_err()
+        );
+    }
+
+    /// The accented spelling is what a Spanish filer would naturally write.
+    #[test]
+    fn spanish_config_accepts_the_accented_regime_spelling() {
+        let config: TaxConfig = serde_yaml::from_str("spain:\n  regime: común\n").unwrap();
+        assert_eq!(
+            config.spanish().unwrap().regime,
+            spain::SpanishTaxRegime::Comun
+        );
+    }
+
+    /// Filing without the block must name the block and the values it needs, not fail obscurely
+    /// somewhere downstream in the processor.
+    #[test]
+    fn spanish_accessor_errors_without_the_block() {
+        let error = TaxConfig::default().spanish().unwrap_err().to_string();
+        assert!(error.contains("taxes.spain"), "{error}");
+        assert!(error.contains("gipuzkoa"), "{error}");
+        assert!(error.contains("comun"), "{error}");
+    }
+
+    /// Actualization is the single largest structural difference between the regimes on a capital
+    /// gain, so the regime switch must reach it.
+    #[test]
+    fn spanish_actualization_is_gipuzkoa_only() {
+        let config = |regime: &str| -> TaxConfig {
+            serde_yaml::from_str(&format!("spain:\n  regime: {regime}\n")).unwrap()
+        };
+
+        assert_eq!(
+            config("gipuzkoa")
+                .spanish()
+                .unwrap()
+                .actualization_coefficient(2026, date!(2021, 3, 10))
+                .unwrap(),
+            dec!(1.212)
+        );
+        // Territorio Común never actualizes, so the year pair is irrelevant and it never errors —
+        // not even for a disposal year no foral table is shipped for.
+        for year in [2024, 2026, 2030] {
+            assert_eq!(
+                config("comun")
+                    .spanish()
+                    .unwrap()
+                    .actualization_coefficient(year, date!(2021, 3, 10))
+                    .unwrap(),
+                dec!(1)
+            );
+        }
+    }
+
+    /// The scale follows the configured regime, so the same base is taxed differently under each.
+    #[test]
+    fn spanish_savings_scale_follows_the_regime_and_year() {
+        let config = |regime: &str| -> TaxConfig {
+            serde_yaml::from_str(&format!("spain:\n  regime: {regime}\n")).unwrap()
+        };
+
+        let gipuzkoa = config("gipuzkoa");
+        let comun = config("comun");
+
+        // 2026: Gipuzkoa 7,500×19% + 2,500×20% = 1,925; state 6,000×19% + 4,000×21% = 1,980.
+        assert_eq!(
+            gipuzkoa
+                .spanish()
+                .unwrap()
+                .savings_scale(2026)
+                .unwrap()
+                .tax(dec!(10000)),
+            dec!(1925)
+        );
+        assert_eq!(
+            comun
+                .spanish()
+                .unwrap()
+                .savings_scale(2026)
+                .unwrap()
+                .tax(dec!(10000)),
+            dec!(1980)
+        );
+        // A year outside the shipped range errors rather than extrapolating.
+        assert!(gipuzkoa.spanish().unwrap().savings_scale(2027).is_err());
+    }
+
+    /// The window is relative to the year being filed, so the same config is valid for one return
+    /// and expired for the next. That is why it cannot be a `serde` validation.
+    #[test]
+    fn spanish_loss_ledgers_are_validated_against_the_filing_year() {
+        let config: TaxConfig = serde_yaml::from_str(
+            "spain:\n  \
+             regime: gipuzkoa\n  \
+             loss_carryforward:\n    \
+             gyp: {2022: '300'}\n    \
+             rcm: {2025: '80'}\n",
+        )
+        .unwrap();
+        let spain = config.spanish().unwrap();
+
+        let (rcm, gyp) = spain.loss_ledgers(2026).unwrap();
+        assert_eq!(rcm.total(), dec!(80));
+        assert_eq!(gyp.total(), dec!(300));
+        // 2022 is in its fourth and final year against the 2026 return.
+        assert_eq!(gyp.expiring_after(2026), dec!(300));
+
+        // One year on, the same 2022 balance is out of the window and must be rejected.
+        assert!(spain.loss_ledgers(2027).is_err());
+    }
+
+    /// The carry-out block the tool prints uses ISO dates, so its own output must parse back in.
+    #[rstest(raw, case("2025-12-10"), case("2025.12.10"), case("10.12.2025"))]
+    fn spanish_deferred_loss_accepts_iso_and_user_dates(raw: &str) {
+        let config: TaxConfig = serde_yaml::from_str(&format!(
+            "spain:\n  regime: gipuzkoa\n  deferred_losses:\n    \
+             - {{symbol: VUSA, loss: '420.00', blocked_quantity: '15', \
+             acquisition_date: '{raw}', sale_date: '{raw}'}}\n"
+        ))
+        .unwrap();
+
+        let deferred = &config.spanish().unwrap().deferred_losses[0];
+        assert_eq!(deferred.sale_date, date!(2025, 12, 10));
+        assert_eq!(deferred.acquisition_date, date!(2025, 12, 10));
+    }
+
+    #[test]
     fn jurisdiction_parses_known_values_and_rejects_typos() {
         let parse = |yaml: &str| serde_yaml::from_str::<TaxConfig>(yaml).map(|c| c.jurisdiction);
 
@@ -387,5 +799,14 @@ mod tests {
         );
         // A typo is a hard error, not a silent fallback to Russia.
         assert!(parse("jurisdiction: germny").is_err());
+
+        assert_eq!(
+            parse("jurisdiction: spain").unwrap(),
+            Some(TaxJurisdiction::Spain)
+        );
+        assert_eq!(
+            parse("jurisdiction: Spain").unwrap(),
+            Some(TaxJurisdiction::Spain)
+        );
     }
 }

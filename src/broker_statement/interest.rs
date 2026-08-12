@@ -7,15 +7,35 @@ use crate::time::Date;
 use crate::types::Decimal;
 use chrono::Datelike;
 
+/// How the source statement classified an interest accrual, where it says so.
+///
+/// The sign alone cannot separate interest **paid** on a borrowed balance from a **reversal** of
+/// interest previously credited: both arrive as a negative amount. The first is a financing cost,
+/// the second a correction to income, and a jurisdiction that treats the two differently needs the
+/// label rather than the sign.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterestKind {
+    Received,
+    Paid,
+}
+
 pub struct IdleCashInterest {
     pub date: Date,
     pub amount: Cash, // May be negative
+    /// `None` where the statement format carries no such label and only the sign is available.
+    pub kind: Option<InterestKind>,
 }
 
 impl IdleCashInterest {
     pub fn new(date: Date, amount: Cash) -> IdleCashInterest {
         IdleCashInterest {
-            date, amount
+            date, amount, kind: None,
+        }
+    }
+
+    pub fn new_typed(date: Date, amount: Cash, kind: InterestKind) -> IdleCashInterest {
+        IdleCashInterest {
+            date, amount, kind: Some(kind),
         }
     }
 

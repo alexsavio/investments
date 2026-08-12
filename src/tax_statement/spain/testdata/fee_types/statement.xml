@@ -1,0 +1,14 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20260101" toDate="20261231" period="LastYear" whenGenerated="20270115;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="-180" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <CashTransactions>
+        <CashTransaction currency="USD" description="CUSTODY FEE" dateTime="20260715;235959" amount="-50" type="Other Fees"/>
+        <CashTransaction currency="USD" description="US MARKET DATA SUBSCRIPTION" dateTime="20260815;235959" amount="-100" type="Other Fees"/>
+        <CashTransaction currency="USD" description="MONTHLY MINIMUM ACTIVITY FEE" dateTime="20260915;235959" amount="-30" type="Other Fees"/>
+      </CashTransactions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

@@ -15,6 +15,7 @@ use crate::instruments::InstrumentInfo;
 use crate::localities::{Country, Jurisdiction};
 use crate::quotes::Quotes;
 use crate::tax_statement::germany::{self, GermanTaxStatement};
+use crate::tax_statement::spain::{self, SpanishTaxStatement};
 use crate::taxes::{IncomeType, LtoDeduction, long_term_ownership::LtoDeductionCalculator, Tax, TaxCalculator, TaxConfig};
 use crate::trades;
 use crate::types::{Date, Decimal};
@@ -51,11 +52,9 @@ pub fn simulate_sell(
         quotes.batch(statement.get_quote_query(symbol))?;
     }
 
-    // Snapshot the German tax year *before* anything is emulated: the disposals are priced at the
+    // Snapshot the tax year *before* anything is emulated: the disposals are priced at the
     // difference they make to it, so the untouched year is the reference point.
-    let mut german = (country.jurisdiction == Jurisdiction::Germany).then(|| {
-        GermanTaxSimulation::new(&statement, &converter, tax_config, portfolio)
-    }).transpose()?;
+    let mut simulation = TaxSimulation::new(country, &statement, &converter, tax_config, portfolio)?;
 
     let net_value = statement.net_value(
         &converter, quotes, portfolio.currency(),
@@ -79,14 +78,16 @@ pub fn simulate_sell(
 
         statement.emulate_sell(symbol, quantity, price, &mut commission_calc)?;
 
-        if let Some(german) = german.as_mut() {
+        if let Some(simulation) = simulation.as_mut() {
             // Price this disposal on a statement carrying exactly the sales made so far.
-            // `emulate_sell` also draws down `open_positions`, which the processor reads as the
-            // year-end holdings behind the §19 InvStG "fully disposed" test — so deferring every
-            // step to the end of the loop would judge each disposal against a book where all the
-            // others had already been sold, and pile their combined effect onto the first row.
+            // `emulate_sell` also draws down `open_positions`, which the German processor reads as
+            // the year-end holdings behind the §19 InvStG "fully disposed" test, and each Spanish
+            // sale can create or release a valores-homogéneos block the next one sees — so
+            // deferring every step to the end of the loop would judge each disposal against a book
+            // where all the others had already been sold, and pile their combined effect onto the
+            // first row.
             statement.process_trades(None, false)?;
-            german.observe(&statement, &converter, tax_config, portfolio)?;
+            simulation.observe(&statement, &converter, tax_config, portfolio)?;
         }
     }
 
@@ -100,7 +101,77 @@ pub fn simulate_sell(
 
     print_results(
         country, portfolio, &statement.instrument_info, stock_sells, additional_commissions,
-        &converter, german.as_ref())
+        &converter, simulation.as_ref())
+}
+
+/// The jurisdictions whose tax cannot be priced per disposal.
+///
+/// Germany and Spain both compute the charge over the *whole* year — German loss pots plus the
+/// Sparer-Pauschbetrag, Spanish group compensation plus a progressive savings scale — so a disposal
+/// is priced at the difference it makes to the year, not at a flat rate. Everywhere else the
+/// per-trade estimate in `print_results` still applies.
+// Both payloads are boxed: each carries one or two whole tax statements, and an unboxed enum would
+// be as large as the bigger of the two on every stack frame that touches it.
+enum TaxSimulation {
+    German(Box<GermanTaxSimulation>),
+    Spanish(Box<SpanishTaxSimulation>),
+}
+
+impl TaxSimulation {
+    fn new(
+        country: &Country, statement: &BrokerStatement, converter: &CurrencyConverter,
+        tax_config: &TaxConfig, portfolio: &PortfolioConfig,
+    ) -> GenericResult<Option<TaxSimulation>> {
+        Ok(match country.jurisdiction {
+            Jurisdiction::Germany => Some(TaxSimulation::German(Box::new(
+                GermanTaxSimulation::new(statement, converter, tax_config, portfolio)?))),
+            Jurisdiction::Spain => Some(TaxSimulation::Spanish(Box::new(
+                SpanishTaxSimulation::new(statement, converter, tax_config)?))),
+            _ => None,
+        })
+    }
+
+    fn observe(
+        &mut self, statement: &BrokerStatement, converter: &CurrencyConverter,
+        tax_config: &TaxConfig, portfolio: &PortfolioConfig,
+    ) -> EmptyResult {
+        match self {
+            TaxSimulation::German(german) =>
+                german.observe(statement, converter, tax_config, portfolio),
+            TaxSimulation::Spanish(spanish) => spanish.observe(statement, converter, tax_config),
+        }
+    }
+
+    /// Tax the `index`-th simulated disposal adds to the year, given the ones before it.
+    fn marginal(&self, index: usize) -> Decimal {
+        match self {
+            TaxSimulation::German(german) => german.marginal(index),
+            TaxSimulation::Spanish(spanish) => spanish.marginal(index),
+        }
+    }
+
+    /// What the `index`-th disposal would cost taxed on its own.
+    fn standalone(&self, index: usize) -> Decimal {
+        match self {
+            TaxSimulation::German(german) => german.standalone(index),
+            TaxSimulation::Spanish(spanish) => spanish.standalone(index),
+        }
+    }
+
+    /// Tax the simulated disposals add to the year as a whole.
+    fn total(&self) -> Decimal {
+        match self {
+            TaxSimulation::German(german) => german.total(),
+            TaxSimulation::Spanish(spanish) => spanish.total(),
+        }
+    }
+
+    fn print(&self) {
+        match self {
+            TaxSimulation::German(german) => german.print(),
+            TaxSimulation::Spanish(spanish) => spanish.print(),
+        }
+    }
 }
 
 /// Year-level German tax for the disposals being simulated.
@@ -292,6 +363,179 @@ struct GermanContextRow {
     after: String,
 }
 
+/// Year-level Spanish tax for the disposals being simulated.
+///
+/// A Spanish disposal has no tax price of its own either, for reasons of its own. The savings scale
+/// is **progressive**, so what a gain costs depends on how much base sits under it; the two
+/// savings-base groups are compensated against prior-year balances (and, under Territorio Común,
+/// against each other) before the scale is applied at all; under Gipuzkoa each FIFO lot's cost is
+/// actualized by its acquisition year; and a loss on a holding repurchased inside the
+/// valores-homogéneos window is deferred rather than deducted. Pricing a trim at the
+/// `localities::spain` approximation would miss every one of those.
+///
+/// So the year is recomputed after each simulated sale and the disposal is priced at the difference
+/// it makes. A loss-making trim shows as *negative* tax — correctly, because it shelters a gain
+/// booked elsewhere in the same year — and a loss whose shares were just repurchased shows as no
+/// deduction at all, which is exactly what the deferral rule does to it.
+struct SpanishTaxSimulation {
+    year: i32,
+
+    /// `taxes[k]` is the year's net Spanish tax when the first `k` simulated disposals happen, so
+    /// `taxes[0]` is the untouched year. Always one longer than the number of disposals observed.
+    taxes: Vec<Decimal>,
+
+    /// What each disposal would cost taxed on its own, from the first bracket up — the comparator
+    /// the deduction column is measured against.
+    standalone: Vec<Decimal>,
+
+    before: SpanishTaxStatement,
+    after: Option<SpanishTaxStatement>,
+}
+
+impl SpanishTaxSimulation {
+    /// Snapshot the tax year before any sale is emulated. `statement` must be untouched.
+    fn new(
+        statement: &BrokerStatement, converter: &CurrencyConverter, tax_config: &TaxConfig,
+    ) -> GenericResult<SpanishTaxSimulation> {
+        let year = crate::exchanges::today_trade_conclusion_time().date.year();
+        let (before, _has_income) = spain::compute_tax_year(statement, year, converter, tax_config)?;
+
+        Ok(SpanishTaxSimulation {
+            year,
+            taxes: vec![before.net_tax_due],
+            standalone: Vec::new(),
+            before,
+            after: None,
+        })
+    }
+
+    /// Record the year as it stands after one more sale has been emulated onto `statement`.
+    fn observe(
+        &mut self, statement: &BrokerStatement, converter: &CurrencyConverter,
+        tax_config: &TaxConfig,
+    ) -> EmptyResult {
+        let (year, _has_income) = spain::compute_tax_year(
+            statement, self.year, converter, tax_config)?;
+
+        // The processor emits one capital-gain entry per qualifying trade, in `stock_sells` order,
+        // and `emulate_sell` appends — so this sale owns the last entry. Verify rather than trust
+        // it: mispairing them would silently price the wrong trade.
+        let trades: Vec<&StockSell> = statement.stock_sells.iter()
+            .filter(|trade| spain::produces_capital_gain(trade, self.year))
+            .collect();
+
+        if trades.len() != year.capital_gains.len() {
+            return Err!(
+                "Spanish tax simulation: {} yielded {} capital gain entries for {} trades",
+                self.year, year.capital_gains.len(), trades.len());
+        }
+
+        let simulated = self.standalone.len() + 1;
+        let real = trades.len().checked_sub(simulated).ok_or_else(|| format!(
+            "Spanish tax simulation: {} has only {} trades for {simulated} simulated sales",
+            self.year, trades.len()))?;
+
+        if !trades[real..].iter().all(|trade| trade.emulation) ||
+           trades[..real].iter().any(|trade| trade.emulation) {
+            return Err!(
+                "Spanish tax simulation: the simulated sales aren't the trailing {} trades",
+                self.year);
+        }
+
+        // What this disposal costs on its own, taxed from the first bracket up on the amount that
+        // actually enters the base — so a loss the valores-homogéneos rule deferred is compared at
+        // the deferred figure, not the gross one. Deriving it from the flat `localities::spain`
+        // approximation instead would price it at a rate the return never uses.
+        let entry = year.capital_gains.last().expect(
+            "the checks above guarantee at least one capital gain entry for the simulated sale");
+        self.standalone.push(year.scale.tax(entry.integrable_amount));
+
+        self.taxes.push(year.net_tax_due);
+        self.after = Some(year);
+
+        Ok(())
+    }
+
+    fn marginal(&self, index: usize) -> Decimal {
+        spain::round_eur(self.taxes[index + 1] - self.taxes[index])
+    }
+
+    fn standalone(&self, index: usize) -> Decimal {
+        spain::round_eur(self.standalone[index])
+    }
+
+    /// The year as of the last observed sale, falling back to the untouched year if none was
+    /// observed.
+    fn after(&self) -> &SpanishTaxStatement {
+        self.after.as_ref().unwrap_or(&self.before)
+    }
+
+    /// Taken end-to-end rather than by summing the rows, so it stays exact; rounded rows may differ
+    /// from it by a cent.
+    fn total(&self) -> Decimal {
+        spain::round_eur(self.taxes[self.taxes.len() - 1] - self.taxes[0])
+    }
+
+    /// Explain the marginal figures: without the groups, the pending balances and the base a reader
+    /// cannot tell a genuinely untaxed disposal from a broken one.
+    fn print(&self) {
+        let mut table = SpanishContextTable::new();
+        let after = self.after();
+
+        let mut row = |name: &str, before: Decimal, after: Decimal| {
+            table.add_row(SpanishContextRow {
+                name: name.to_owned(),
+                before: spain::format_eur(before),
+                after: spain::format_eur(after),
+            });
+        };
+
+        row("Ganancias y pérdidas patrimoniales (neto)", self.before.gyp_net, after.gyp_net);
+        row("Rendimientos del capital mobiliario (neto)", self.before.rcm_net, after.rcm_net);
+        // Carried forward as positive magnitudes, exactly as the filed statement reports them. A
+        // gain eats into the matching group's pending balance, so these shrink as the sale is added.
+        row("Saldos negativos pendientes (ganancias)",
+            self.before.gyp_ledger_next.total(), after.gyp_ledger_next.total());
+        row("Base liquidable del ahorro", self.before.savings_base, after.savings_base);
+        row("Cuota íntegra del ahorro", self.before.savings_quota, after.savings_quota);
+        row(
+            "Cuota líquida del ahorro",
+            self.before.net_tax_due,
+            after.net_tax_due,
+        );
+
+        let regime = match after.regime {
+            crate::taxes::spain::SpanishTaxRegime::Gipuzkoa => "Gipuzkoa",
+            crate::taxes::spain::SpanishTaxRegime::Comun => "Territorio Común",
+        };
+        table.print(&format!(
+            "Spanish tax year {} ({regime}) — the sale is priced at what it changes here, not at a \
+             flat rate", self.year));
+
+        if self.taxes.len() > 2 {
+            // The savings scale is progressive and the groups compensate, so the split across rows
+            // depends on their order and no single row is that position's standalone cost. Only the
+            // total is order-independent. Say so — someone reading one row in isolation would be
+            // misled.
+            println!(
+                "Per-position tax is marginal and depends on row order: each is what that sale \n\
+                 adds on top of the ones above it. Only the total is order-independent; simulate \n\
+                 a position on its own to see its standalone cost.\n");
+        }
+    }
+}
+
+#[derive(StaticTable)]
+#[table(name="SpanishContextTable")]
+struct SpanishContextRow {
+    #[column(name="")]
+    name: String,
+    #[column(name="Without the sale", align="right")]
+    before: String,
+    #[column(name="With the sale", align="right")]
+    after: String,
+}
+
 struct TaxYearTotals {
     local_profit: Cash,
     taxable_local_profit: Cash,
@@ -311,7 +555,7 @@ impl TaxYearTotals {
 fn print_results(
     country: &Country, portfolio: &PortfolioConfig, instrument_info: &InstrumentInfo,
     stock_sells: Vec<StockSell>, additional_commissions: MultiCurrencyCashAccount,
-    converter: &CurrencyConverter, german: Option<&GermanTaxSimulation>,
+    converter: &CurrencyConverter, simulation: Option<&TaxSimulation>,
 ) -> EmptyResult {
     let mut trades_table = TradesTable::new();
     let mut fifo_table = FifoTable::new();
@@ -331,7 +575,7 @@ fn print_results(
     let mut same_currency = true;
     let mut tax_exemptions = false;
 
-    // Summed from the rows, so the German deduction total is the sum of the deductions shown.
+    // Summed from the rows, so the year-level deduction total is the sum of the deductions shown.
     // The year-level `tax_deductible_income` aggregation below is derived differently — it nets
     // additional commissions and LTO — so mixing the two would leave a structural gap, not a
     // rounding one.
@@ -364,14 +608,13 @@ fn print_results(
         let instrument = instrument_info.get_or_empty(&trade.symbol);
         let details = trade.calculate(country, &instrument, &portfolio.tax_exemptions, converter)?;
 
-        let tax = match german {
-            // What the disposal actually adds to the German tax year, given the pots, the
-            // carryforward and the remaining allowance. `expected` is what it would have cost
-            // taxed on its own at the same §32d(1) rates, so the deduction column shows exactly
-            // what those year-wide mechanics saved.
-            Some(german) => {
-                let expected = country.cash(german.standalone(index));
-                let to_pay = country.cash(german.marginal(index));
+        let tax = match simulation {
+            // What the disposal actually adds to the tax year, given everything that year-wide
+            // mechanics do to it. `expected` is what it would have cost taxed on its own under the
+            // same rules, so the deduction column shows exactly what those mechanics saved.
+            Some(simulation) => {
+                let expected = country.cash(simulation.standalone(index));
+                let to_pay = country.cash(simulation.marginal(index));
                 Tax {
                     expected,
                     withheld: Cash::zero(country.currency),
@@ -482,11 +725,11 @@ fn print_results(
         total_tax_deduction += tax.deduction;
     }
 
-    if let Some(german) = german {
+    if let Some(simulation) = simulation {
         // Taken end-to-end over the year rather than by summing the rows, so the total stays exact
         // even where rounded row taxes drift from it by a cent. The deduction is then measured
         // against the same per-row standalone figures the rows show, so the column adds up.
-        total_tax_to_pay = country.cash(german.total());
+        total_tax_to_pay = country.cash(simulation.total());
         total_tax_deduction = total_row_tax_expected - total_tax_to_pay;
     }
 
@@ -518,9 +761,10 @@ fn print_results(
     if !tax_exemptions && lto_deductions.is_empty() {
         trades_table.hide_taxable_local_profit();
 
-        // For Germany the deduction is what the loss pots and the allowance took off the flat
-        // rate — the whole point of the exercise, so keep the column whenever it says anything.
-        if german.is_none() || total_tax_deduction.is_zero() {
+        // Where a year-level simulation runs, the deduction is what the year's own mechanics took
+        // off the standalone charge — the whole point of the exercise, so keep the column whenever
+        // it says anything.
+        if simulation.is_none() || total_tax_deduction.is_zero() {
             trades_table.hide_tax_deduction();
         }
     }
@@ -542,8 +786,8 @@ fn print_results(
         lto.print(&title);
     }
 
-    if let Some(german) = german {
-        german.print();
+    if let Some(simulation) = simulation {
+        simulation.print();
     }
 
     Ok(())

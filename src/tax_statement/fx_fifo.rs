@@ -1,16 +1,17 @@
-//! Per-currency signed-inventory FIFO for German Fremdwährungsgewinne (§20 EStG).
+//! Per-currency signed-inventory FIFO for realized foreign-currency results.
 //!
-//! Foreign-currency cash is replayed in statement order. A positive running balance is a
-//! Fremdwährungsguthaben; because IBKR pays interest on cash balances it is an interest-bearing
-//! account, so its gains and losses fall under §20 EStG (Abgeltungsteuer). A negative balance is a
-//! Fremdwährungskredit whose repayment FX result is not taxable (Tilgung eines
-//! Fremdwährungskredits, BMF 19.05.2022 Rz. 131).
+//! Foreign-currency cash is replayed in statement order, and the engine reports what each movement
+//! realized. Only the split it draws is jurisdiction-neutral: a **held** balance (positive running
+//! quantity) and a **borrowed** one (negative). Which of the two is taxable, and under which head,
+//! is the caller's decision — Germany routes held-balance results to §20 and treats borrowed-balance
+//! repayments as non-taxable (BMF 19.05.2022 Rz. 131), while Spain integrates held-balance results
+//! into the savings base and refers borrowed-balance results for manual review.
 //!
 //! Each disposal of held currency (a securities purchase, a fee, a reconversion to EUR) realizes a
-//! §20 gain or loss; each repayment of borrowed currency realizes a non-taxable result. Real
-//! currency exchanges are valued at the actual execution rate (the paired EUR leg); every other
-//! movement — including securities bought directly in the foreign currency ("verdeckte" gains) — is
-//! valued at the ECB reference rate of the transaction date.
+//! result against the held lots; each repayment of borrowed currency realizes one against the
+//! borrowed lots. Real currency exchanges are valued at the actual execution rate (the paired EUR
+//! leg); every other movement — including securities bought directly in the foreign currency — is
+//! valued at the central-bank reference rate of the transaction date.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -23,10 +24,10 @@ use crate::types::Decimal;
 #[derive(Debug)]
 pub struct CurrencyFxResult {
     pub currency: String,
-    /// §20-taxable disposals of held currency (Fremdwährungsguthaben).
+    /// Results realized against a held (positive) balance.
     pub taxable: Vec<FxRealization>,
-    /// Non-taxable Fremdwährungskredit-Tilgung realizations, dated so the caller can year-filter
-    /// them exactly as it does the taxable ones.
+    /// Results realized against a borrowed (negative) balance, dated so the caller can year-filter
+    /// them exactly as it does the held-balance ones.
     pub non_taxable: Vec<FxRealization>,
 }
 
@@ -35,7 +36,7 @@ pub struct CurrencyFxResult {
 pub struct FxRealization {
     /// Disposal date (the movement that realized the gain/loss).
     pub date: Date,
-    /// Acquisition date of the consumed lot — the §23 holding period runs from here to `date`.
+    /// Acquisition date of the consumed lot, for callers whose rules depend on a holding period.
     pub acquisition_date: Date,
     pub amount: Decimal,
     pub activity_code: String,
@@ -52,7 +53,7 @@ pub struct OpeningLot {
     pub quantity: Decimal,
     /// EUR value of one unit of the foreign currency at acquisition.
     pub eur_per_unit: Decimal,
-    /// Acquisition date (drives the §23 holding period).
+    /// Acquisition date of the opening lot.
     pub date: Date,
 }
 
@@ -62,13 +63,13 @@ struct Lot {
     qty: Decimal,
     /// EUR value of one unit of the foreign currency at acquisition.
     rate: Decimal,
-    /// Acquisition date of this lot (the §23 holding period is measured from here).
+    /// Acquisition date of this lot.
     date: Date,
 }
 
 /// Replay the cash-flow ledger through a per-currency signed-inventory FIFO.
 ///
-/// `ecb_rate(date, currency)` returns the ECB reference rate as EUR per one unit of `currency`.
+/// `ecb_rate(date, currency)` returns the central-bank reference rate as EUR per unit of `currency`.
 /// EUR movements are the filing currency (no FX gain against themselves) and are skipped. Results
 /// are returned in first-seen currency order.
 ///

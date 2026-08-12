@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
 use crate::broker_statement::grants::StockGrant;
-use crate::broker_statement::interest::{IdleCashInterest, ForeignCashFlow};
+use crate::broker_statement::interest::{IdleCashInterest, InterestKind, ForeignCashFlow};
 use crate::broker_statement::partial::PartialBrokerStatement;
 use crate::broker_statement::trades::{StockBuy, StockSell};
 use crate::broker_statement::{Fee, Withholding};
@@ -147,6 +147,10 @@ pub struct StatementOfFundsLine {
     #[serde(rename = "@assetCategory", default)]
     pub asset_category: String,
 
+    /// Venue the instrument is listed on, as IB names it. See [`Trade::listing_exchange`].
+    #[serde(rename = "@listingExchange", default)]
+    pub listing_exchange: String,
+
     #[serde(rename = "@amount", default)]
     pub amount: Decimal,
 
@@ -199,6 +203,11 @@ pub struct Trade {
 
     #[serde(rename = "@assetCategory")]
     pub asset_category: String,
+
+    /// Venue the instrument is listed on, as IB names it (`NASDAQ`, `NYSE`, `SEHK`, …). Empty on
+    /// currency rows and on statements exported without the field.
+    #[serde(rename = "@listingExchange", default)]
+    pub listing_exchange: String,
 
     #[serde(rename = "@dateTime")]
     pub date_time: String,
@@ -501,6 +510,9 @@ impl FlexStatement {
         }
 
         // Parse trades from Trades section (preferred if it has content).
+        // Non-stock instruments are dropped with one warning each rather than one per row: a
+        // statement holding hundreds of option legs would otherwise bury everything else.
+        let mut skipped_instruments = HashSet::new();
         let mut trades_found = false;
         if let Some(ref trades) = self.trades {
             // A "BUY (Ca.)" / "SELL (Ca.)" row cancels an earlier trade referenced by origTradeID;
@@ -535,7 +547,7 @@ impl FlexStatement {
                 }
                 // Only count the section as populated once a trade is actually ingested, so a
                 // section holding nothing but skipped non-stock rows still falls back to StmtFunds.
-                if parse_trade(&mut statement, trade)? {
+                if parse_trade(&mut statement, trade, &mut skipped_instruments)? {
                     trades_found = true;
                 }
             }
@@ -545,7 +557,7 @@ impl FlexStatement {
         if !trades_found {
             if let Some(ref stmtfunds) = self.statement_of_funds {
                 for line in &stmtfunds.lines {
-                    parse_statement_of_funds_trade(&mut statement, line)?;
+                    parse_statement_of_funds_trade(&mut statement, line, &mut skipped_instruments)?;
                 }
             }
         }
@@ -688,7 +700,23 @@ impl FlexStatement {
 }
 
 /// Parse a trade line from Statement of Funds section
-fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: &StatementOfFundsLine) -> EmptyResult {
+/// Name a non-stock instrument the parser dropped, once per instrument.
+///
+/// The parser is shared by every jurisdiction, so the message names no tax code: derivatives are out
+/// of scope for the tool, not for one country's return. Repeating it per row buries the rest of the
+/// output when a statement holds hundreds of option legs.
+fn warn_skipped_instrument(symbol: &str, asset_category: &str, warned: &mut HashSet<String>) {
+    if warned.insert(symbol.to_owned()) {
+        log::warn!(
+            "Skipping non-stock instrument {symbol} (assetCategory {asset_category}): the tool \
+             computes taxes for stocks only, so derivatives and other categories are out of scope.");
+    }
+}
+
+fn parse_statement_of_funds_trade(
+    statement: &mut PartialBrokerStatement, line: &StatementOfFundsLine,
+    warned: &mut HashSet<String>,
+) -> EmptyResult {
     // Skip base currency summary lines (these are conversions, not actual trades)
     // Real trades have levelOfDetail="Currency", base currency summaries have "BaseCurrency"
     if line.level_of_detail == "BaseCurrency" {
@@ -704,11 +732,7 @@ fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: 
     // Keep only stocks; warn on skipped derivative trade rows (FR-016).
     if line.asset_category != "STK" {
         if !line.symbol.is_empty() {
-            log::warn!(
-                "Skipping non-stock trade {} (assetCategory {}); German tax handling of \
-                 derivatives is out of scope.",
-                line.symbol, line.asset_category
-            );
+            warn_skipped_instrument(&line.symbol, &line.asset_category, warned);
         }
         return Ok(());
     }
@@ -736,6 +760,7 @@ fn parse_statement_of_funds_trade(statement: &mut PartialBrokerStatement, line: 
     let conclusion_time: DateOptTime = date.into();
 
     register_instrument_isin(statement, symbol, &line.isin);
+    register_listing_venue(statement, symbol, &line.listing_exchange);
 
     match line.buy_sell.as_str() {
         "BUY" => {
@@ -806,7 +831,8 @@ fn parse_statement_of_funds_dividend(statement: &mut PartialBrokerStatement, lin
             // Note: IB may withhold Irish tax (20%) which is NOT creditable for German taxpayers
             // Form 8-3-6 is needed for exemption/refund
             let amount = Cash::new(&line.currency, line.amount);
-            statement.idle_cash_interest.push(IdleCashInterest::new(date, amount));
+            statement.idle_cash_interest.push(
+                IdleCashInterest::new_typed(date, amount, InterestKind::Received));
             log::debug!("Credit interest: {} on {}", amount, date);
         }
         _ => {}
@@ -872,15 +898,13 @@ fn build_foreign_cash_flows(stmtfunds: &StatementOfFunds) -> GenericResult<Vec<F
 
 /// Ingest a stock trade. Returns `true` if a trade was recorded, `false` if the row was skipped as
 /// a non-stock instrument. Cancellation rows are filtered out by the caller before this is reached.
-fn parse_trade(statement: &mut PartialBrokerStatement, trade: &Trade) -> GenericResult<bool> {
+fn parse_trade(
+    statement: &mut PartialBrokerStatement, trade: &Trade, warned: &mut HashSet<String>,
+) -> GenericResult<bool> {
     // Keep only stocks; warn on every skipped derivative/non-stock category (FR-016). Asset-category
     // filtering here replaces the old symbol-pattern guess that dropped real tickers like GLW/WST.
     if trade.asset_category != "STK" {
-        log::warn!(
-            "Skipping non-stock instrument {} (assetCategory {}); German tax handling of \
-             derivatives is out of scope.",
-            trade.symbol, trade.asset_category
-        );
+        warn_skipped_instrument(&trade.symbol, &trade.asset_category, warned);
         return Ok(false);
     }
 
@@ -899,6 +923,7 @@ fn parse_trade(statement: &mut PartialBrokerStatement, trade: &Trade) -> Generic
     let conclusion_time: DateOptTime = date.into();
 
     register_instrument_isin(statement, symbol, &trade.isin);
+    register_listing_venue(statement, symbol, &trade.listing_exchange);
 
     match trade.buy_sell.as_str() {
         "BUY" => {
@@ -939,6 +964,15 @@ fn register_instrument_isin(statement: &mut PartialBrokerStatement, symbol: &str
             log::warn!("Ignoring invalid ISIN {isin:?} for {symbol}: {e}");
         }
     }
+}
+
+/// Attach the row's listing exchange to the instrument. Empty values are ignored, so an instrument
+/// only ever carries venues the statement actually named.
+fn register_listing_venue(statement: &mut PartialBrokerStatement, symbol: &str, venue: &str) {
+    if venue.is_empty() {
+        return;
+    }
+    statement.instrument_info.get_or_add(symbol).add_listing_venue(venue);
 }
 
 /// Which income types the CashTransactions section carries. Used to dedup against the StmtFunds
@@ -1015,8 +1049,15 @@ fn parse_cash_transaction(
             // Skip interest withholding taxes (handled differently)
         }
 
-        "Broker Interest Paid" | "Broker Interest Received" => {
-            statement.idle_cash_interest.push(IdleCashInterest::new(date, amount));
+        kind @ ("Broker Interest Paid" | "Broker Interest Received") => {
+            // Keep IB's own label: a negative "Received" row is a reversal of interest credited
+            // earlier, not a financing cost, and the sign cannot tell the two apart.
+            let kind = if kind == "Broker Interest Paid" {
+                InterestKind::Paid
+            } else {
+                InterestKind::Received
+            };
+            statement.idle_cash_interest.push(IdleCashInterest::new_typed(date, amount, kind));
         }
 
         "Deposits/Withdrawals" | "Deposits" | "Withdrawals" => {
@@ -1265,6 +1306,7 @@ mod tests {
             isin: String::new(),
             description: symbol.to_string(),
             asset_category: asset_category.to_string(),
+            listing_exchange: "NASDAQ".to_string(),
             date_time: "20240110;100000".to_string(),
             settle_date: "20240112".to_string(),
             quantity: dec!(1),
@@ -1287,11 +1329,11 @@ mod tests {
         let mut statement = PartialBrokerStatement::new(&[Exchange::Us], false);
 
         let stock = trade_row("GLW", "STK");
-        assert!(parse_trade(&mut statement, &stock).unwrap());
+        assert!(parse_trade(&mut statement, &stock, &mut HashSet::new()).unwrap());
         assert_eq!(statement.stock_buys.len(), 1);
 
         let option = trade_row("AAPL  240119C00150000", "OPT");
-        assert!(!parse_trade(&mut statement, &option).unwrap());
+        assert!(!parse_trade(&mut statement, &option, &mut HashSet::new()).unwrap());
         assert_eq!(statement.stock_buys.len(), 1, "option must not be ingested");
     }
 }

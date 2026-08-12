@@ -1,0 +1,13 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20260101" toDate="20261231" period="LastYear" whenGenerated="20270115;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="-150" dividends="0" brokerInterest="-150" withholdingTax="0"/>
+      </CashReport>
+      <CashTransactions>
+        <CashTransaction currency="USD" description="USD CREDIT INT" dateTime="20260630;235959" amount="100" type="Broker Interest Received"/>
+        <CashTransaction currency="USD" description="USD DEBIT INT" dateTime="20260930;235959" amount="-250" type="Broker Interest Paid"/>
+      </CashTransactions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

@@ -138,8 +138,9 @@ investment fund:
   | Mischfonds (mixed) | Zeile 5 | Zeile 10 | Zeile 17 |
   | sonstige (bond/other) | Zeile 8 | Zeile 13 | Zeile 26 |
 
-Anlage KAP line numbers follow the 2024/2025 form; the KAP-INV Zeilen above have been stable since the
-2018 InvStG reform. Both shift between years, so re-check them against the form for your filing year.
+Every Zeile above is pinned to the official Bundesfinanzverwaltung forms for **both 2024 and 2025**,
+which carry identical numbering — see [Open interpretations](#open-interpretations) for the sources.
+Forms can shift between years, so re-check them if you file a later year.
 
 **Altbestand on KAP:** a pure pre-2009 (Altbestand) share sale has a positive gross gain but a
 taxable amount of 0, so it contributes nothing to Zeile 19/20 — the tax-free gain is not declared as
@@ -391,6 +392,182 @@ SUMMARY,,,,,Net Tax Due,,,,,,,,,,,544.19,,
 5. **Broker Statements:** Ensure you have complete broker statements for the entire year and any previous years for accurate cost basis tracking.
 
 6. **One account per Flex Query:** A multi-account Flex Query (several `FlexStatement` elements in one file) is rejected with an explicit error rather than processed. Export one account per query. FIFO (§20(4) S.7) is *per depot*, and the trade engine keys lots by symbol only, so pooling accounts would match sells against the wrong depot's lots and misstate gains or Altbestand status. Run each account as its own import.
+
+## Open interpretations
+
+Every point where the tool had to choose a reading or stops short of a computation, what settles it,
+and what the tool says when a case actually turns on it.
+
+### 1. Anlage KAP / KAP-INV line numbers — VERIFIED 2024 and 2025
+
+**Authority.** The official forms of the Bundesfinanzverwaltung, published through the
+Formular-Management-System ([formulare-bfinv.de](https://www.formulare-bfinv.de/)): *Anlage KAP 2024*
+(print id `2024AnlKAP051NET`, September 2024) and *Anlage KAP 2025* (`2025AnlKAP051NET`, Oktober
+2025); *Anlage KAP-INV 2024* (`2024AnlKAP-INV361NET`, September 2024) and *Anlage KAP-INV 2025*
+(`2025AnlKAP-INV361NET`, September 2025). The form server is a session-gated web application, so the
+PDFs were read from a mirror that carries the official print ids and ELSTER barcode numbers verbatim
+([KAP 2024](https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2024/Anlage_KAP_steuern.de_01.pdf),
+[KAP 2025](https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2025/Anlage_KAP_2025_steuern-de.pdf),
+[KAP-INV 2024](https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2024/Anlage_KAP_INV_Steuern.de_01.pdf),
+[KAP-INV 2025](https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2025/Anlage_KAP_INV_2025_steuern-de.pdf));
+all four retrieved 2026-08-11.
+
+**The tool's reading.** No line number is guessed. Both years carry identical numbering for every
+line the tool fills, so one mapping serves both. The 2025 Anlage KAP only voids the Termingeschäfte
+lines — 21, 24 and 25 are printed "frei" — without renumbering 22, 23 or 41.
+
+**Still open.** A year whose form is not published yet. Forms do shift, so re-check the numbers
+against your own form if you file beyond 2025; the CSV block says so above the rows.
+
+### 2. Multi-account Flex statements — REJECTED, not interpreted
+
+FIFO under §20(4) S. 7 EStG runs *per depot*, and the trade engine keys lots by symbol alone.
+Pooling two accounts would match sells against the wrong depot's lots and misstate both gains and
+Altbestand status, so a Flex Query carrying several `FlexStatement` elements is refused outright
+rather than processed:
+
+```text
+Multi-account Flex Query responses are not supported: found 2 statements. Export one account per
+Flex Query.
+```
+
+The same applies to a duplicate FOREX `transactionID`, which makes the execution-rate pairing
+ambiguous. **What to do.** Export one account per query and run each as its own import.
+
+### 3. Short positions — REPORT-ONLY
+
+Short stock and written options open at year end are Termin-/Stillhaltergeschäfte. Their §20 EStG
+treatment turns on facts a broker statement does not carry, so the tool computes no tax for them and
+keeps them out of the cost-basis reconciliation instead of guessing:
+
+```text
+Short positions held at year end are not tax-computed and need manual §20 EStG review
+(Termin-/Stillhaltergeschäfte): TSLA: -50.
+```
+
+```text
+# SHORT POSITIONS — MANUAL §20 EStG REVIEW REQUIRED. No tax is computed for these.
+SHORT_POSITION,TSLA — open short quantity (manual review),-50.00
+```
+
+**What to do.** Classify and declare each one by hand on Anlage KAP.
+
+### 4. Vorabpauschale inputs — DATA-DEPENDENT, skipped rather than guessed
+
+§18 InvStG needs three inputs a foreign broker's statement does not carry. Each missing one skips
+that fund's Vorabpauschale — never a silent zero — and names what to configure.
+
+**Basiszins.** Published by the BMF each January for the year just begun. An unknown year skips every
+holding:
+
+```text
+Vorabpauschale (§18 InvStG) not computed for year-end fund holdings: no Basiszins known for 2026.
+The BMF publishes it each January; set `taxes.basiszins.2026` in the config.
+```
+
+**Year-boundary NAVs.** Redemption prices at 1 January and 31 December come from config:
+
+```text
+Vorabpauschale (§18 InvStG) could not be computed for year-end fund holdings without configured
+year-boundary NAVs: IE00B4L5Y983. Set `taxes.fund_nav.<ISIN>.2025` (jan1/dec31) to include them.
+```
+
+**Month of acquisition** drives the Zwölftelung of §18 Abs. 2. When config does not pin
+`acquired_month`, the tool derives it from the earliest buy of that symbol inside the tax year, and
+treats a position whose earliest buy predates the year as held from 1 January. A position built up
+over several months is therefore approximated by its **earliest** buy, which prorates the least and
+so reports the largest Vorabpauschale of the plausible readings. Pin `acquired_month` if that matters.
+
+**What to do.** Set the config values and re-run; nothing here changes a figure that was computed.
+
+### 5. Foreign tax credit caps — SIMPLIFICATION
+
+**The tool's reading.** Creditable withholding under §32d(5) EStG is the smallest of the tax actually
+withheld, **15% of the gross distribution**, and **25% of the taxable amount**. The 15% limb is the
+cap in the great majority of German double-taxation treaties (the US treaty among them) and is
+applied uniformly — the tool does not resolve the payer's country of residence, so a treaty with a
+lower cap (or none) is not modelled. Fund distributions get **zero** credit: under the InvStG 2018
+regime the investor cannot credit fund-level foreign withholding, so anything carrying a
+Teilfreistellung classification credits nothing. The withheld amount is still reported in full.
+
+**What to do.** Check the treaty for each payer's country if the amounts are material; a lower treaty
+cap means the tool over-credits and understates the tax.
+
+### 6. Foreign-currency §20 history — DATA COVERAGE
+
+The signed-inventory FIFO trusts the statement's own running balance and refuses to guess. Without a
+Statement of Funds at `Currency` level of detail there is no ledger to replay:
+
+```text
+The statement has foreign-currency activity but no Statement of Funds Currency-level cash ledger, so
+Fremdwährungsgewinne were not computed. Re-export the IBKR Flex query with the Statement of Funds at
+Currency level of detail to capture foreign FX gains.
+```
+
+A history that does not reach back to account opening is **rejected** rather than mis-valued, unless
+you declare the carried-in balance under `opening_foreign_currency`. The declaration is trusted for
+the acquisition **rate** only — the one figure a truncated export cannot supply — while the quantity
+is still reconciled against the statement. See
+[Incomplete history](#incomplete-history-declared-opening-balance). **What to do.** Supply full
+history from account opening whenever the export allows it.
+
+### 7. Foreign currency under §23 (Anlage SO) — REPORT-ONLY, borrowed balance open
+
+With `foreign_currency_taxation: non_interest_bearing` the realizations route to Anlage SO and **no
+tax is computed** — §23 income is taxed at the filer's personal rate, which the tool cannot know. Two
+things stay the filer's call. The Freigrenze is a cliff over the filer's *total* private sales for
+the year, and the tool sees only this account, so it prints the year's threshold and leaves the
+decision alone. And a negative-balance repayment is surfaced rather than excluded, because the §20
+Fremdwährungskredit exemption does not carry over to §23:
+
+```text
+SECTION23_BORROWED_REVIEW,Fremdwährungskredit-Realisierung — MANUAL REVIEW (§20-Ausnahme BMF
+19.05.2022 Rz. 131 gilt nicht für §23),-120.00
+```
+
+Under the default §20 treatment the same repayment is *nicht steuerbar* (BMF 19.05.2022 Rz. 131) and
+is reported separately as `NON_TAXABLE_MARGIN_FX`.
+
+### 8. Altbestand (pre-2009) — IMPLEMENTED READING
+
+**Authority.** §52 Abs. 28 S. 11 EStG. Shares acquired before 2009-01-01 are grandfathered out of
+§20(2). The tool splits a mixed sale per FIFO lot and excludes only the pre-2009 lots' profit, so a
+pure Altbestand sale carries a positive gross gain but a taxable amount of 0 and contributes nothing
+to Zeile 19 or 20. The row is annotated:
+
+```text
+Altbestand (pre-2009) lots grandfathered — their profit excluded
+```
+
+**What to do.** The grandfathering has conditions the statement cannot show (notably the €100,000
+Freigrenze on fund Altbestand under §56 Abs. 6 InvStG). Review pre-2009 holdings with an adviser.
+
+### 9. Grant lots without a vest-date FMV — €0 COST-BASIS FALLBACK
+
+The FMV taxed as employment income at vesting is the shares' capital-gains cost basis. When the
+statement carries no grant record or no FMV, the tool falls back to zero, which taxes the whole
+disposal proceeds as gain — conservative, but wrong in the filer's disfavour:
+
+```text
+Stock grant lot for ACME vested 2024-06-15 has no matching grant record; using a €0 cost basis,
+which taxes the whole disposal proceeds as gain. Supply the vest-date FMV and correct the figure by
+hand — see the open-interpretations section of docs/germany-taxes.md.
+```
+
+The employment-income side warns separately when the vest-date FMV is missing, reporting €0.
+
+**What to do.** Take the vest-date FMV from the employer's payroll record and correct both figures by
+hand.
+
+### 10. Settlement-date FX on trades — DOCUMENTED SIMPLIFICATION
+
+The **tax year** of a disposal is set by the obligatory transaction (conclusion) date, not the
+settlement date, so a December sale settling in January is taxed in the December year. The **euro
+conversion** of the same trade follows the shared engine's convention instead: revenue at its
+settlement date, and each consumed lot's purchase cost at that lot's own settlement date. The two
+dates therefore disagree by a settlement lag on every trade, and the ECB rate used is the settlement
+day's. This is a simplification, not a reading of §20(4); it is inherited from the shared broker
+engine and is unaffected by which year the gain lands in.
 
 ## Troubleshooting
 

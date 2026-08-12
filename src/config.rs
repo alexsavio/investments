@@ -184,6 +184,7 @@ impl Config {
     pub fn get_tax_country(&self) -> Country {
         match self.taxes.jurisdiction {
             Some(TaxJurisdiction::Germany) => localities::germany(&self.taxes),
+            Some(TaxJurisdiction::Spain) => localities::spain(&self.taxes),
             Some(TaxJurisdiction::Russia) => localities::russia(&self.taxes),
 
             // Defaulting to Russia keeps upstream configs working, but it is the only path where a

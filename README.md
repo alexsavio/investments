@@ -11,10 +11,11 @@ Helps you with managing your investments:
 * **Automatic tax statement generation:** reads broker statements and generates tax reports:
   * **Russia:** Alters *.deX file (created by Russian tax program named Декларация) by adding all required information about income from stock selling, paid dividends and idle cash interest.
   * **Germany:** Generates CSV tax reports with Abgeltungssteuer, Solidaritätszuschlag, Kirchensteuer calculations, Teilfreistellung for ETFs, and foreign tax credits. See [Germany tax documentation](docs/germany-taxes.md).
+  * **Spain:** Generates CSV tax reports for the IRPF savings base under the Gipuzkoa foral regime (Norma Foral 3/2014) or Territorio Común (LIRPF), with per-lot actualization coefficients, the valores-homogéneos deferral rule, four-year loss compensation, and the double-taxation credit. See [Spain tax documentation](docs/spain-taxes.md).
 * **Bank deposits control:** view opened bank deposits all in one place and get notified about upcoming deposit closures.
 * **Metrics:** exports analysis results in Prometheus format.
 
-Targeted for investors in Russia and Germany who use [Firstrade](https://www.firstrade.com/), [Interactive Brokers](https://interactivebrokers.com/), [БКС](https://broker.ru/), [Сбер](https://sberbank.ru/), [Т-Банк](https://www.tbank.ru/) or non-exchange-traded unit investment funds.
+Targeted for investors in Russia, Germany and Spain who use [Firstrade](https://www.firstrade.com/), [Interactive Brokers](https://interactivebrokers.com/), [БКС](https://broker.ru/), [Сбер](https://sberbank.ru/), [Т-Банк](https://www.tbank.ru/) or non-exchange-traded unit investment funds.
 
 ## Installation
 
@@ -77,6 +78,12 @@ See [instructions for portfolio rebalancing](docs/rebalancing.md).
 
 ```bash
 investments tax-statement ib 2024 german-tax-2024.csv
+```
+
+**Spain:** See [instructions for Spanish tax statement generation](docs/spain-taxes.md). Generate a CSV report with:
+
+```bash
+investments tax-statement ib 2026 spanish-tax-2026.csv
 ```
 
 <a name="simulate-sell"></a>

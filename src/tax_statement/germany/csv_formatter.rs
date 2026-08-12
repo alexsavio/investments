@@ -17,11 +17,16 @@ use super::statement::{
 /// Anlage KAP-INV line numbers for one fund type: (distributions, Vorabpauschale, sale gains/losses).
 ///
 /// The tool classifies funds as equity / mixed / bond; on the form those map to Aktienfonds,
-/// Mischfonds, and sonstige Investmentfonds. The form structure has been stable since the 2018 InvStG
-/// reform, so these apply across recent filing years.
-// TODO(verify): the sonstige-Investmentfonds Veräußerung line (26) is inferred from the
-// three-lines-per-fund-type layout (Aktien 14, Misch 17, …) and the Altbestand line at 27; the
-// published form image confirmed lines through 25. Re-check against the current form.
+/// Mischfonds, and sonstige Investmentfonds.
+///
+/// Pinned to the official forms of the Bundesfinanzverwaltung (Formular-Management-System,
+/// formulare-bfinv.de): "Anlage KAP-INV 2024" (print id 2024AnlKAP-INV361NET, September 2024) and
+/// "Anlage KAP-INV 2025" (2025AnlKAP-INV361NET, September 2025). PDFs retrieved 2026-08-11 from
+/// <https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2024/Anlage_KAP_INV_Steuern.de_01.pdf>
+/// and <https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2025/Anlage_KAP_INV_2025_steuern-de.pdf>.
+/// Both years are identical: "Ausschüttungen nach § 2 Abs. 11 InvStG" on Zeilen 4 / 5 / 8,
+/// "Vorabpauschalen nach § 18 InvStG" on Zeilen 9 / 10 / 13, and "Gewinne und Verluste aus der
+/// Veräußerung von Investmentanteilen" on Zeilen 14 / 17 / 26 (Aktien- / Misch- / sonstige Fonds).
 fn kap_inv_zeilen(rate: TeilfreistellungRate) -> Option<(u32, u32, u32)> {
     match rate {
         TeilfreistellungRate::Equity => Some((4, 9, 14)),
@@ -370,7 +375,11 @@ impl CsvFormatter {
         )?;
         writeln!(
             writer,
-            "# Line numbers follow the 2024/2025 Anlage KAP; re-check against the year's form."
+            "# Zeilen verified against the official Anlage KAP 2024 and 2025 (identical in both);"
+        )?;
+        writeln!(
+            writer,
+            "# re-check them if you file a later year — see docs/germany-taxes.md."
         )?;
         writeln!(
             writer,
@@ -489,11 +498,11 @@ impl CsvFormatter {
         writeln!(writer, "# applies the Teilfreistellung itself.")?;
         writeln!(
             writer,
-            "# Zeilen follow the Anlage KAP-INV form (structure stable since the 2018 InvStG reform);"
+            "# Zeilen verified against the official Anlage KAP-INV 2024 and 2025 (identical in both);"
         )?;
         writeln!(
             writer,
-            "# re-check the line numbers against your filing year's form."
+            "# re-check them if you file a later year — see docs/germany-taxes.md."
         )?;
         for (key, label, rate, group) in groups {
             if is_empty(group) {
@@ -739,6 +748,52 @@ mod tests {
         assert_eq!(CsvFormatter::format_decimal(dec!(1.5)), "1.50");
         assert_eq!(CsvFormatter::format_decimal(dec!(2)), "2.00");
         assert_eq!(CsvFormatter::format_decimal(dec!(-0.125)), "-0.13");
+    }
+
+    /// The KAP-INV Zeilen are pinned to the official forms (Anlage KAP-INV 2024
+    /// `2024AnlKAP-INV361NET` and 2025 `2025AnlKAP-INV361NET`, both identical): Ausschüttungen on
+    /// 4 / 5 / 8, Vorabpauschalen on 9 / 10 / 13, Veräußerung on 14 / 17 / 26. A silent drift here
+    /// sends the filer's figures to the wrong box, so the mapping is asserted, not just documented.
+    #[test]
+    fn kap_inv_zeilen_match_the_official_form() {
+        assert_eq!(kap_inv_zeilen(TeilfreistellungRate::Equity), Some((4, 9, 14)));
+        assert_eq!(kap_inv_zeilen(TeilfreistellungRate::Mixed), Some((5, 10, 17)));
+        assert_eq!(kap_inv_zeilen(TeilfreistellungRate::Bond), Some((8, 13, 26)));
+        assert_eq!(kap_inv_zeilen(TeilfreistellungRate::None), None);
+    }
+
+    /// The Anlage KAP block emits exactly the five lines the tool fills, each pinned to the official
+    /// form (Anlage KAP 2024 `2024AnlKAP051NET` and 2025 `2025AnlKAP051NET`, both identical):
+    /// 19 ausländische Kapitalerträge, 20 Gewinne aus Aktienveräußerungen, 22 Verluste ohne Aktien,
+    /// 23 Verluste aus Aktienveräußerungen, 41 anrechenbare ausländische Steuern.
+    #[test]
+    fn kap_summary_rows_carry_the_official_zeilen() {
+        let mut statement =
+            GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        statement.kap_zeile_19 = dec!(1000);
+        statement.kap_zeile_20 = dec!(400);
+        statement.kap_zeile_22 = dec!(50);
+        statement.kap_zeile_23 = dec!(25);
+        statement.kap_zeile_41 = dec!(15);
+
+        let output = render(|w| CsvFormatter::write_summary_rows(w, &statement));
+        let keys: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("KAP_ZEILE_"))
+            .map(|line| line.split(',').next().unwrap())
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "KAP_ZEILE_19",
+                "KAP_ZEILE_20",
+                "KAP_ZEILE_22",
+                "KAP_ZEILE_23",
+                "KAP_ZEILE_41",
+            ]
+        );
+        assert!(output.contains("KAP_ZEILE_19,Ausländische Kapitalerträge"));
+        assert!(output.contains("KAP_ZEILE_41,Anrechenbare ausländische Steuer"));
     }
 
     const COLUMNS: usize = 21;
