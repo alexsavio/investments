@@ -305,7 +305,11 @@ fn run_pipeline_reporting_income(
 /// decided nothing. Reporting "no income" and writing no file loses both.
 #[test]
 fn a_fee_only_year_still_produces_a_statement() {
-    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+    for regime in [
+        SpanishTaxRegime::Gipuzkoa,
+        SpanishTaxRegime::Comun,
+        SpanishTaxRegime::Navarra,
+    ] {
         let (spain, has_income) =
             run_pipeline_reporting_income("fee_only", 2026, &spain_config(regime));
 
@@ -379,7 +383,11 @@ fn an_empty_year_reports_no_income() {
 /// is reported so the year's picture is complete and the filer is reminded to declare it.
 #[test]
 fn stock_grants_are_reported_for_the_general_base() {
-    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+    for regime in [
+        SpanishTaxRegime::Gipuzkoa,
+        SpanishTaxRegime::Comun,
+        SpanishTaxRegime::Navarra,
+    ] {
         let (spain, has_income) =
             run_pipeline_reporting_income("grants", 2026, &spain_config(regime));
 
@@ -482,7 +490,11 @@ fn rcm_income_is_reported_with_a_treaty_capped_credit_candidate() {
 /// Fixture: $100 received 2026-06-30 and $250 paid 2026-09-30, at 0.9 EUR/USD.
 #[test]
 fn paid_margin_interest_does_not_reduce_the_rcm_result() {
-    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+    for regime in [
+        SpanishTaxRegime::Gipuzkoa,
+        SpanishTaxRegime::Comun,
+        SpanishTaxRegime::Navarra,
+    ] {
         let spain = run_pipeline("margin_interest", 2026, regime);
 
         // Both rows are reported; only the credit interest is income.
@@ -515,6 +527,7 @@ fn paid_margin_interest_does_not_reduce_the_rcm_result() {
 #[rstest]
 #[case(SpanishTaxRegime::Gipuzkoa)]
 #[case(SpanishTaxRegime::Comun)]
+#[case(SpanishTaxRegime::Navarra)]
 fn an_interest_reversal_nets_against_income_rather_than_being_paid_interest(
     #[case] regime: SpanishTaxRegime,
 ) {
@@ -1483,4 +1496,136 @@ fn a_negative_rcm_balance_reaches_the_ganancias_balance_only_under_comun() {
     // 7,500 × 19% + 1,500 × 20%.
     assert_eq!(gipuzkoa.savings_quota, dec!(1725));
     assert!(gipuzkoa.rcm_ledger_next.is_empty());
+}
+
+/// Navarra takes the acquisition value as paid: TRLFIRPF art. 41 has never carried an
+/// actualization rule, so the `fifo` trades produce Común's nominal gain — but at Navarra's own
+/// scale, so the tax due matches neither of the other two regimes.
+///
+/// 22,500 − 9,000 and 27,000 − 18,000, taxed under art. 60 at
+/// 1,200 + 880 + 1,200 + 7,500 × 26% = 5,230.
+#[test]
+fn navarra_takes_the_nominal_cost_and_its_own_scale() {
+    let navarra = run_pipeline("fifo", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.regime, SpanishTaxRegime::Navarra);
+    assert_eq!(navarra.capital_gains[0].lots[0].coefficient, dec!(1));
+    assert_eq!(navarra.capital_gains[0].actualized_cost_eur, dec!(9000));
+    assert_eq!(navarra.capital_gains[0].fiscal_gain_loss, dec!(13500));
+    assert_eq!(navarra.capital_gains[1].fiscal_gain_loss, dec!(9000));
+
+    assert_eq!(navarra.gyp_net, dec!(22500));
+    assert_eq!(navarra.savings_base, dec!(22500));
+    assert_eq!(navarra.savings_quota, dec!(5230));
+    assert_eq!(navarra.average_savings_rate, dec!(0.2324));
+    assert_eq!(navarra.net_tax_due, dec!(5230));
+
+    // Same trades, three regimes, three answers: Navarra shares Común's base and neither regime's
+    // tax. A copy-pasted scale or a leaked coefficient would collapse two of these into one.
+    let gipuzkoa = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+    let comun = run_pipeline("fifo", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(navarra.gyp_net, comun.gyp_net);
+    assert_ne!(navarra.gyp_net, gipuzkoa.gyp_net);
+    assert_eq!(gipuzkoa.savings_quota, dec!(3957.24));
+    assert_eq!(comun.savings_quota, dec!(4605));
+}
+
+/// LF 29/2014 repealed Navarra's dividend exemption with effect from 2015, so the whole dividend is
+/// income there — the Común answer, not the Gipuzkoa one. Getting this backwards is the single
+/// easiest mistake to make when adding a third foral regime.
+#[test]
+fn navarra_has_no_dividend_exemption() {
+    let navarra = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.total_dividend_income, dec!(2250));
+    assert_eq!(navarra.total_dividend_exemption, dec!(0));
+
+    let comun = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(navarra.total_dividend_exemption, comun.total_dividend_exemption);
+
+    let gipuzkoa = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.total_dividend_exemption, dec!(1500));
+}
+
+/// A conversion out of a held foreign-currency balance is a transfer of a patrimonial element under
+/// TRLFIRPF art. 54.1.b too, so it joins the ganancias group under Navarra exactly as it does
+/// elsewhere. €1,000 realized, taxed inside art. 60's first bracket.
+#[test]
+fn navarra_taxes_held_balance_conversions_as_ganancias() {
+    let statement = read_fixture("fx_gain");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (navarra, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Navarra),
+    )
+    .unwrap();
+
+    assert_eq!(navarra.fx_gains.len(), 1);
+    assert_eq!(navarra.total_fx_gains, dec!(1000));
+    assert_eq!(navarra.gyp_net, dec!(1000));
+    assert_eq!(navarra.rcm_net, dec!(0));
+    assert_eq!(navarra.savings_base, dec!(1000));
+    assert_eq!(navarra.savings_quota, dec!(200));
+}
+
+/// A loss carries forward at its nominal amount and starts its own four-year window, identically to
+/// Común — there is nothing to actualize and no exemption to interact with.
+#[test]
+fn navarra_carries_a_loss_forward_at_its_nominal_amount() {
+    let navarra = run_pipeline("loss", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.capital_gains[0].lots[0].coefficient, dec!(1));
+    assert_eq!(navarra.capital_gains[0].actualized_cost_eur, dec!(18000));
+    assert_eq!(navarra.gyp_net, dec!(-9000));
+    assert_eq!(navarra.savings_base, dec!(0));
+    assert_eq!(navarra.savings_quota, dec!(0));
+    assert_eq!(navarra.gyp_ledger_next.balances()[&2026], dec!(9000));
+}
+
+/// TRLFIRPF art. 39.6.f is the same two-month valores-homogéneos rule the engine already
+/// implements, and Navarra shares Común's unit-1 coefficient, so every deferral, reintegration and
+/// carried-out blocked lot must come out identical to Común's on every wash-sale fixture. Any
+/// difference would mean the regime switch had reached the wash-sale engine, which it must not.
+#[rstest]
+#[case("wash_sale_after")]
+#[case("wash_sale_before")]
+#[case("wash_sale_chained")]
+#[case("wash_sale_multi_lot")]
+#[case("wash_sale_split")]
+#[case("wash_sale_boundary")]
+#[case("wash_sale_venue")]
+#[case("year_end_loss")]
+fn navarra_defers_losses_exactly_like_comun(#[case] fixture: &str) {
+    let navarra = run_pipeline(fixture, 2026, SpanishTaxRegime::Navarra);
+    let comun = run_pipeline(fixture, 2026, SpanishTaxRegime::Comun);
+
+    assert_eq!(navarra.total_deferred_loss, comun.total_deferred_loss, "{fixture}");
+    assert_eq!(
+        navarra.total_reintegrated_loss, comun.total_reintegrated_loss,
+        "{fixture}"
+    );
+    assert_eq!(navarra.total_capital_gains, comun.total_capital_gains, "{fixture}");
+    assert_eq!(navarra.gyp_net, comun.gyp_net, "{fixture}");
+    assert_eq!(
+        navarra.deferred_losses_next.len(),
+        comun.deferred_losses_next.len(),
+        "{fixture}"
+    );
+    for (a, b) in navarra.deferred_losses_next.iter().zip(&comun.deferred_losses_next) {
+        assert_eq!(a.loss, b.loss, "{fixture}");
+        assert_eq!(a.blocked_quantity, b.blocked_quantity, "{fixture}");
+        assert_eq!(a.acquisition_date, b.acquisition_date, "{fixture}");
+    }
+    assert_eq!(
+        navarra.wash_sale_venue_reviews.len(),
+        comun.wash_sale_venue_reviews.len(),
+        "{fixture}"
+    );
+    assert_eq!(
+        navarra.wash_sale_boundary_reviews.len(),
+        comun.wash_sale_boundary_reviews.len(),
+        "{fixture}"
+    );
 }
