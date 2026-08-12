@@ -139,6 +139,11 @@ mod modelo_f93 {
     pub const H2_OWN_LOSSES: &str = "8825";
     pub const H2_TRANSFER_LOSSES_CROSSED: &str = "8805";
     pub const H2_NET: &str = "8840";
+    /// Apartado H3's own saldo, the mirror image of H4's 8850. The specimen's box column carries
+    /// 8816 / 817 / 818 against H3's three lines exactly as it carries 8850 / 8865 / 8875 against
+    /// H4's, and 8816 sits on the H3 line itself. Read from the ejercicio-2025 specimen only, like
+    /// every other number here.
+    pub const H3_TRANSFERS_NEGATIVE: &str = "8816";
     pub const H4_RCM_NEGATIVE: &str = "8850";
     pub const TOTAL: &str = "8841";
     /// Base and cuota, each with the página-7 summary box that repeats it.
@@ -1146,6 +1151,12 @@ impl CsvFormatter {
                         statement.small_disposals_exemption,
                     ),
                     (
+                        modelo_f93::H3_TRANSFERS_NEGATIVE,
+                        "H3 — saldo negativo procedente de transmisiones — importe en positivo \
+                         (anexo 2; casilla leída del impreso de 2025)",
+                        std::cmp::max(zero, -statement.gyp_net),
+                    ),
+                    (
                         modelo_f93::H4_RCM_NEGATIVE,
                         "H4 — saldo negativo procedente de rendimientos del capital mobiliario \
                          (anexo 2)",
@@ -1182,11 +1193,16 @@ impl CsvFormatter {
                     )?;
                     writeln!(
                         writer,
-                        "# H1; its casillas are year-labelled on the form itself. The amount is the"
+                        "# H1: casilla {} above carries the saldo, and the rest of the block —",
+                        modelo_f93::H3_TRANSFERS_NEGATIVE
                     )?;
                     writeln!(
                         writer,
-                        "# H1 row above with the sign reversed."
+                        "# the joint-return cells and the per-year carryforward ones — is labelled"
+                    )?;
+                    writeln!(
+                        writer,
+                        "# on the form itself."
                     )?;
                 }
 
@@ -2126,6 +2142,43 @@ mod tests {
         for row in rows {
             assert_eq!(row.split(',').count(), columns, "{regime:?}: {row}");
         }
+    }
+
+    /// A loss-making year files apartado H3, not H1, and H3 needs its own figure: H1's casilla 8808
+    /// is `max(0, gyp_net)`, which is exactly 0.00 in such a year, so telling the filer to reverse
+    /// its sign hands them a zero.
+    #[test]
+    fn a_negative_transmissions_year_reports_its_own_h3_saldo() {
+        let regime = SpanishTaxRegime::Navarra;
+        let mut spain = statement(regime);
+        let mut loss = capital_gain();
+        loss.proceeds_eur = dec!(5000);
+        loss.fiscal_gain_loss = dec!(-4000);
+        loss.integrable_amount = dec!(-4000);
+        spain.capital_gains.push(loss);
+        spain.calculate_totals();
+        assert_eq!(spain.gyp_net, dec!(-4000));
+
+        let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
+
+        // The H3 saldo carries the year's own figure, as the positive magnitude casilla 8850 uses
+        // for the mirror-image H4 block.
+        assert!(output.contains("MODELO_F93_8816,"), "{output}");
+        let row = output
+            .lines()
+            .find(|line| line.starts_with("MODELO_F93_8816,"))
+            .unwrap();
+        assert!(row.ends_with(",4000.00"), "{row}");
+        assert!(row.contains("H3"), "{row}");
+        // H1's box must not be emitted as the H3 substitute.
+        assert!(!output.contains("with the sign reversed"), "{output}");
+
+        // A profitable year files H1 instead, so the H3 row must not appear at all.
+        let mut profit = statement(regime);
+        profit.capital_gains.push(capital_gain());
+        profit.calculate_totals();
+        let output = render(|w| CsvFormatter::write_modelo_boxes(w, &profit));
+        assert!(!output.contains("MODELO_F93_8816"), "{output}");
     }
 
     /// The Navarra block must name F-93 and nothing else: emitting a Modelo 109 or 100 casilla

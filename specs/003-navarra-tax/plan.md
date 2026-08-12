@@ -398,8 +398,13 @@ All in N1 (`8ded6bbd`) unless noted, after reading `trlfirpf.txt` verbatim:
 4. **`SpanishTaxStatement::new` now takes ten positional arguments.** Each is regime-derived and
    already lives together on `SpanishTaxParams`; grouping them into one struct would be the natural
    cleanup, but it is the kind of structural change this plan explicitly reserved.
-5. **F-93 apartado H3.** The negative-transmissions block's casillas could not be disambiguated from
-   the specimen's extracted layout, so no number is emitted for it — a `#` comment names the block
-   instead. A filer with a loss-making year has to read it off their own form.
+5. ~~**F-93 apartado H3.**~~ **Closed in the review round (V2).** The block's saldo box is **8816**,
+   read from the ejercicio-2025 specimen: its box column carries 8816 / 817 / 818 against H3's three
+   lines exactly as it carries 8850 / 8865 / 8875 against H4's, and the word bounding boxes put 8816
+   on the H3 line itself (y=620.7 against H3's y=621.3, the same 0.6pt offset 8850 has from H4). A
+   loss-making year now emits `MODELO_F93_8816` with the saldo as a positive magnitude, and the `#`
+   comment points at that row instead of at H1's casilla 8808, which is `max(0, gyp_net)` and
+   therefore exactly 0.00 in such a year. The joint-return and per-year carryforward cells inside the
+   block stay on-form-only, like every other year-labelled cell.
 6. **The `verified` ejercicio is 2025 only.** FY2024 and FY2026 reuse its numbering under an explicit
    warning. Verifying the FY2024 Anexo I (Orden Foral 28/2025) would remove one caveat.
