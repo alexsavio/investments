@@ -441,7 +441,8 @@ fn process_trades(
         warn!(
             "The {} loss of {} is deducted in full, but that turns on which valores-homogéneos \
              window {} takes: homogeneous securities were bought back inside the year and outside \
-             the two months, so the one-year limb (NF 3/2014 art. 43.h / LIRPF art. 33.5.g) would \
+             the two months, so the one-year limb (NF 3/2014 art. 43.h / LIRPF art. 33.5.g / \
+             TRLFIRPF art. 39.6.g) would \
              defer €{} of it. DGT V0778-25 and V0951-25 settle the two-month limb only for venues \
              covered by an in-force MiFID II equivalence decision. See the open-interpretations \
              register in docs/spain-taxes.md.",
@@ -482,7 +483,7 @@ fn process_trades(
         if sale.deferred_loss > Decimal::ZERO {
             notes.push(format!(
                 "€{} of this loss is deferred: homogeneous securities were acquired within two \
-                 months of the sale (NF 3/2014 art. 43.g / LIRPF art. 33.5.f)",
+                 months of the sale (NF 3/2014 art. 43.g / LIRPF art. 33.5.f / TRLFIRPF art. 39.6.f)",
                 super::format_eur(sale.deferred_loss)));
         }
         notes.extend(
@@ -1084,9 +1085,9 @@ fn dividend_is_washed(broker_statement: &BrokerStatement, symbol: &str, date: Da
 /// Broker interest, taxed as rendimientos del capital mobiliario.
 ///
 /// Interest **received** is income. Interest **paid** — IB's "Broker Interest Paid", which arrives
-/// as a negative accrual in the same ledger — is not deductible under either regime: LIRPF art.
-/// 26.1.a is a closed list reaching only administration and custody of negotiable securities, and
-/// NF 3/2014 art. 39 is narrower still. Netting the two would silently deduct a financing cost the
+/// as a negative accrual in the same ledger — is not deductible under any of the three: LIRPF art.
+/// 26.1.a and TRLFIRPF art. 32.1.a are closed lists reaching only administration and custody of
+/// negotiable securities, and NF 3/2014 art. 39 is narrower still. Netting the two would silently deduct a financing cost the
 /// return does not allow, so paid interest is reported and left out of the result.
 fn process_interest(
     statement: &mut SpanishTaxStatement,
@@ -1135,8 +1136,9 @@ fn process_interest(
             taxable,
             notes: (!taxable).then(|| {
                 "Informational: interest paid on a borrowed balance is not deductible from the \
-                 savings base — LIRPF art. 26.1.a allows only administration and custody of \
-                 negotiable securities, and NF 3/2014 art. 39 allows nothing"
+                 savings base — LIRPF art. 26.1.a and TRLFIRPF art. 32.1.a allow only \
+                 administration and custody of negotiable securities, and NF 3/2014 art. 39 allows \
+                 nothing"
                     .to_string()
             }),
         });
@@ -1145,8 +1147,8 @@ fn process_interest(
     if paid_total > Decimal::ZERO {
         warn!(
             "€{} of broker interest paid on a borrowed (margin) balance is reported but NOT \
-             deducted from the savings base: neither LIRPF art. 26.1.a nor NF 3/2014 art. 39 \
-             allows a financing cost against rendimientos del capital mobiliario.",
+             deducted from the savings base: none of LIRPF art. 26.1.a, TRLFIRPF art. 32.1.a and \
+             NF 3/2014 art. 39 allows a financing cost against rendimientos del capital mobiliario.",
             super::format_eur(paid_total)
         );
     }
@@ -1154,29 +1156,53 @@ fn process_interest(
     Ok(has_income)
 }
 
-/// What LIRPF art. 26.1.a makes of a broker fee.
+/// What the deductible-expense article makes of a broker fee.
 ///
-/// The article allows "gastos de administración y depósito de valores negociables" and nothing else,
-/// and the DGT has classified the common types: **V2117-19** (custody/administration charged by a
-/// commercializer is deductible, the covered service being static safekeeping, dividend collection
-/// and corporate-event handling), **V2629-13** (buy/sell commissions are not art. 26 expenses — they
-/// adjust the acquisition and transmission values instead, which the shared trade engine already
-/// does), **V1047-16** (performance and success fees are management, excluded by name), and consulta
+/// LIRPF art. 26.1.a and TRLFIRPF art. 32.1.a both allow "gastos de administración y depósito de
+/// valores negociables" and nothing else, in the same words, and the DGT has classified the common
+/// types against the state text: **V2117-19** (custody/administration charged by a commercializer is
+/// deductible, the covered service being static safekeeping, dividend collection and corporate-event
+/// handling), **V2629-13** (buy/sell commissions are not expenses of that article — they adjust the
+/// acquisition and transmission values instead, which the shared trade engine already does),
+/// **V1047-16** (performance and success fees are management, excluded by name), and consulta
 /// 03-04-1998 (only costs directly required by the deposit function qualify; current-account
 /// maintenance does not). The AEAT Manual de Renta cap. 5 (2024/2025) restates all of it.
+///
+/// The doctrine is state doctrine; Navarra reuses it because art. 32.1.a repeats the state wording,
+/// so what a consulta settles about the *type* of service carries over unchanged. Only the article
+/// named to the filer changes with the regime — see [`custody_fee_article`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FeeClass {
-    /// The service art. 26.1.a names. Deducted under Común.
+    /// The service the article names. Deducted under Común and Navarra.
     Custody,
     /// Part of the same service on the DGT's reading, but not the words the article uses. Deducted
-    /// under Común, with the reasoning on the row.
+    /// under Común and Navarra, with the reasoning on the row.
     CustodyAdjacent,
     /// A cost of acquiring or transmitting: it adjusts the values instead of reducing the RCM.
     ValueAdjustment,
-    /// Outside art. 26.1.a, by name or because it is not a cost of the deposit function.
+    /// Outside the article, by name or because it is not a cost of the deposit function.
     NonDeductible,
     /// No doctrine on the type. Not deducted, and said out loud.
     Unsettled,
+}
+
+/// Token the fee notes carry where the filer's own statute has to be named.
+///
+/// The notes are one text for three regimes, so the article is substituted at message-build time
+/// rather than written into each of them — otherwise a Navarra filer reads a state citation for a
+/// deduction their own law grants.
+const FEE_ARTICLE: &str = "{article}";
+
+/// The article that allows administración y depósito under the filer's own statute.
+///
+/// Gipuzkoa has no such article; it gets the closed list that is the reason it has none, so a note
+/// that names it still names something true.
+fn custody_fee_article(regime: SpanishTaxRegime) -> &'static str {
+    match regime {
+        SpanishTaxRegime::Gipuzkoa => "NF 3/2014 art. 39",
+        SpanishTaxRegime::Comun => "LIRPF art. 26.1.a",
+        SpanishTaxRegime::Navarra => "TRLFIRPF art. 32.1.a",
+    }
 }
 
 /// One classification rule. First match on the lowercased description wins, so the rules are ordered
@@ -1186,7 +1212,8 @@ struct FeeRule {
     class: FeeClass,
     /// The type, as the unsettled warning names it.
     label: &'static str,
-    /// Why, with its citation. Shown on the row whenever the fee is not deducted outright.
+    /// Why, with its citation, carrying [`FEE_ARTICLE`] wherever the filer's own statute belongs.
+    /// Shown on the row whenever the fee is not deducted outright.
     note: &'static str,
 }
 
@@ -1195,8 +1222,8 @@ const FEE_RULES: &[FeeRule] = &[
         keywords: &["management", "advisory", "performance", "gestión", "gestion", "éxito", "exito"],
         class: FeeClass::NonDeductible,
         label: "management or performance fee",
-        note: "Informational: management, advisory and performance fees are excluded from LIRPF \
-               art. 26.1.a by name (DGT V1047-16 treats a success fee as management)",
+        note: "Informational: management, advisory and performance fees are excluded from \
+               {article} by name (DGT V1047-16 treats a success fee as management)",
     },
     FeeRule {
         keywords: &[
@@ -1205,7 +1232,7 @@ const FEE_RULES: &[FeeRule] = &[
         ],
         class: FeeClass::ValueAdjustment,
         label: "trading commission or market pass-through",
-        note: "Informational: a cost of acquiring or transmitting is not an art. 26 expense — it \
+        note: "Informational: a cost of acquiring or transmitting is not a {article} expense — it \
                adjusts the acquisition and transmission values instead (DGT V2629-13), which the \
                per-trade figures above already do",
     },
@@ -1214,7 +1241,7 @@ const FEE_RULES: &[FeeRule] = &[
                     "administration", "administraci"],
         class: FeeClass::Custody,
         label: "custody or administration fee",
-        note: "Deducted: administración y depósito de valores negociables (LIRPF art. 26.1.a; DGT \
+        note: "Deducted: administración y depósito de valores negociables ({article}; DGT \
                V2117-19)",
     },
     FeeRule {
@@ -1223,7 +1250,7 @@ const FEE_RULES: &[FeeRule] = &[
         class: FeeClass::CustodyAdjacent,
         label: "dividend-collection or corporate-event fee",
         note: "Deducted: DGT V2117-19 reads the depósito service as covering dividend collection \
-               and corporate events, though art. 26.1.a does not name them",
+               and corporate events, though {article} does not name them",
     },
     FeeRule {
         keywords: &["market data", "datos de mercado", "research", "quote", "snapshot", "booster",
@@ -1231,7 +1258,7 @@ const FEE_RULES: &[FeeRule] = &[
         class: FeeClass::NonDeductible,
         label: "market-data or research fee",
         note: "Informational: information services are not part of the deposit function (consulta \
-               03-04-1998; AEAT Manual de Renta cap. 5), so LIRPF art. 26.1.a does not reach them",
+               03-04-1998; AEAT Manual de Renta cap. 5), so {article} does not reach them",
     },
     FeeRule {
         keywords: &["wire", "withdrawal", "sepa", "remittance", "cuenta corriente",
@@ -1239,8 +1266,7 @@ const FEE_RULES: &[FeeRule] = &[
         class: FeeClass::NonDeductible,
         label: "cash-movement or account fee",
         note: "Informational: moving cash is not a cost of holding the securities (consulta \
-               03-04-1998 excludes current-account maintenance), so LIRPF art. 26.1.a does not \
-               reach it",
+               03-04-1998 excludes current-account maintenance), so {article} does not reach it",
     },
     FeeRule {
         keywords: &["inactivity", "minimum activity", "activity fee", "maintenance", "mantenimiento",
@@ -1265,14 +1291,14 @@ const FEE_RULES: &[FeeRule] = &[
     },
 ];
 
-/// A description no rule recognises. Not deducted: art. 26.1.a names the service, not the wording a
+/// A description no rule recognises. Not deducted: the article names the service, not the wording a
 /// broker happens to use, and the failure direction is deliberately conservative.
 const UNRECOGNISED_FEE: FeeRule = FeeRule {
     keywords: &[],
     class: FeeClass::NonDeductible,
     label: "unrecognised fee",
-    note: "Informational: not recognised as a custody or administration fee (LIRPF art. 26.1.a); \
-           check whether it qualifies",
+    note: "Informational: not recognised as a custody or administration fee ({article}); check \
+           whether it qualifies",
 };
 
 fn classify_fee(description: &str) -> &'static FeeRule {
@@ -1314,6 +1340,7 @@ fn process_fees(
         let rule = classify_fee(&description);
         let custody = matches!(rule.class, FeeClass::Custody | FeeClass::CustodyAdjacent);
         let deductible = params.custody_fees_deductible && custody;
+        let article = custody_fee_article(params.regime);
 
         // Gipuzkoa deducts nothing whatever the type is (NF 3/2014 art. 39 is a closed list), so the
         // classification changes nothing there and no open question arises.
@@ -1321,10 +1348,10 @@ fn process_fees(
             || {
                 format!(
                     "€{} of {} on {} is NOT deducted from the savings base: no DGT doctrine \
-                     settles whether it is a gasto de administración y depósito under LIRPF art. \
-                     26.1.a. Not deducting overstates the tax rather than understating it — \
-                     consult a gestor if the amount is material. See the open-interpretations \
-                     register in docs/spain-taxes.md.",
+                     settles whether it is a gasto de administración y depósito under {article}. \
+                     Not deducting overstates the tax rather than understating it — consult a \
+                     gestor if the amount is material. See the open-interpretations register in \
+                     docs/spain-taxes.md.",
                     super::format_eur(amount_eur),
                     rule.label,
                     fee.date
@@ -1334,8 +1361,8 @@ fn process_fees(
 
         let notes = if !params.custody_fees_deductible {
             Some(
-                "Informational: Gipuzkoa has no equivalent of LIRPF art. 26.1.a — NF 3/2014 art. \
-                 39 does not allow expenses against securities income"
+                "Informational: Gipuzkoa has no equivalent of LIRPF art. 26.1.a or TRLFIRPF art. \
+                 32.1.a — NF 3/2014 art. 39 does not allow expenses against securities income"
                     .to_string(),
             )
         } else if let Some(review) = review.clone() {
@@ -1343,7 +1370,7 @@ fn process_fees(
         } else if rule.class == FeeClass::Custody {
             None
         } else {
-            Some(rule.note.to_string())
+            Some(rule.note.replace(FEE_ARTICLE, article))
         };
 
         if let Some(review) = &review {

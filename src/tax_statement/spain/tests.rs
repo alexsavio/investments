@@ -745,6 +745,42 @@ fn fee_types_follow_dgt_doctrine_and_name_what_is_unsettled() {
     }
 }
 
+/// A fee note and the unsettled warning name the article of the **filer's own** statute. The DGT
+/// doctrine behind the classification is written against the state text, but the deduction a Navarra
+/// filer takes comes from TRLFIRPF art. 32.1.a, and a note citing LIRPF would send them to a law
+/// that does not govern them.
+#[test]
+fn fee_notes_name_the_regimes_own_deduction_article() {
+    let comun = run_pipeline("fee_types", 2026, SpanishTaxRegime::Comun);
+    let navarra = run_pipeline("fee_types", 2026, SpanishTaxRegime::Navarra);
+
+    let article = |statement: &SpanishTaxStatement, index: usize| -> String {
+        statement.fees[index].notes.clone().unwrap()
+    };
+
+    // The market-data note, which cites the article that does not reach the fee.
+    assert!(article(&comun, 1).contains("LIRPF art. 26.1.a"), "{}", article(&comun, 1));
+    assert!(
+        article(&navarra, 1).contains("TRLFIRPF art. 32.1.a"),
+        "{}",
+        article(&navarra, 1)
+    );
+    assert!(!article(&navarra, 1).contains("LIRPF art. 26.1.a"), "{}", article(&navarra, 1));
+
+    // And the unsettled-type warning, in the same words on every surface.
+    let review = navarra.fees[2].review.clone().unwrap();
+    assert!(review.contains("TRLFIRPF art. 32.1.a"), "{review}");
+    assert!(!review.contains("LIRPF art. 26.1.a"), "{review}");
+    assert_eq!(navarra.fees[2].notes.as_deref(), Some(review.as_str()));
+
+    // No note may keep the substitution token.
+    for statement in [&comun, &navarra] {
+        for fee in &statement.fees {
+            assert!(!fee.notes.clone().unwrap_or_default().contains("{article}"), "{fee:?}");
+        }
+    }
+}
+
 /// The savings base is the sum of the two groups' positive balances: neither reduces the other.
 #[test]
 fn rcm_and_gyp_enter_the_base_as_separate_groups() {

@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(y2025.brackets()[4], (dec!(300000), dec!(0.30)));
     }
 
-    /// Every shipped year resolves for both regimes, and the brackets are well-formed: ascending
+    /// Every shipped year resolves for all three regimes, and the brackets are well-formed: ascending
     /// floors starting at zero, with strictly positive rates.
     #[rstest]
     fn shipped_years_are_well_formed(

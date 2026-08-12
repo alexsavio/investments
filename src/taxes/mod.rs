@@ -148,8 +148,8 @@ impl SpanishTaxConfig {
 
     /// Whether a disposal in `year` can be priced at all.
     ///
-    /// Always true where the coefficient is 1 for every year, which is both regimes that do not
-    /// actualize.
+    /// Always true where the coefficient is 1 for every year, which is the two regimes that do not
+    /// actualize: Territorio Común and Navarra.
     pub fn has_actualization_table(&self, year: i32) -> bool {
         match self.regime {
             spain::SpanishTaxRegime::Gipuzkoa => {
@@ -653,7 +653,7 @@ mod tests {
     }
 
     /// The regime drives the scale, the coefficients, the cross-group offset and fee
-    /// deductibility, so omitting it must fail rather than default to either regime.
+    /// deductibility, so omitting it must fail rather than default to one of the three.
     #[test]
     fn spanish_config_requires_the_regime() {
         let error = match serde_yaml::from_str::<TaxConfig>("spain: {}\n") {

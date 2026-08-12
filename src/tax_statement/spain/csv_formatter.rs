@@ -304,7 +304,8 @@ impl CsvFormatter {
             Self::format_decimal(released),
             Self::format_decimal(released),
             Self::escape_csv(&format!(
-                "Deferred by the sale of {} (NF 3/2014 art. 43 closing ¶ / LIRPF art. 33.5 closing ¶)",
+                "Deferred by the sale of {} (NF 3/2014 art. 43 closing ¶ / LIRPF art. 33.5 closing ¶ \
+                 / TRLFIRPF art. 39.6 closing ¶)",
                 Self::format_date(entry.origin_sale_date)
             ))
         )?;
@@ -1326,15 +1327,19 @@ impl CsvFormatter {
             )?;
             writeln!(
                 writer,
-                "# the two months, so the one-year limb (NF 3/2014 art. 43.h / LIRPF art. 33.5.g)"
+                "# the two months, so the one-year limb (NF 3/2014 art. 43.h / LIRPF art. 33.5.g /"
             )?;
             writeln!(
                 writer,
-                "# would defer the amount shown. DGT V0778-25 / V0951-25 settle the two-month limb"
+                "# TRLFIRPF art. 39.6.g) would defer the amount shown. DGT V0778-25 / V0951-25"
             )?;
             writeln!(
                 writer,
-                "# only for venues covered by an in-force MiFID II equivalence decision. The loss is"
+                "# settle the two-month limb only for venues covered by an in-force MiFID II"
+            )?;
+            writeln!(
+                writer,
+                "# equivalence decision — the Directive TRLFIRPF art. 39.6.f cites by name. The loss is"
             )?;
             writeln!(
                 writer,

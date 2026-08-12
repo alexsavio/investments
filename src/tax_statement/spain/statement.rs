@@ -166,9 +166,9 @@ pub struct InterestEntry {
     pub description: String,
     /// Positive for interest received, negative for interest paid on a borrowed balance.
     pub gross_eur: Decimal,
-    /// Whether this entry enters the RCM result. Interest **paid** does not: neither regime allows
-    /// an expense against securities income beyond LIRPF art. 26.1.a's administration and custody,
-    /// and NF 3/2014 art. 39 is narrower still.
+    /// Whether this entry enters the RCM result. Interest **paid** does not: no regime allows an
+    /// expense against securities income beyond the administration and custody of LIRPF art. 26.1.a
+    /// and TRLFIRPF art. 32.1.a, and NF 3/2014 art. 39 is narrower still.
     pub taxable: bool,
     pub notes: Option<String>,
 }

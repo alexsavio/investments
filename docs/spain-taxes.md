@@ -199,7 +199,8 @@ with no clause restricting it to gains. A €18,000 cost from 2025 sold for €9
 ## The valores-homogéneos rule (wash sales)
 
 A loss on listed securities is **not deductible** when homogeneous securities were acquired within
-two months before or after the sale (NF 3/2014 art. 43.g / LIRPF art. 33.5.f). The loss is deferred,
+two months before or after the sale (NF 3/2014 art. 43.g / LIRPF art. 33.5.f / TRLFIRPF art. 39.6.f).
+The loss is deferred,
 not destroyed: it becomes integrable again as the blocking securities leave the estate.
 
 How the tool applies it:
@@ -247,9 +248,14 @@ generalizes it to "los mercados de valores de Estados Unidos": a third-country m
 stays inside it "mientras dicha decisión de equivalencia no haya sido objeto de derogación". US
 venues are equivalent under Commission Implementing Decision **(EU) 2017/2320**, Australia under
 **2017/2318**, Hong Kong under **2017/2319**. Following a published DGT criterion also shields the
-filer from penalties (LGT art. 179.2.d). NF 3/2014 art. 43.g clones the state wording and interprets
-the same EU concept, but no foral pronouncement exists: for a Gipuzkoa filer these criteria are
-persuasive, not formally binding.
+filer from penalties (LGT art. 179.2.d).
+
+Both foral texts clone the state wording and interpret the same EU concept, but neither has a
+pronouncement of its own, so for a Gipuzkoa or Navarra filer these criteria are persuasive rather
+than formally binding. **TRLFIRPF art. 39.6.f cites Directive 2014/65/UE (MiFID II) directly**, where
+the state text still points at the repealed 1993 Ley del Mercado de Valores — so the equivalence
+machinery the DGT reasons from is named in the Navarra article itself rather than reached through a
+chain of superseded references.
 
 Two consequences the tool acts on:
 
@@ -343,8 +349,8 @@ extends at least two months past year end, or re-run when one exists.
 
 ### Out of scope
 
-- **Unlisted securities** (art. 43.h / art. 33.5.g) use a **one-year** window, not two months. Not
-  implemented.
+- **Unlisted securities** (art. 43.h / art. 33.5.g / TRLFIRPF art. 39.6.g) use a **one-year** window,
+  not two months. Not implemented.
 - **Fungible crypto** (art. 43.i). Not implemented.
 - Homogeneity beyond a single ISIN — the statutory definition reaches different issues of the same
   issuer with the same rights, which a broker statement cannot express.
@@ -622,9 +628,9 @@ qualified, these did and were capped. A binding ceiling also prints a warning. S
 ### Interest paid on a margin loan
 
 IB reports margin interest as a **negative** "Broker Interest Paid" accrual in the same ledger as the
-credit interest, so a naive sum would net it off your RCM income. Neither regime allows that: LIRPF
-art. 26.1.a reaches only administration and custody of negotiable securities, and NF 3/2014 art. 39
-is narrower still. The tool reports each paid-interest row without a savings group, sums them into
+credit interest, so a naive sum would net it off your RCM income. None of the three regimes allows
+that: LIRPF art. 26.1.a and TRLFIRPF art. 32.1.a reach only administration and custody of negotiable
+securities, and NF 3/2014 art. 39 is narrower still. The tool reports each paid-interest row without a savings group, sums them into
 `SUMMARY_RCM_INTEREST_PAID`, and leaves the RCM result untouched.
 
 ## The Navarra €3,000 small-disposals exemption
@@ -680,12 +686,18 @@ already failed. See
 
 ## Foreign-currency gains
 
-A currency conversion transfers a patrimonial element, so its result joins the **ganancias** group.
-Balances are tracked with a signed-inventory FIFO over the cash ledger.
+A currency conversion transfers a patrimonial element, so its result joins the **ganancias** group in
+all three regimes; under Navarra it is TRLFIRPF art. 54.1.b that puts it there, and art. 78.7 that
+imputes it to the year of the conversion. Balances are tracked with a signed-inventory FIFO over the
+cash ledger.
 
 Results realized on a **borrowed** (margin) balance are excluded from the base and reported for
 manual review instead: repaying a currency loan is not clearly a transfer of a patrimonial element,
-and neither the foral nor the state text settles it.
+and none of the three texts settles it.
+
+Under **Navarra** a conversion is also a transmission for the €3,000 exemption, and the tool records
+only the result of one, never the amount converted — so a year with a conversion on a *held* balance
+has its relief withheld. See [the exemption section](#the-navarra-3000-small-disposals-exemption).
 
 ## Other income
 
@@ -978,9 +990,15 @@ both and names every payer it exempted:
 
 ### 7. Foreign-currency results on a borrowed balance — OPEN
 
-Repaying a currency loan is not clearly a transfer of a patrimonial element, and neither NF 3/2014 nor
-the LIRPF settles it. Those results are **excluded** from the savings base and reported for manual
-review instead (`FX Borrowed (review)` rows and `SUMMARY_FX_BORROWED_REVIEW`), with a console warning.
+Repaying a currency loan is not clearly a transfer of a patrimonial element, and none of NF 3/2014,
+the LIRPF and the TRLFIRPF settles it. Those results are **excluded** from the savings base and
+reported for manual review instead (`FX Borrowed (review)` rows and `SUMMARY_FX_BORROWED_REVIEW`),
+with a console warning.
+
+Under Navarra the exclusion has a second effect: because those results never reach the ganancias
+group, they do not trigger the art. 39.5.d suppression either, so a year whose only conversions were
+on a borrowed balance can still be granted the small-disposals relief on a securities-only total. See
+[§13](#13-the-navarra-3000-exemptions-global-amount--open).
 
 ### 8. Fecha de transmisión — SETTLED, no warning
 
