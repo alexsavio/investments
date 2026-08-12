@@ -40,7 +40,7 @@ Everything below is text/contract/coverage; both reviewers independently reprodu
 - **W2 — Withheld-exemption caveat: gains-only predicate.** Status: DONE (`bea4392b`)
   `statement.rs:736-745`: an all-loss securities year under €3,000 plus an FX gain still triggers the caveat, though `I = 0` makes the relief zero for any `G` — the counterfactual is closed and the text is false. Failing test first (all-loss + FX-gain fixture or config variant → no caveat; `small_disposal_fx` keeps firing); replace the proceeds disjunct with `small_disposals_gains > 0` and delete the then-provably-dead `|| total_fx_gains > 0` clause. Behavior is message-only (verify no euro moves).
   Commit: `fix(navarra-tax): silence the withheld-exemption caveat when no gain exists`
-- **W3 — Re-derive Appendix A §A.4 edge 3.** Status: TODO
+- **W3 — Re-derive Appendix A §A.4 edge 3.** Status: DONE (`bfcf9a90`)
   plan.md:229-233 still says the exemption is "suppressed for any year with an FX conversion realization" — V4a narrowed that, and the plan's own primacy rule demands the amendment in its own `docs(plan)` commit. State the three boundaries as shipped (docs §13 already has them).
   Commit: `docs(plan): re-derive Appendix A for the narrowed exemption caveat`
 - **W4 — Discriminate and register the exemption-ceiling choice.** Status: TODO
