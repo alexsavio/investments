@@ -232,7 +232,8 @@ fn comun_credits_foreign_withholding_against_the_state_scale() {
 
     assert_eq!(comun.rcm_net, dec!(945));
     assert_eq!(comun.savings_base, dec!(945));
-    // Entirely inside the 19% first bracket, which both regimes happen to share at this level.
+    // Entirely inside the 19% first bracket, which Común and Gipuzkoa happen to share at this
+    // level; Navarra's own scale opens at 20%.
     assert_eq!(comun.savings_quota, dec!(179.55));
     assert_eq!(comun.average_savings_rate, dec!(0.19));
     // Treaty limb €135 against a rate limb of 0.19 × €900 = €171.
@@ -483,9 +484,10 @@ fn rcm_income_is_reported_with_a_treaty_capped_credit_candidate() {
 /// nothing.
 ///
 /// IB reports it as a negative "Broker Interest Paid" accrual alongside the credit interest, so
-/// summing the raw amounts would silently net it off the RCM result. Neither regime allows that:
-/// LIRPF art. 26.1.a is a closed list that reaches only administration and custody of negotiable
-/// securities, and NF 3/2014 art. 39 is narrower still.
+/// summing the raw amounts would silently net it off the RCM result. No regime allows that: LIRPF
+/// art. 26.1.a is a closed list that reaches only administration and custody of negotiable
+/// securities, TRLFIRPF art. 32.1.a is the same list under a 3% ceiling, and NF 3/2014 art. 39 is
+/// narrower still.
 ///
 /// Fixture: $100 received 2026-06-30 and $250 paid 2026-09-30, at 0.9 EUR/USD.
 #[test]

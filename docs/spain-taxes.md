@@ -773,6 +773,7 @@ Orden Foral 24/2026, BON nº 66 of 07-04-2026). Keys are `MODELO_F93_<casilla>`.
 | 1658-1672 | Incremento exento, otros supuestos — where the art. 39.5.d relief goes, one cell per transmission |
 | 8808 / 809 / 8815 / 8809 | Apartado H1: positive transmissions saldo, own-group compensation, RCM losses crossed in, net |
 | 8810 / 8825 / 8805 / 8840 | Apartado H2, the RCM mirror |
+| 8816 | Apartado H3, saldo negativo procedente de transmisiones |
 | 8850 | Apartado H4, saldo negativo del capital mobiliario |
 | 8841 | Total parte especial del ahorro (`8809 + 8840`) |
 | 815 (= 524) | Base liquidable especial del ahorro |
@@ -1175,6 +1176,14 @@ own arithmetic (`8809 = 8808 − 809 − 810 − 8815`, `8840 = 8810 − 8825 �
 `8841 = 8809 + 8840`, `050 = 031 + 037 − 047`). Casillas 810 and 8835 are the joint-return rows and
 are never emitted; 569, 576 and 582 net the whole return, including the general part this tool does
 not compute, so they are not emitted either.
+
+**A stated convention: 8816 and 8850 carry a positive magnitude.** The form defines both as *saldos
+negativos* — sums that are below zero by construction, which is why the apartado exists at all — and
+the CSV prints `max(0, −gyp_net)` and `max(0, −rcm_net)`, never a leading minus. It is a choice about
+this tool's output rather than a reading of the statute or of the form, and it is here so it cannot
+drift silently: the row labels say "importe en positivo" and the CSV contract's row descriptions
+(`specs/002-spain-tax/contracts/csv-output.md`) repeat it. Check the sign your own campaign's form
+expects before transcribing.
 
 **Still open.** Earlier campaigns use the same structure but their numbering was not checked against
 a specimen, and no form exists for a year that has not been filed yet:
