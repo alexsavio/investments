@@ -229,8 +229,22 @@ Four edges pinned with it:
 3. **Foreign-currency conversions.** Art. 54.1.b makes them transmissions too, so their importe
    belongs in `G`, but the shared FX FIFO records only the realized result, never the converted
    principal. Counting securities proceeds alone would understate `G` and could hand the exemption to
-   a year that does not qualify, so the exemption is **suppressed** for any year with an FX
-   conversion realization, with a warning saying so. Failure direction: more tax.
+   a year that does not qualify, so the exemption is **suppressed** where a conversion realization
+   leaves the global amount unknown, with a warning saying so. Failure direction: more tax. The
+   suppression is bounded on three sides, and each boundary is a case where nothing is in fact
+   hidden:
+
+   - **A year with no transmission *gain* is silent.** The relief is `min(I, 50% × G)`, so a year
+     whose securities transmissions produced no incremento — none at all, or only disminuciones —
+     would have been relieved of exactly zero whatever the conversions did to `G`. Warning there
+     reports a counterfactual that is already closed. Applying the article to a conversion gain in
+     its own right stays outside the tool's scope, register entry 13 rather than a yearly message.
+   - **Only conversions on a *held* balance suppress it.** Results on a borrowed balance never reach
+     the ganancias group at all (register entry 7's manual-review bucket), so they do not trigger
+     the suppression even though their importe is just as unmeasurable. The asymmetry follows from
+     entry 7 and would have to widen with it.
+   - **Nothing is suppressed above €3,000** of securities proceeds: the missing conversions can only
+     add to a total that has already failed condition 1.º.
 4. **Gross or net of the sell commission.** `G` is built from the same `proceeds_eur` the gain is
    built from, which is `revenue − sell commission`. Art. 41.2 defines the *valor de transmisión* as
    the importe real less "los gastos y tributos … en cuanto resulten satisfechos por el transmitente",
@@ -366,7 +380,7 @@ Two points recorded rather than computed:
 |---|---|---|---|---|---|---|
 | `fifo` | 2026 | 0 | 22 500 | 22 500 | **5 230.00** | coefficient 1, as Común; `G = 49 500` so no exemption |
 | `income` | 2026 | 963 | 0 | 963 | **192.60** | see A.3; net due 57.60 after the €135 credit |
-| `fx_gain` (revaluing) | 2026 | 0 | 1 000 | 1 000 | **200.00** | exemption suppressed: the year has an FX realization |
+| `fx_gain` (revaluing) | 2026 | 0 | 1 000 | 1 000 | **200.00** | no securities transmission, so no incremento to exempt and nothing to suppress (§A.4 edge 3) |
 | `loss` | 2026 | 0 | −9 000 | 0 | **0.00** | 9 000 @2026 carried, identical to Común |
 | `cross_offset` | 2026 | 7 200 | −9 000 | 5 400 | **1 080.00** | see A.2 case 3 |
 | `cross_offset_rcm` | 2026 | 0 | 9 000 | 9 000 | **1 860.00** | cap base 0, see A.3 |
