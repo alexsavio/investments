@@ -693,6 +693,15 @@ impl SpanishTaxStatement {
     /// integrable results feed the increment, because a loss is a *disminución*. A wash-sale
     /// deferral therefore leaves the proceeds alone and keeps the blocked amount out of both.
     ///
+    /// The proceeds are taken **net of the sell commission**, because `proceeds_eur` is the same
+    /// figure the gain is measured from. Art. 41.2 takes the "gastos y tributos … satisfechos por el
+    /// transmitente" out of the valor de transmisión, and the F-93's per-transmission column 651 is
+    /// labelled *Valor de transmisión*; art. 39.5.d's own words are "el importe global de las citadas
+    /// transmisiones", and art. 41.3 defines the *importe real* as "el efectivamente percibido",
+    /// which reads gross. The choice only matters when a commission straddles a threshold and it is
+    /// not uniformly conservative — a net figure passes 1.º more easily but lowers 2.º's ceiling — so
+    /// it is recorded as OPEN in the register rather than presented as settled.
+    ///
     /// Foreign-currency conversions are transmissions too (art. 54.1.b), but the shared FX FIFO
     /// records only the realized result, never the amount converted. Counting the securities alone
     /// would understate the global amount and could hand the exemption to a year that does not

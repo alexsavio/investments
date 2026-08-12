@@ -1790,44 +1790,134 @@ fn the_navarra_fee_ceiling_does_not_bite_when_fees_are_small() {
     assert!(navarra.custody_fee_cap_message().is_none());
 }
 
-/// TRLFIRPF art. 39.5.d, end to end. Buy 10 AAPL @ $100 on 2025-03-10 (€900) and sell them in two
-/// halves of 5 @ $250 during 2026 (€1,125 each).
+/// TRLFIRPF art. 39.5.d, end to end, on a year where the two readings of condition 2.º **disagree**.
 ///
-/// The year's global transmission amount is €2,250, at or under the €3,000 of 1.º, and the taxable
-/// increment is €1,350. 2.º exempts it up to half the global amount — €1,125 — and taxes only the
-/// €225 excess, so the base is 225 and the cuota €45. Nothing like it exists in the other two
-/// regimes: Común taxes the full €1,350 at 19% and Gipuzkoa the €1,332 its coefficient leaves.
+/// Buy 10 AAPL @ $100 on 2025-03-10 (€900, €90/share); sell 6 @ $300 (€1,620) and 4 @ $125 (€450)
+/// during 2026. The two sales carry deliberately different gain-to-proceeds ratios:
+///
+/// | Sale | Proceeds | Cost | Gain | half its own proceeds |
+/// |---|---|---|---|---|
+/// | A | 1,620 | 540 | 1,080 | 810 — the gain **exceeds** it |
+/// | B | 450 | 360 | 90 | 225 — the gain **falls short** |
+///
+/// Under the year-global reading the tool implements, `G = 2,070` and `I = 1,170`, so the exemption
+/// is `min(1,170, 1,035) = 1,035` and €135 is taxed. Under the per-disposal reading of 2.º's
+/// singular "el importe global de **la transmisión**" it would be `810 + 90 = 900`, and €270 would
+/// be taxed: B's unused headroom shelters part of A's excess only when one denominator covers the
+/// year. Register entry 13 is exactly this €135 — see Appendix A §A.4.
 #[test]
 fn navarra_exempts_a_year_of_small_disposals() {
     let navarra = run_pipeline("small_disposal", 2026, SpanishTaxRegime::Navarra);
 
     assert_eq!(navarra.capital_gains.len(), 2);
-    assert_eq!(navarra.small_disposals_proceeds, dec!(2250));
-    assert_eq!(navarra.small_disposals_gains, dec!(1350));
-    assert_eq!(navarra.small_disposals_exemption, dec!(1125));
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2070));
+    assert_eq!(navarra.small_disposals_gains, dec!(1170));
+    assert_eq!(navarra.small_disposals_exemption, dec!(1035));
     assert!(!navarra.small_disposals_unmeasurable);
 
-    assert_eq!(navarra.total_capital_gains, dec!(1350));
-    assert_eq!(navarra.gyp_net, dec!(225));
-    assert_eq!(navarra.savings_base, dec!(225));
-    assert_eq!(navarra.savings_quota, dec!(45));
+    // The per-disposal reading the tool rejects would exempt 810 + 90 = 900 instead.
+    let per_disposal: Decimal = navarra
+        .capital_gains
+        .iter()
+        .map(|entry| {
+            std::cmp::min(
+                std::cmp::max(Decimal::ZERO, entry.integrable_amount),
+                entry.proceeds_eur / dec!(2),
+            )
+        })
+        .sum();
+    assert_eq!(per_disposal, dec!(900));
+    assert_ne!(navarra.small_disposals_exemption, per_disposal);
+
+    assert_eq!(navarra.total_capital_gains, dec!(1170));
+    assert_eq!(navarra.gyp_net, dec!(135));
+    assert_eq!(navarra.savings_base, dec!(135));
+    assert_eq!(navarra.savings_quota, dec!(27));
 
     let message = navarra.small_disposals_message().unwrap();
-    assert!(message.contains("€1125.00"), "{message}");
+    assert!(message.contains("€1035.00"), "{message}");
     assert!(message.contains("art. 39.5.d"), "{message}");
 
     let comun = run_pipeline("small_disposal", 2026, SpanishTaxRegime::Comun);
     assert_eq!(comun.small_disposals_exemption, dec!(0));
-    assert_eq!(comun.gyp_net, dec!(1350));
-    assert_eq!(comun.savings_quota, dec!(256.50));
+    assert_eq!(comun.gyp_net, dec!(1170));
+    assert_eq!(comun.savings_quota, dec!(222.30));
     assert!(comun.small_disposals_message().is_none());
 
-    // Gipuzkoa actualizes the 2025 cost by 1.020: 900 × 1.020 = 918.
+    // Gipuzkoa actualizes the 2025 cost by 1.020: the 540/360 split becomes 550.80/367.20.
     let gipuzkoa = run_pipeline("small_disposal", 2026, SpanishTaxRegime::Gipuzkoa);
-    assert_eq!(gipuzkoa.capital_gains[0].actualized_cost_eur, dec!(459));
-    assert_eq!(gipuzkoa.gyp_net, dec!(1332));
-    // 1,332 inside the reformed foral scale's 19% first bracket.
-    assert_eq!(gipuzkoa.savings_quota, dec!(253.08));
+    assert_eq!(gipuzkoa.capital_gains[0].actualized_cost_eur, dec!(550.80));
+    assert_eq!(gipuzkoa.gyp_net, dec!(1152));
+    // 1,152 inside the reformed foral scale's 19% first bracket.
+    assert_eq!(gipuzkoa.savings_quota, dec!(218.88));
+}
+
+/// The exemption relieves an *incremento* and can never reach a *disminución*: art. 39.5.d exempts
+/// "los incrementos de patrimonio", and the F-93 gives each transmission separate Incremento (656)
+/// and Disminución (657) cells with the "Incremento exento. Otros supuestos" cell (1658) sitting
+/// under the incremento alone.
+///
+/// AAPL +900 on €1,800 of proceeds and MSFT −450 on €900: `G = 2,700`, but `I` is 900, not the 450
+/// net. The exemption takes the whole €900 gain and the loss survives untouched, so `gyp_net` is
+/// exactly −450 and that is what carries forward. Computing `I` from the net result would exempt
+/// 450, land `gyp_net` on 0, and destroy the carryforward silently.
+#[test]
+fn the_small_disposals_exemption_never_eats_a_loss() {
+    let navarra = run_pipeline("small_disposal_mixed", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2700));
+    assert_eq!(navarra.small_disposals_gains, dec!(900));
+    assert_eq!(navarra.small_disposals_exemption, dec!(900));
+
+    assert_eq!(navarra.total_capital_gains, dec!(450));
+    assert_eq!(navarra.gyp_net, dec!(-450));
+    assert_eq!(navarra.savings_base, dec!(0));
+    assert_eq!(navarra.savings_quota, dec!(0));
+    assert_eq!(navarra.gyp_ledger_next.balances()[&2026], dec!(450));
+
+    let comun = run_pipeline("small_disposal_mixed", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.small_disposals_exemption, dec!(0));
+    assert_eq!(comun.gyp_net, dec!(450));
+    assert_eq!(comun.savings_quota, dec!(85.50));
+
+    let gipuzkoa = run_pipeline("small_disposal_mixed", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.gyp_net, dec!(405));
+    assert_eq!(gipuzkoa.savings_quota, dec!(76.95));
+}
+
+/// "El importe global de las citadas transmisiones" is measured **net of the sell commission**, the
+/// same `proceeds_eur` the gain is measured from. Art. 41.2 takes the gastos satisfied by the
+/// transmitente out of the valor de transmisión, and the F-93's per-transmission column 651 is
+/// labelled *Valor de transmisión*; art. 41.3's "importe real … efectivamente percibido" reads
+/// gross, which is why the register keeps it OPEN.
+///
+/// The fixture makes the choice decide condition 1.º outright: one sale of 10 @ $340 with a $100
+/// commission is €3,060 gross and €2,970 net, so the gross reading fails the €3,000 gate and exempts
+/// nothing while the net reading exempts €1,485.
+#[test]
+fn the_small_disposals_amount_is_net_of_the_sell_commission() {
+    let navarra = run_pipeline("small_disposal_commission", 2026, SpanishTaxRegime::Navarra);
+
+    let sale = &navarra.capital_gains[0];
+    assert_eq!(sale.proceeds_eur, dec!(2970));
+    assert_eq!(sale.cost_eur, dec!(900));
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2970));
+    assert_eq!(navarra.small_disposals_gains, dec!(2070));
+    assert_eq!(navarra.small_disposals_exemption, dec!(1485));
+    assert_eq!(navarra.gyp_net, dec!(585));
+    assert_eq!(navarra.savings_quota, dec!(117));
+
+    // Gross of the €90 commission the year would be over the gate and nothing would be exempt.
+    assert!(sale.proceeds_eur + dec!(90) > dec!(3000));
+
+    let comun = run_pipeline("small_disposal_commission", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.gyp_net, dec!(2070));
+    assert_eq!(comun.savings_quota, dec!(393.30));
+
+    let gipuzkoa = run_pipeline("small_disposal_commission", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.gyp_net, dec!(2052));
+    assert_eq!(gipuzkoa.savings_quota, dec!(389.88));
 }
 
 /// One euro of proceeds over the threshold and the whole exemption is gone — the article's first

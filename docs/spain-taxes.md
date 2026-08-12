@@ -638,24 +638,37 @@ together, both measured over the whole calendar year:
 
 Neither the state text nor NF 3/2014 has anything like it.
 
-Worked, on a year that sells 10 shares bought for €900 in two halves of €1,125:
+Worked, on a year that buys 10 shares for €900 and sells 6 for €1,620 and 4 for €450:
 
 | | Value |
 |---|---|
-| Global transmission amount | 2,250.00 |
-| Taxable increment | 1,350.00 |
-| Half the global amount | 1,125.00 |
-| Exempt | **1,125.00** |
-| Taxed | **225.00** |
+| Global transmission amount | 2,070.00 |
+| Taxable increment | 1,170.00 |
+| Half the global amount | 1,035.00 |
+| Exempt | **1,035.00** |
+| Taxed | **135.00** |
 
 Both boundaries are inclusive: exactly €3,000 of transmissions still qualifies, and an increment of
 exactly half the global amount is wholly exempt. One euro over €3,000 and the whole relief is gone —
 it is a gate, not a taper.
 
+Both conditions are measured **over the year as a whole**, not disposal by disposal. In the year
+above the first sale's gain (€1,080) is more than half its own proceeds while the second's (€90) is
+less than half of its own; one year-wide denominator lets the second sale's unused headroom shelter
+part of the first sale's excess, and a per-disposal denominator would exempt €900 instead of €1,035.
+See [Open interpretations §13](#13-the-navarra-3000-exemptions-global-amount--open).
+
 Proceeds are counted for **every** disposal, gain- or loss-making, because condition 1 measures the
 transmissions rather than their results; only positive integrable results feed the increment, because
 a loss is a *disminución*, not an *incremento*. A wash-sale-deferred loss therefore leaves the
 proceeds alone and stays out of the increment.
+
+**The relief can never eat a loss.** A year with a €900 gain on €1,800 of proceeds and a €450 loss on
+€900 has a global amount of €2,700 and an increment of €900 — not the €450 net. The exemption takes
+the whole €900 and the €450 loss survives in full, so the ganancias group closes at −450 and carries
+that forward. The F-93 says the same thing structurally: Anexo 1 gives each transmission separate
+*Incremento* (656) and *Disminución* (657) cells, and the *Incremento exento. Otros supuestos* cell
+(1658) sits under the incremento only.
 
 **Foreign-currency conversions withhold the relief.** A conversion is a transmission too (art.
 54.1.b), but the tool records only its result, never the amount converted, so a year that has one
@@ -1040,9 +1053,32 @@ interest is a coupon on a negotiable security, raise the ceiling by hand.
 condition 2.º of "el importe global de la transmisión" — singular. The tool reads both as the same
 year-global figure: 1.º has already fixed "importe global" as the year total, and a per-disposal
 numerator against a global denominator is incoherent. The two readings differ only in a
-multi-disposal year. Proceeds are counted for every disposal, gain- or loss-making, because 1.º
-measures the transmissions; only positive integrable results feed the increment, because a loss is a
-*disminución*.
+multi-disposal year whose disposals have unequal gain-to-proceeds ratios. Proceeds are counted for
+every disposal, gain- or loss-making, because 1.º measures the transmissions; only positive
+integrable results feed the increment, because a loss is a *disminución*.
+
+**What the choice is worth.** A year that sells 6 shares for €1,620 (gain €1,080, more than half its
+own proceeds) and 4 for €450 (gain €90, less than half of its own) has `G = 2,070` and `I = 1,170`.
+Year-global exempts `min(1,170, 1,035) = 1,035`; per-disposal exempts `810 + 90 = 900`. The €135 of
+base — €27.00 of Navarra tax — is the whole difference, and it exists because one year-wide
+denominator lets the second sale's unused headroom shelter part of the first sale's excess.
+
+**Also open: gross or net of the sell commission.** The global amount is built from the same
+`proceeds_eur` the gain is built from, which is revenue **less the sell commission**. Art. 41.2 takes
+"los gastos y tributos … en cuanto resulten satisfechos por el transmitente" out of the *valor de
+transmisión*, and the F-93's per-transmission column 651 is labelled *Valor de transmisión* — so net
+is the reading the form invites. But art. 39.5.d says "el importe global de las citadas
+transmisiones" rather than "el valor de transmisión", and art. 41.3 defines the *importe real del
+valor de enajenación* as "el efectivamente percibido", which reads gross.
+
+The choice only bites when a commission straddles a threshold, and it is **not uniformly
+conservative**: a net figure is smaller, which makes 1.º easier to pass (more relief) but lowers
+2.º's 50% ceiling (less relief). A single sale of €3,060 gross with a €90 commission is €2,970 net:
+net exempts €1,485, gross exempts nothing because 1.º fails.
+
+**What to do.** If a sell commission puts the year's gross proceeds above €3,000 while the net figure
+is at or under it, the relief the tool grants rests on the net reading. Re-run the arithmetic on the
+gross figure before filing, or ask Hacienda Foral de Navarra.
 
 **Also open, by data limit.** A foreign-currency conversion is a transmission too (art. 54.1.b), but
 the shared FX FIFO records only its result, never the amount converted, so the global amount cannot
@@ -1052,7 +1088,7 @@ withheld and nothing is said: the missing conversions can only add to a total th
 failed the test.
 
 ```text
-# WARNING: The year's securities transmissions came to €2250.00, under the €3,000 that
+# WARNING: The year's securities transmissions came to €2070.00, under the €3,000 that
 # TRLFIRPF art. 39.5.d exempts, but the exemption was NOT applied: the year also contains
 # foreign-currency conversions…
 ```
