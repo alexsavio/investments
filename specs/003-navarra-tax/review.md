@@ -34,7 +34,7 @@ Verified-correct by the reviewers (do not touch): the `NavarraOrdered` compensat
 
 Everything below is text/contract/coverage; both reviewers independently reproduced every euro of the V round.
 
-- **W1 — Regime-gate the two rows V1 missed.** Status: TODO
+- **W1 — Regime-gate the two rows V1 missed.** Status: DONE (`c2c01629`)
   `csv_formatter.rs:559-569`: `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` still say "fase 2ª-1º" and carry non-zero Navarra amounts (test pins €2,000 through one). Same regime-gated treatment as V1 (Navarra: art. 54.2 own-group vocabulary; Gipuzkoa/Común strings byte-unchanged); also the "Fase 2ª-2º" doc comment at `statement.rs:837`. Widen `the_cross_offset_rows_name_the_regimes_own_statute` past its `CROSS_OFFSET_` filter so the whole compensation block is covered. Contract row descriptions updated.
   Commit: `fix(navarra-tax): label the own-group compensation rows with the regime's statute`
 - **W2 — Withheld-exemption caveat: gains-only predicate.** Status: TODO
