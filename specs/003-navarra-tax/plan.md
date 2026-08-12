@@ -215,12 +215,14 @@ Pinned reading:
 - Condition 2.º: `exempt = min(I, 0.50 × G)`, `taxed = I − exempt`. "No exceda" makes the boundary
   inclusive, so `I = 0.50 × G` exactly is still fully exempt.
 
-Three edges pinned with it:
+Four edges pinned with it:
 
 1. **Singular vs plural.** 2.º says "el importe global de **la transmisión**" where 1.º says "de las
    citadas transmisiones". The tool reads both as the same year-global figure: 1.º has already fixed
    "importe global" as the year total, and a per-disposal numerator against a global denominator is
-   incoherent. Differs from a per-disposal reading only in a multi-disposal year. `TODO(verify)`.
+   incoherent. Differs from a per-disposal reading only in a multi-disposal year with **unequal**
+   gain-to-proceeds ratios; the `small_disposal` fixture below is built to be exactly such a year, so
+   the two readings give different euros. OPEN in the register.
 2. **Wash sale.** A deferred loss does not change `G` (the transmission happened, at its proceeds)
    and does not enter `I` (a *disminución*, and a blocked one). A reintegrated loss likewise stays
    out of `I`.
@@ -229,23 +231,101 @@ Three edges pinned with it:
    principal. Counting securities proceeds alone would understate `G` and could hand the exemption to
    a year that does not qualify, so the exemption is **suppressed** for any year with an FX
    conversion realization, with a warning saying so. Failure direction: more tax.
+4. **Gross or net of the sell commission.** `G` is built from the same `proceeds_eur` the gain is
+   built from, which is `revenue − sell commission`. Art. 41.2 defines the *valor de transmisión* as
+   the importe real less "los gastos y tributos … en cuanto resulten satisfechos por el transmitente",
+   and the F-93's own per-transmission column 651 is labelled *Valor de transmisión*, so net is the
+   reading the form invites. Art. 39.5.d, however, says "el importe global de las citadas
+   transmisiones" rather than "el valor de transmisión", and art. 41.3 defines *importe real del
+   valor de enajenación* as "el efectivamente percibido" — which reads gross. The two differ only
+   when a commission straddles a threshold, and the direction is not uniformly conservative: a net
+   `G` is smaller, which makes 1.º **easier** to pass (more relief) but 2.º's 50% ceiling **lower**
+   (less relief). OPEN in the register; the `small_disposal_commission` fixture pins the net choice
+   so a change of mind cannot pass silently.
 
-**`small_disposal` fixture** — buy 10 AAPL @ $100 on 2025-03-10 ($1 000 → €900); sell 5 @ $250 on
-2026-05-15 (€1 125) and 5 @ $250 on 2026-09-15 (€1 125). Two sales, so the year-aggregate reading is
-what is under test.
+**`small_disposal` fixture** — buy 10 AAPL @ $100 on 2025-03-10 ($1 000 → €900, i.e. €90/share);
+sell **6** @ $300 on 2026-05-15 ($1 800 → €1 620) and **4** @ $125 on 2026-09-15 ($500 → €450). The
+two sales have deliberately different gain-to-proceeds ratios, which is what separates the two
+readings of 2.º:
+
+| Sale | Proceeds | Cost | Gain | 50% × own proceeds | Per-transmission exempt |
+|---|---|---|---|---|---|
+| A — 6 sh | 1 620 | 540 | 1 080 | 810 | min(1 080, 810) = 810 |
+| B — 4 sh | 450 | 360 | 90 | 225 | min(90, 225) = 90 |
+| **Year** | **2 070** | **900** | **1 170** | **1 035** | **900** |
+
+- **Year-global reading (implemented):** `G = 2 070`, `I = 1 170`, `exempt = min(1 170, 1 035) =`
+  **1 035**, `gyp_net = 135`, cuota `135 × 20% =` **27.00**.
+- **Per-transmission reading (rejected):** `exempt = 810 + 90 =` **900**, `gyp_net = 270`, cuota
+  would be **54.00**.
+
+The €135 of base — €27.00 of tax — between the two is the entire content of register entry 13. Sale
+A alone exceeds its own half and sale B falls short of its own, so the global denominator lets B's
+unused headroom shelter part of A's excess; a per-transmission denominator cannot.
 
 | Regime | Coefficient | `I` | `G` | 50% × G | Exempt | `gyp_net` | Cuota |
 |---|---|---|---|---|---|---|---|
-| Navarra | 1.000 | 1 350 | 2 250 | 1 125 | 1 125 | 225 | 225 × 20% = **45.00** |
-| Común | 1.000 | 1 350 | 2 250 | — | 0 | 1 350 | 1 350 × 19% = **256.50** |
-| Gipuzkoa | 1.020 | 1 332 | 2 250 | — | 0 | 1 332 | 1 332 × 19% = **253.08** |
+| Navarra | 1.000 | 1 170 | 2 070 | 1 035 | 1 035 | 135 | 135 × 20% = **27.00** |
+| Común | 1.000 | 1 170 | 2 070 | — | 0 | 1 170 | 1 170 × 19% = **222.30** |
+| Gipuzkoa | 1.020 | 1 152 | 2 070 | — | 0 | 1 152 | 1 152 × 19% = **218.88** |
 
-(Gipuzkoa: cost 900 × 1.020 = 918, i.e. 459 against each €1 125 sale → 666 per sale. Its 2026
-scale opens at 19%, not 20%, so the cuota is 253.08.)
+(Gipuzkoa: the single 2025 lot actualizes at 1.020, so the 540/360 cost split becomes 550.80/367.20
+and the gains 1 069.20 + 82.80 = 1 152. Its 2026 scale opens at 19%, not 20%.)
 
-**`small_disposal_boundary` fixture** — same buy, one sell of 10 @ $350 on 2026-05-15 (€3 150).
-`G = 3 150 > 3 000`, so 1.º fails and no regime exempts anything. Navarra: `I = 3 150 − 900 = 2 250`,
-base 2 250, cuota **450.00**.
+**`small_disposal_mixed` fixture — the exemption never eats a loss.** Two instruments, so the two
+sales carry independent cost bases: AAPL buy 10 @ $100 on 2025-03-10 ($1 000 → €900) and sell 10 @
+$200 on 2026-05-15 ($2 000 → €1 800), a **+900** incremento; MSFT buy 10 @ $150 on 2025-04-10
+($1 500 → €1 350) and sell 10 @ $100 on 2026-09-15 ($1 000 → €900), a **−450** disminución.
+
+`G = 1 800 + 900 = 2 700` — both transmissions count, 1.º measures transmissions and not results.
+`I = 900` — only the incremento; the disminución is not an *incremento de patrimonio* and never
+enters. `50% × G = 1 350`, so `exempt = min(900, 1 350) =` **900**: the whole gain, and no more.
+
+| Figure | Arithmetic | Value |
+|---|---|---|
+| `total_capital_gains` | 900 − 450 | 450.00 |
+| Exempt | min(900, 1 350) | 900.00 |
+| `gyp_net` | 450 − 900 | **−450.00** |
+| Base | floored at 0 | 0.00 |
+| Cuota | — | 0.00 |
+| Carried to 2027 | the surviving disminución | 450.00 @2026 |
+
+The surviving figure is **exactly the loss**, unchanged. This is the F-93's own column arithmetic:
+Anexo 1 gives each transmission a separate *Incremento* (656) and *Disminución* (657) cell, and the
+*Incremento exento. Otros supuestos* cell (1658) sits under the incremento only — there is no cell in
+which an exención could reach a disminución. Casilla 661 nets what is left per transmission and 706
+sums them.
+
+Two wrong readings this fixture rejects: computing `I` from the **net** result (450) would exempt
+450 and leave `gyp_net` at 0, silently destroying the loss and the €450 carryforward; applying the
+exemption to the net result and flooring at 0 would do the same.
+
+Común: base 450 → `450 × 19% =` **85.50**. Gipuzkoa: 1.020 → AAPL 1 800 − 918 = 882, MSFT
+900 − 1 377 = −477, net 405 → `405 × 19% =` **76.95**.
+
+**`small_disposal_boundary` fixture** — same buy as `small_disposal`, one sell of 10 @ $350 on
+2026-05-15 (€3 150). `G = 3 150 > 3 000`, so 1.º fails and no regime exempts anything. Navarra:
+`I = 3 150 − 900 = 2 250`, base 2 250, cuota **450.00**.
+
+**`small_disposal_commission` fixture — `G` is net of the sell commission.** Buy 10 AAPL @ $100 on
+2025-03-10, no commission ($1 000 → €900); sell 10 @ $340 on 2026-05-15 with a **$100** commission:
+gross $3 400 → €3 060, commission $100 → €90, net **€2 970**. The commission straddles the €3 000
+threshold, so the two readings of "importe global" diverge at condition 1.º itself:
+
+| Reading | `G` | 1.º | 50% × G | `I` | Exempt | `gyp_net` | Navarra cuota |
+|---|---|---|---|---|---|---|---|
+| **Net (implemented)** | 2 970 | passes | 1 485 | 2 070 | 1 485 | 585 | 585 × 20% = **117.00** |
+| Gross (rejected) | 3 060 | fails | — | 2 070 | 0 | 2 070 | 2 070 × 20% = 414.00 |
+
+`I = 2 970 − 900 = 2 070` under either reading: the *gain* is net of the commission beyond argument
+(art. 41.2), and only the 39.5.d measure is in question. Común: base 2 070 → `2 070 × 19% =`
+**393.30**. Gipuzkoa: cost 900 × 1.020 = 918 → gain 2 052 → `2 052 × 19% =` **389.88**.
+
+The adversarial report framed this case as "sale A +700 on €1 200, sale B −400 on €800". Those euros
+are not representable through the shared fixture converter — it is a flat 0.9 EUR/USD, so every euro
+figure has to be 0.9 × a USD trade amount, and €1 200 would need $1 333.33… The fixtures above keep
+the report's shape (a gain and a loss in one qualifying year; a commission that decides 1.º) with
+euros the converter can actually produce.
 
 **Pure-function vectors** (`G`, `I`) → exempt:
 
