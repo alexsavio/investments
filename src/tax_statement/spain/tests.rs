@@ -1921,6 +1921,63 @@ fn the_small_disposals_exemption_never_eats_a_loss() {
     assert_eq!(gipuzkoa.savings_quota, dec!(76.95));
 }
 
+/// Condition 2.º's 50% ceiling is measured on **every** transmission's proceeds, while the increment
+/// it caps counts only the gain-making ones. The two figures rest on different populations, which is
+/// a reading of "el importe global de la transmisión" rather than an identity: 1.º has already fixed
+/// "importe global" as the year's total transmissions, gain- and loss-making alike, and reading the
+/// same phrase two ways inside one letra would need an argument art. 39.5.d does not give.
+///
+/// AAPL +1,620 on €1,800 of proceeds and MSFT −270 on €450. Both readings agree `I = 1,620` and both
+/// pass 1.º (€2,250 and €1,800 are each under €3,000), so the whole difference is the denominator:
+/// all-transmissions exempts `min(1,620, 1,125) = 1,125` and leaves `gyp_net` at 225; gain-making
+/// only would exempt `min(1,620, 900) = 900` and leave 450. €225 of base — €45.00 of Navarra tax.
+///
+/// This is the round's one choice whose failure direction is **less** tax, which is why it is pinned
+/// here and recorded in register entry 13 rather than left to the code comment. See Appendix A §A.4.
+#[test]
+fn the_small_disposals_ceiling_is_measured_on_every_transmission() {
+    let navarra = run_pipeline("small_disposal_ceiling", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.capital_gains.len(), 2);
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2250));
+    assert_eq!(navarra.small_disposals_gains, dec!(1620));
+    assert_eq!(navarra.small_disposals_exemption, dec!(1125));
+
+    // The gain-making-transmissions-only reading the tool rejects: half of €1,800, not half of
+    // €2,250, so the loss-making sale's €450 would stop widening the shelter above the gain.
+    let gain_making_proceeds: Decimal = navarra
+        .capital_gains
+        .iter()
+        .filter(|entry| entry.integrable_amount > Decimal::ZERO)
+        .map(|entry| entry.proceeds_eur)
+        .sum();
+    assert_eq!(gain_making_proceeds, dec!(1800));
+    let gains_only_exemption = std::cmp::min(
+        navarra.small_disposals_gains,
+        gain_making_proceeds / dec!(2),
+    );
+    assert_eq!(gains_only_exemption, dec!(900));
+    assert_ne!(navarra.small_disposals_exemption, gains_only_exemption);
+
+    assert_eq!(navarra.total_capital_gains, dec!(1350));
+    assert_eq!(navarra.gyp_net, dec!(225));
+    assert_eq!(navarra.savings_base, dec!(225));
+    assert_eq!(navarra.savings_quota, dec!(45));
+    // The rejected reading would tax €450 instead — €45.00 more, so the implemented one is the
+    // generous side of the open question.
+    assert_eq!((dec!(1350) - gains_only_exemption) * dec!(0.20), dec!(90));
+
+    let comun = run_pipeline("small_disposal_ceiling", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.small_disposals_exemption, dec!(0));
+    assert_eq!(comun.gyp_net, dec!(1350));
+    assert_eq!(comun.savings_quota, dec!(256.50));
+
+    // Gipuzkoa actualizes both 2025 lots by 1.020: 180 → 183.60 and 720 → 734.40.
+    let gipuzkoa = run_pipeline("small_disposal_ceiling", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.gyp_net, dec!(1332));
+    assert_eq!(gipuzkoa.savings_quota, dec!(253.08));
+}
+
 /// "El importe global de las citadas transmisiones" is measured **net of the sell commission**, the
 /// same `proceeds_eur` the gain is measured from. Art. 41.2 takes the gastos satisfied by the
 /// transmitente out of the valor de transmisión, and the F-93's per-transmission column 651 is

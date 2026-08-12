@@ -1081,6 +1081,24 @@ Year-global exempts `min(1,170, 1,035) = 1,035`; per-disposal exempts `810 + 90 
 base — €27.00 of Navarra tax — is the whole difference, and it exists because one year-wide
 denominator lets the second sale's unused headroom shelter part of the first sale's excess.
 
+**Also open: what 2.º's 50% ceiling is measured on.** The increment `I` counts only the year's
+*incrementos*, but the ceiling it is compared against is half of the **global** amount — every
+transmission, gain- and loss-making alike. The two figures therefore rest on different populations,
+so a loss-making sale widens the shelter available to the year's gains. The tool reads it that way
+because 2.º says "el importe global de la transmisión" and 1.º has already fixed "importe global" as
+the year total; reading one phrase two ways inside a single letra would need an argument the article
+does not give.
+
+Unlike every other choice recorded here, **this one's failure direction is less tax**. A year that
+sells one holding for €1,800 at a €1,620 gain and another for €450 at a €270 loss has `I = 1,620`
+and passes 1.º under either reading (€2,250 and €1,800 are both under €3,000). Half the global
+amount is €1,125 and half the gain-making sale's own proceeds is €900, so the tool exempts €1,125
+where the narrower reading exempts €900: €225 of base, €45.00 of Navarra tax, in the filer's favour.
+
+**What to do.** If a loss-making disposal is what lifts your exemption above half the gain-making
+disposals' proceeds, the relief the tool grants rests on this reading. Re-run the arithmetic with the
+narrower denominator before filing, or ask Hacienda Foral de Navarra.
+
 **Also open: gross or net of the sell commission.** The global amount is built from the same
 `proceeds_eur` the gain is built from, which is revenue **less the sell commission**. Art. 41.2 takes
 "los gastos y tributos … en cuanto resulten satisfechos por el transmitente" out of the *valor de

@@ -693,6 +693,13 @@ impl SpanishTaxStatement {
     /// integrable results feed the increment, because a loss is a *disminución*. A wash-sale
     /// deferral therefore leaves the proceeds alone and keeps the blocked amount out of both.
     ///
+    /// The two populations differ, and that is deliberate: 2.º's 50% ceiling is measured on the same
+    /// all-transmissions global amount, so a loss-making sale widens the shelter available to the
+    /// year's gains. 2.º says "el importe global de la transmisión" and 1.º has already fixed
+    /// "importe global" as the year total; reading one phrase two ways inside one letra would need
+    /// an argument the article does not give. This is the round's one choice whose failure direction
+    /// is **less** tax, so it is recorded as OPEN in the register rather than left implicit.
+    ///
     /// The proceeds are taken **net of the sell commission**, because `proceeds_eur` is the same
     /// figure the gain is measured from. Art. 41.2 takes the "gastos y tributos … satisfechos por el
     /// transmitente" out of the valor de transmisión, and the F-93's per-transmission column 651 is

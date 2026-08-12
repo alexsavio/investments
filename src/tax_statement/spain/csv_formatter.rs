@@ -1991,7 +1991,12 @@ mod tests {
         // Each row is named by the group whose saldo it moves: letra a) is the capital-mobiliario
         // group and letra b) the transmisiones one, and a negative in either crosses at 25% of the
         // other's positive.
-        for (index, letra) in [(0, "art. 54.2.a"), (1, "art. 54.2.b"), (2, "art. 54.2.a"), (3, "art. 54.2.b")] {
+        for (index, letra) in [
+            (0, "art. 54.2.a"),
+            (1, "art. 54.2.b"),
+            (2, "art. 54.2.a"),
+            (3, "art. 54.2.b"),
+        ] {
             assert!(navarra[index].contains(letra), "{navarra:?}");
         }
     }
