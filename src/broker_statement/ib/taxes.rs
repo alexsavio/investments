@@ -34,7 +34,28 @@ impl RecordParser for WithholdingTaxParser {
         let description = record.get_value("Description")?;
         let statement_date = record.parse_date("Date")?;
 
-        let issuer = parse_tax_description(description)?;
+        // Interest withholding taxes (e.g., "Withholding @ 20% on Credit Interest for Nov-2025")
+        // are handled separately from dividend withholding taxes. For German tax purposes,
+        // we calculate tax on the gross interest amount, so we skip these broker-withheld taxes.
+        if is_interest_withholding_tax(description) {
+            return Ok(());
+        }
+
+        // The description regex is fully anchored; a real-world variation it does not match must not
+        // abort the whole statement. Warn and skip the row so the rest of the parse proceeds.
+        let issuer = match parse_tax_description(description) {
+            Ok(issuer) => issuer,
+            Err(e) => {
+                // Skipping the row drops its foreign withholding tax, which understates the
+                // creditable foreign tax and overstates German tax due. Name the amount and the
+                // consequence so the credit can be added manually instead of vanishing silently.
+                let amount = record.get_value("Amount").unwrap_or("?");
+                log::warn!(
+                    "Skipping an unrecognized withholding-tax row ({e}); its {currency} {amount} \
+                     foreign tax will not be credited — review the statement and add it manually.");
+                return Ok(());
+            }
+        };
         let actual_date = parser.tax_remapping.map(statement_date, description);
 
         // Tax amount is represented as a negative number.
@@ -57,6 +78,15 @@ impl RecordParser for WithholdingTaxParser {
 
         Ok(())
     }
+}
+
+fn is_interest_withholding_tax(description: &str) -> bool {
+    lazy_static! {
+        // Interest withholding tax: "Withholding @ 20% on Credit Interest for Nov-2025"
+        static ref INTEREST_TAX_REGEX: Regex = Regex::new(
+            r"^Withholding @ \d+% on Credit Interest for [A-Z][a-z]+-\d{4}$").unwrap();
+    }
+    INTEREST_TAX_REGEX.is_match(description)
 }
 
 fn parse_tax_description(description: &str) -> GenericResult<String> {

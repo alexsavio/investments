@@ -50,11 +50,11 @@ use self::taxes::{TaxId, TaxAccruals, TaxAgentWithholdings};
 use self::validators::{DateValidator, sort_and_validate_trades};
 
 pub use self::cash_flows::{CashFlow, CashFlowType};
-pub use self::corporate_actions::{CorporateAction, StockSplitController, process_corporate_actions};
+pub use self::corporate_actions::{CorporateAction, CorporateActionType as BrokerCorporateActionType, StockSplitController, process_corporate_actions};
 pub use self::dividends::Dividend;
 pub use self::fees::Fee;
 pub use self::grants::{CashGrant, StockGrant, process_grants};
-pub use self::interest::IdleCashInterest;
+pub use self::interest::{IdleCashInterest, ForeignCashFlow};
 pub use self::merging::StatementsMergingStrategy;
 pub use self::other::config::Operation;
 pub use self::payments::Withholding;
@@ -74,6 +74,8 @@ pub struct BrokerStatement {
     pub cash_flows: Vec<CashFlow>,
     pub deposits_and_withdrawals: Vec<CashAssets>,
     pub idle_cash_interest: Vec<IdleCashInterest>,
+    /// Raw per-currency cash-flow ledger (IB statement of funds), replayed by the German FX FIFO.
+    pub foreign_cash_flows: Vec<ForeignCashFlow>,
     pub tax_agent_withholdings: TaxAgentWithholdings,
 
     pub exchanges: Exchanges,
@@ -83,11 +85,14 @@ pub struct BrokerStatement {
     pub dividends: Vec<Dividend>,
 
     pub cash_grants: Vec<CashGrant>,
-    stock_grants: Vec<StockGrant>,
-    corporate_actions: Vec<CorporateAction>,
+    pub stock_grants: Vec<StockGrant>,
+    pub corporate_actions: Vec<CorporateAction>,
     pub stock_splits: StockSplitController,
 
     pub open_positions: HashMap<String, Decimal>,
+    /// Short (negative-quantity) positions, reported for information only — not fed into cost-basis
+    /// or tax calculation.
+    pub short_positions: HashMap<String, Decimal>,
     pub instrument_info: InstrumentInfo,
 }
 
@@ -172,22 +177,57 @@ impl BrokerStatement {
             statement.cash_flows.extend(cash_flows);
         }
 
+        // An unmatched tax accrual is not always an error, and the two cases pull in opposite
+        // directions.
+        //
+        // An unmatched *charge* means a dividend is missing from the statement. Withheld tax
+        // without its income understates taxable income, so it must stay fatal.
+        //
+        // An unmatched *refund* is routine: when a broker reclassifies a distribution (a US
+        // Return of Capital, say) it removes the dividend rows and refunds the withholding, so
+        // the refund legitimately has nothing to reverse. Aborting the whole statement over a
+        // credit the user is owed is the wrong severity -- warn, drop it, and carry on. Dropping
+        // it only forgoes a small foreign-tax credit, which errs against the taxpayer rather
+        // than for them.
         if !tax_accruals.is_empty() {
-            let taxes = tax_accruals.keys()
-                .map(|tax: &TaxId| format!(
-                    "* {date}: {issuer}", date=formatting::format_date(tax.date),
-                    issuer=tax.issuer))
-                .collect::<Vec<_>>()
-                .join("\n");
+            let mut unmatched = Vec::new();
 
-            let mut hint = String::new();
-            if statement.broker.type_ == Broker::InteractiveBrokers {
-                // https://github.com/KonishchevDmitry/investments/blob/master/docs/brokers.md#ib-tax-remapping
-                let url = "https://bit.ly/investments-ib-tax-remapping";
-                hint = format!("\n\nProbably manual tax remapping rules are required (see {url})");
+            for (tax_id, accruals) in tax_accruals {
+                // Ask for the refund-only shape specifically. `get_result()` failing is a much
+                // wider net: it also rejects a partial refund against a dividend that *is*
+                // present, and a mixed-currency accrual. Dropping those with a
+                // "no originating dividend" warning would both misdescribe them and lose a
+                // genuine inconsistency.
+                if accruals.is_refund_only() {
+                    log::warn!(
+                        "Dropping a {} withholding refund dated {} that has no originating \
+                         dividend in the statement -- most often a reclassified distribution \
+                         (e.g. Return of Capital). Its foreign tax credit is not claimed. If the \
+                         distribution should have been taxable, the dividend row is missing and \
+                         the statement is incomplete.",
+                        tax_id.issuer, formatting::format_date(tax_id.date));
+                    continue;
+                }
+                unmatched.push(tax_id);
             }
 
-            return Err!("Unable to find origin operations for the following taxes:\n{taxes}{hint}");
+            if !unmatched.is_empty() {
+                let taxes = unmatched.iter()
+                    .map(|tax: &TaxId| format!(
+                        "* {date}: {issuer}", date=formatting::format_date(tax.date),
+                        issuer=tax.issuer))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let mut hint = String::new();
+                if statement.broker.type_ == Broker::InteractiveBrokers {
+                    // https://github.com/KonishchevDmitry/investments/blob/master/docs/brokers.md#ib-tax-remapping
+                    let url = "https://bit.ly/investments-ib-tax-remapping";
+                    hint = format!("\n\nProbably manual tax remapping rules are required (see {url})");
+                }
+
+                return Err!("Unable to find origin operations for the following taxes:\n{taxes}{hint}");
+            }
         }
 
         process_grants(&mut statement, strictness.contains(ReadingStrictness::GRANTS))?;
@@ -283,6 +323,7 @@ impl BrokerStatement {
             cash_flows: Vec::new(),
             deposits_and_withdrawals: Vec::new(),
             idle_cash_interest: Vec::new(),
+            foreign_cash_flows: Vec::new(),
             tax_agent_withholdings: TaxAgentWithholdings::new(),
 
             exchanges: Exchanges::new_empty(),
@@ -297,6 +338,7 @@ impl BrokerStatement {
             stock_splits: StockSplitController::default(),
 
             open_positions: HashMap::new(),
+            short_positions: HashMap::new(),
             instrument_info: InstrumentInfo::new(),
         })
     }
@@ -542,6 +584,7 @@ impl BrokerStatement {
         self.cash_flows.extend(statement.cash_flows);
         self.deposits_and_withdrawals.extend(statement.deposits_and_withdrawals);
         self.idle_cash_interest.extend(statement.idle_cash_interest);
+        self.foreign_cash_flows.extend(statement.foreign_cash_flows);
         self.tax_agent_withholdings.merge(statement.tax_agent_withholdings);
 
         self.exchanges.merge(statement.exchanges);
@@ -554,6 +597,7 @@ impl BrokerStatement {
         self.corporate_actions.extend(statement.corporate_actions);
 
         self.open_positions = statement.open_positions;
+        self.short_positions = statement.short_positions;
         self.instrument_info.merge(statement.instrument_info);
 
         Ok(())

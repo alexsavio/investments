@@ -10,8 +10,8 @@ use crate::currency::rate_cache::{CurrencyRateCache, CurrencyRateCacheResult};
 use crate::db;
 use crate::forex::get_currency_pair;
 use crate::formatting;
-use crate::localities;
-use crate::quotes::{self, cbr, CurrencyRate, Quotes, QuoteQuery};
+use crate::localities::{self, Jurisdiction, RateSourceKind};
+use crate::quotes::{self, cbr, ecb, CurrencyRate, Quotes, QuoteQuery};
 #[cfg(test)] use crate::time;
 use crate::types::{Date, Decimal};
 #[cfg(test)] use crate::util;
@@ -43,6 +43,33 @@ impl CurrencyConverter {
     pub fn new(database: db::Connection, quotes: Option<Rc<Quotes>>, strict_mode: bool) -> CurrencyConverterRc {
         let rate_cache = CurrencyRateCache::new(database);
         let backend = CurrencyRateCacheBackend::new(rate_cache, quotes, strict_mode);
+        Rc::new(CurrencyConverter::new_with_backend(backend))
+    }
+
+    /// Build a converter using whichever central bank this configuration's tax jurisdiction
+    /// requires.
+    ///
+    /// Prefer this over [`new`](Self::new) and [`new_ecb`](Self::new_ecb) at every call site.
+    /// The rate source is a property of the jurisdiction, not of the command being run: when
+    /// each caller chose for itself, `simulate-sell` and `analyse` converted a German filer's
+    /// amounts at Central Bank of Russia rates while `tax-statement` used the ECB on the same
+    /// positions.
+    pub fn for_jurisdiction(
+        jurisdiction: Jurisdiction, database: db::Connection, quotes: Option<Rc<Quotes>>,
+        strict_mode: bool,
+    ) -> CurrencyConverterRc {
+        match jurisdiction.traits().rate_source {
+            RateSourceKind::Cbr => Self::new(database, quotes, strict_mode),
+            RateSourceKind::Ecb => Self::new_ecb(database, quotes, strict_mode),
+        }
+    }
+
+    /// Like [`new`](Self::new), but sources official currency rates from the European Central Bank
+    /// (EUR base) instead of the Central Bank of Russia. Used for jurisdictions (e.g. Germany) whose
+    /// tax authorities require ECB reference rates.
+    pub fn new_ecb(database: db::Connection, quotes: Option<Rc<Quotes>>, strict_mode: bool) -> CurrencyConverterRc {
+        let rate_cache = CurrencyRateCache::new(database);
+        let backend = CurrencyRateCacheBackend::new_ecb(rate_cache, quotes, strict_mode);
         Rc::new(CurrencyConverter::new_with_backend(backend))
     }
 
@@ -125,9 +152,19 @@ pub trait CurrencyConverterBackend {
     fn currency_rate(&self, from: &str, to: &str, date: Date) -> GenericResult<(Option<Decimal>, Option<Decimal>)>;
 }
 
+/// The official-rate source a [`CurrencyRateCacheBackend`] fetches from. Each source establishes a
+/// base currency (RUB for CBR, EUR for ECB) against which every other currency is priced.
+#[cfg(not(test))]
+enum RateSource {
+    Cbr(cbr::Cbr),
+    Ecb(ecb::Ecb),
+}
+
 struct CurrencyRateCacheBackend {
     #[cfg(not(test))]
-    cbr: cbr::Cbr,
+    source: RateSource,
+    // Base currency of `source`: cached rates are the base-currency price of one foreign unit.
+    base_currency: &'static str,
     quotes: Option<Rc<Quotes>>,
     rate_cache: CurrencyRateCache,
     strict_mode: bool,
@@ -137,11 +174,34 @@ impl CurrencyRateCacheBackend {
     pub fn new(rate_cache: CurrencyRateCache, quotes: Option<Rc<Quotes>>, strict_mode: bool) -> Box<dyn CurrencyConverterBackend> {
         Box::new(CurrencyRateCacheBackend {
             #[cfg(not(test))]
-            cbr: cbr::Cbr::new("https://www.cbr.ru"),
+            source: RateSource::Cbr(cbr::Cbr::new("https://www.cbr.ru")),
+            base_currency: cbr::BASE_CURRENCY,
             quotes,
             rate_cache,
             strict_mode,
         })
+    }
+
+    pub fn new_ecb(rate_cache: CurrencyRateCache, quotes: Option<Rc<Quotes>>, strict_mode: bool) -> Box<dyn CurrencyConverterBackend> {
+        Box::new(CurrencyRateCacheBackend {
+            #[cfg(not(test))]
+            source: RateSource::Ecb(ecb::Ecb::new(ecb::BASE_URL)),
+            base_currency: ecb::BASE_CURRENCY,
+            quotes,
+            rate_cache,
+            strict_mode,
+        })
+    }
+
+    // Cache key for a foreign currency. CBR rows keep bare currency codes for backward compatibility
+    // with existing caches; other bases are namespaced so their (differently-based) rows never
+    // collide with CBR's in the shared `currency_rates` table.
+    fn cache_key(&self, currency: &str) -> String {
+        if self.base_currency == cbr::BASE_CURRENCY {
+            currency.to_owned()
+        } else {
+            format!("{}:{}", self.base_currency, currency)
+        }
     }
 
     fn check_date(&self, date: Date) -> GenericResult<Option<Rc<Quotes>>> {
@@ -167,7 +227,8 @@ impl CurrencyRateCacheBackend {
     }
 
     fn get_price(&self, currency: &str, date: Date, from_cache_only: bool) -> GenericResult<Option<Decimal>> {
-        let cache_result = self.rate_cache.get(currency, date).map_err(|e| format!(
+        let key = self.cache_key(currency);
+        let cache_result = self.rate_cache.get(&key, date).map_err(|e| format!(
             "Failed to get currency rate from the currency rate cache: {e}"))?;
 
         Ok(match cache_result {
@@ -186,7 +247,7 @@ impl CurrencyRateCacheBackend {
                 }
 
                 let currency_rates = self.get_rates(currency, start_date, end_date)?;
-                self.rate_cache.save(currency, start_date, end_date, currency_rates)?;
+                self.rate_cache.save(&key, start_date, end_date, currency_rates)?;
 
                 self.get_price(currency, date, true)?
             },
@@ -195,15 +256,21 @@ impl CurrencyRateCacheBackend {
 
     #[cfg(not(test))]
     fn get_rates(&self, currency: &str, start_date: Date, end_date: Date) -> GenericResult<Vec<CurrencyRate>> {
-        Ok(self.cbr.get_historical_currency_rates(currency, start_date, end_date).map_err(|e| format!(
-            "Failed to get currency rates from the Central Bank of the Russian Federation: {e}"))?)
+        match &self.source {
+            RateSource::Cbr(cbr) => Ok(cbr.get_historical_currency_rates(currency, start_date, end_date).map_err(|e| format!(
+                "Failed to get currency rates from the Central Bank of the Russian Federation: {e}"))?),
+            RateSource::Ecb(ecb) => Ok(ecb.get_historical_currency_rates(currency, start_date, end_date).map_err(|e| format!(
+                "Failed to get currency rates from the European Central Bank: {e}"))?),
+        }
     }
 
     #[cfg(test)]
     #[allow(clippy::unnecessary_wraps)]
     fn get_rates(&self, currency: &str, _start_date: Date, _end_date: Date) -> GenericResult<Vec<CurrencyRate>> {
-        Ok(match currency {
-            "USD" => vec![
+        // Every stored price is the base-currency price of one foreign unit.
+        Ok(match (self.base_currency, currency) {
+            // CBR (RUB base): RUB per 1 unit of foreign currency.
+            ("RUB", "USD") => vec![
                 CurrencyRate {
                     date: date!(2018, 9, 1),
                     price: dec!(68.0447),
@@ -213,7 +280,7 @@ impl CurrencyRateCacheBackend {
                     price: dec!(67.7443),
                 },
             ],
-            "EUR" => vec![
+            ("RUB", "EUR") => vec![
                 CurrencyRate {
                     date: date!(2018, 9, 1),
                     price: dec!(79.4966),
@@ -221,6 +288,18 @@ impl CurrencyRateCacheBackend {
                 CurrencyRate {
                     date: date!(2018, 9, 4),
                     price: dec!(78.6376),
+                },
+            ],
+            // ECB (EUR base): EUR per 1 unit of foreign currency (already inverted from the
+            // published <CCY>-per-EUR series).
+            ("EUR", "USD") => vec![
+                CurrencyRate {
+                    date: date!(2018, 9, 1),
+                    price: dec!(0.86),
+                },
+                CurrencyRate {
+                    date: date!(2018, 9, 4),
+                    price: dec!(0.861),
                 },
             ],
             _ => unreachable!(),
@@ -248,10 +327,16 @@ impl CurrencyConverterBackend for CurrencyRateCacheBackend {
         }
 
         let mut cur_date = date;
-        let min_date = localities::get_russian_central_bank_min_last_working_day(cur_date);
+        let min_date = if self.base_currency == cbr::BASE_CURRENCY {
+            localities::get_russian_central_bank_min_last_working_day(cur_date)
+        } else {
+            // ECB reference rates are published on TARGET business days; a week back covers
+            // weekends and the Christmas/New Year TARGET closure.
+            cur_date - Duration::days(7)
+        };
 
         while cur_date >= min_date {
-            let multiplier = if from == cbr::BASE_CURRENCY {
+            let multiplier = if from == self.base_currency {
                 None
             } else {
                 Some(match self.get_price(from, cur_date, false)? {
@@ -263,7 +348,7 @@ impl CurrencyConverterBackend for CurrencyRateCacheBackend {
                 })
             };
 
-            let divider = if to == cbr::BASE_CURRENCY {
+            let divider = if to == self.base_currency {
                 None
             } else {
                 Some(match self.get_price(to, cur_date, false)? {
@@ -375,5 +460,30 @@ mod tests {
                     "Unable to find {from}/{to} currency rate"))
             );
         }
+    }
+
+    #[test]
+    fn convert_ecb_eur_base() {
+        let (_database, cache) = CurrencyRateCache::new_temporary();
+        let converter =
+            CurrencyConverter::new_with_backend(CurrencyRateCacheBackend::new_ecb(cache, None, true));
+
+        // The mock ECB source prices USD at 0.86 EUR per USD on this date.
+        let date = date!(2018, 9, 1);
+
+        // Identity conversion is a no-op regardless of base.
+        assert_eq!(converter.convert("EUR", "EUR", date, dec!(5)).unwrap(), dec!(5));
+
+        // USD -> EUR multiplies by EUR-per-USD (equivalently, divides by the published
+        // USD-per-EUR rate). 100 USD -> 86 EUR, never ~116.
+        assert_eq!(converter.convert("USD", "EUR", date, dec!(100)).unwrap(), dec!(86));
+        assert_eq!(converter.convert("EUR", "USD", date, dec!(86)).unwrap(), dec!(100));
+
+        // Beyond the ECB fallback window (a week) with no rate, conversion fails rather than
+        // silently reaching for a stale or future value.
+        assert_matches!(
+            converter.convert("USD", "EUR", date!(2018, 8, 20), dec!(100)),
+            Err(ref e) if e.to_string().starts_with("Unable to find USD/EUR currency rate")
+        );
     }
 }

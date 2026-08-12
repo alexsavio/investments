@@ -32,8 +32,10 @@ pub struct Country {
 
 impl Country {
     fn new(
-        jurisdiction: Jurisdiction, tax_rates: BTreeMap<i32, Box<dyn TaxRate>>,
-        tax_agent_rates: BTreeMap<i32, Box<dyn TaxRate>>, tax_credit_rate_limit: Option<Decimal>,
+        jurisdiction: Jurisdiction,
+        tax_rates: BTreeMap<i32, Box<dyn TaxRate>>,
+        tax_agent_rates: BTreeMap<i32, Box<dyn TaxRate>>,
+        tax_credit_rate_limit: Option<Decimal>,
     ) -> Country {
         Country {
             jurisdiction,
@@ -54,7 +56,12 @@ impl Country {
     }
 
     pub fn tax_agent_rate(&self, year: i32) -> Box<dyn TaxRate> {
-        self.tax_agent_rates.range(..=year).last().unwrap().1.clone()
+        self.tax_agent_rates
+            .range(..=year)
+            .last()
+            .unwrap()
+            .1
+            .clone()
     }
 }
 
@@ -62,6 +69,7 @@ impl Country {
 pub enum Jurisdiction {
     Russia,
     Usa,
+    Germany,
 }
 
 pub struct JurisdictionTraits {
@@ -69,21 +77,47 @@ pub struct JurisdictionTraits {
     pub code: &'static str,
     pub currency: &'static str,
     pub tax_precision: u32,
+
+    /// Official source of currency rates for this jurisdiction's tax authority.
+    ///
+    /// Not a preference: the authority dictates which rates a return must use, so this is
+    /// derived from the jurisdiction and never configured. Deciding it per call site is how
+    /// `simulate-sell` came to convert a German filer's amounts at Central Bank of Russia
+    /// rates while `tax-statement` used the ECB on the same positions.
+    pub rate_source: RateSourceKind,
+}
+
+/// Which central bank publishes the reference rates a jurisdiction's tax authority requires.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RateSourceKind {
+    /// Central Bank of Russia. RUB base.
+    Cbr,
+    /// European Central Bank. EUR base.
+    Ecb,
 }
 
 impl Jurisdiction {
     pub fn traits(self) -> JurisdictionTraits {
         match self {
-            Jurisdiction::Russia => JurisdictionTraits{
+            Jurisdiction::Russia => JurisdictionTraits {
+                rate_source: RateSourceKind::Cbr,
                 name: "Russia",
                 code: "RU",
                 currency: "RUB",
                 tax_precision: 0,
             },
-            Jurisdiction::Usa => JurisdictionTraits{
+            Jurisdiction::Usa => JurisdictionTraits {
+                rate_source: RateSourceKind::Cbr,
                 name: "USA",
                 code: "US",
                 currency: "USD",
+                tax_precision: 2,
+            },
+            Jurisdiction::Germany => JurisdictionTraits {
+                rate_source: RateSourceKind::Ecb,
+                name: "Germany",
+                code: "DE",
+                currency: "EUR",
                 tax_precision: 2,
             },
         }
@@ -95,7 +129,7 @@ pub fn russia(config: &TaxConfig) -> Country {
     let tax_precision = jurisdiction.traits().tax_precision;
 
     // Starting from 2021 we had progressive tax rate with single tax base
-    let rates_2021 = Rc::new(btreemap!{
+    let rates_2021 = Rc::new(btreemap! {
         dec!(0) => dec!(0.13),
         dec!(5_000_000) => dec!(0.15),
     });
@@ -103,7 +137,7 @@ pub fn russia(config: &TaxConfig) -> Country {
     // Starting from 2025 we've got progressive tax rate with two tax bases:
     // 1. Income from employment
     // 2. Dividends, interest, trading, property
-    let rates_2025 = Rc::new(btreemap!{
+    let rates_2025 = Rc::new(btreemap! {
         dec!(0) => dec!(0.13),
         dec!(2_400_000) => dec!(0.15),
     });
@@ -117,20 +151,64 @@ pub fn russia(config: &TaxConfig) -> Country {
     let mut tax_calculators = tax_agent_calculators.clone();
 
     for (&year, &income) in config.income.range(2021..2025) {
-        let calc = Box::new(ProgressiveTaxRate::new(income, rates_2021.clone(), tax_precision));
+        let calc = Box::new(ProgressiveTaxRate::new(
+            income,
+            rates_2021.clone(),
+            tax_precision,
+        ));
         tax_calculators.insert(year, calc);
     }
 
-    Country::new(Jurisdiction::Russia, tax_calculators, tax_agent_calculators, Some(dec!(0.13)))
+    Country::new(
+        Jurisdiction::Russia,
+        tax_calculators,
+        tax_agent_calculators,
+        Some(dec!(0.13)),
+    )
+}
+
+pub fn germany(_config: &TaxConfig) -> Country {
+    let jurisdiction = Jurisdiction::Germany;
+    let tax_precision = jurisdiction.traits().tax_precision;
+
+    // Approximation only. This flat 26.375% FixedTaxRate (25% Abgeltungssteuer + 5.5%
+    // Solidaritätszuschlag) is for the analysis/rebalancing views: it has no church tax, no
+    // Teilfreistellung, no loss pots, and no Sparer-Pauschbetrag. The real German tax math lives in
+    // the `tax_statement::germany` module — do not use this rate for the filing statement.
+    // Church tax (8% or 9%) is configured per user, not included in this base rate.
+    //
+    // Nor to price a sale: what a disposal costs depends on the whole tax year, so it is not a rate
+    // times a gain. `tax_statement::germany::compute_tax_year` computes the year and
+    // `analysis::sell_simulation` prices a hypothetical sale at the difference it makes to it —
+    // which is how a gain lands tax-free while the year's §20(6) Aktien pot is still negative,
+    // where this rate would invent a charge.
+
+    let abgeltungssteuer_rate = dec!(0.25);
+    let solidarity_surcharge = dec!(0.055); // 5.5% of Abgeltungssteuer
+
+    // Base tax rate without church tax
+    let effective_base_rate = abgeltungssteuer_rate * (dec!(1) + solidarity_surcharge);
+
+    let tax_calculators = btreemap! {
+        2009 => Box::new(FixedTaxRate::new(effective_base_rate, tax_precision)) as Box<dyn TaxRate>,
+    };
+
+    // Germany doesn't have tax agents for foreign accounts, so use same rates
+    let tax_agent_calculators = tax_calculators.clone();
+
+    // No tax credit limit for Germany (foreign tax credits handled differently)
+    Country::new(
+        Jurisdiction::Germany,
+        tax_calculators,
+        tax_agent_calculators,
+        None,
+    )
 }
 
 pub fn get_russian_central_bank_min_last_working_day(today: Date) -> Date {
     // New Year holidays
     if today.month() == 1 && today.day() <= 12 {
-        std::cmp::max(
-            today - Duration::days(11),
-            date!(today.year() - 1, 12, 29),
-        )
+        std::cmp::max(today - Duration::days(11), date!(today.year() - 1, 12, 29))
     // COVID-19 pandemic
     } else if today.year() == 2020 && today.month() == 4 && today.day() <= 6 {
         date!(2020, 3, 28)
@@ -141,16 +219,22 @@ pub fn get_russian_central_bank_min_last_working_day(today: Date) -> Date {
 }
 
 pub fn get_nearest_possible_russian_account_close_date() -> Date {
-    [Exchange::Moex, Exchange::Spb].iter().map(|exchange| {
-        let execution_date = exchange.trading_mode().execution_date(crate::exchanges::today_trade_conclusion_time());
+    [Exchange::Moex, Exchange::Spb]
+        .iter()
+        .map(|exchange| {
+            let execution_date = exchange
+                .trading_mode()
+                .execution_date(crate::exchanges::today_trade_conclusion_time());
 
-        let mut close_date = execution_date;
-        while exchange.min_last_working_day(close_date) < execution_date {
-            close_date += Duration::days(1);
-        }
+            let mut close_date = execution_date;
+            while exchange.min_last_working_day(close_date) < execution_date {
+                close_date += Duration::days(1);
+            }
 
-        close_date
-    }).max().unwrap()
+            close_date
+        })
+        .max()
+        .unwrap()
 }
 
 pub fn us_dividend_tax_rate(date: Date) -> Decimal {

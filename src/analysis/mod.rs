@@ -98,7 +98,7 @@ pub fn simulate_sell(
     let (converter, quotes) = load_tools(config)?;
 
     sell_simulation::simulate_sell(
-        &config.get_tax_country(), portfolio, statement,
+        &config.get_tax_country(), portfolio, &config.taxes, statement,
         converter, &quotes, positions, base_currency)?;
 
     Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker))
@@ -133,6 +133,9 @@ fn load_portfolios<'a>(
 fn load_tools(config: &Config) -> GenericResult<(CurrencyConverterRc, QuotesRc)> {
     let database = db::connect(&config.db_path)?;
     let quotes = Rc::new(Quotes::new(config, database.clone())?);
-    let converter = CurrencyConverter::new(database, Some(quotes.clone()), false);
+
+    let converter = CurrencyConverter::for_jurisdiction(
+        config.get_tax_country().jurisdiction, database, Some(quotes.clone()), false);
+
     Ok((converter, quotes))
 }

@@ -9,7 +9,7 @@ portfolios:
     # Path to a directory with broker statements
     statements: ~/Brokerage/Interactive Brokers/Statements
 
-    # Base currency of your account
+    # Base currency of your account (supported: USD, RUB, EUR)
     currency: USD
 
     # Tax remapping rules (https://github.com/KonishchevDmitry/investments/blob/master/docs/brokers.md#ib-tax-remapping)
@@ -188,18 +188,67 @@ portfolios:
     instrument_names:
       RU000A1078J7: СФН - Современный 8
 
-# Starting from 2021 progressive tax rate has replaced the fixed one in Russia. Here you can specify your non-investment
-# income by year to make investments calculate tax rate taking into account this tax base.
+  # German filers: an Interactive Brokers account settled in EUR. Two portfolio-level options control
+  # the foreign-currency tax treatment (see docs/germany-taxes.md for full detail).
+  #- name: ibkr
+  #  broker: interactive-brokers
+  #  statements: ~/Brokerage/Interactive Brokers/Statements
+  #  currency: EUR
+  #  # How this account's foreign-currency balances are taxed. Default `interest_bearing` = §20 EStG
+  #  # (Abgeltungsteuer, Anlage KAP), correct for IBKR. `non_interest_bearing` = §23 EStG private
+  #  # Veräußerungsgeschäfte (1-year Spekulationsfrist, Anlage SO, report-only — no tax computed).
+  #  foreign_currency_taxation: interest_bearing
+  #  # Only when the Flex export does not reach account opening: declare the carried-in foreign balance
+  #  # so the FX FIFO seeds from it instead of rejecting the statement. Keyed by ISO 4217 code.
+  #  opening_foreign_currency:
+  #    USD:
+  #      quantity: 90.00      # signed: positive = held (Guthaben), negative = borrowed (Kredit)
+  #      eur_per_unit: 0.92   # EUR value of one unit at acquisition (the rate the export can't supply)
+  #      as_of: 2023.11.04    # acquisition date (YYYY.MM.DD or DD.MM.YYYY); drives the §23 holding period
+
+# Tax configuration
 #
+# For Russia: Starting from 2021 progressive tax rate has replaced the fixed one. Here you can specify your non-investment
+# income by year to make investments calculate tax rate taking into account this tax base.
 # Starting from 2025 we've got progressive tax rate with two separate tax bases for income from employment and
 # investments, so for years starting from 2025 this configuration setting is ignored, since it's different tax base.
+#
+# For Germany: Set jurisdiction to 'germany' to generate German tax statements with Abgeltungssteuer calculations.
+# See docs/germany-taxes.md for full documentation.
+#
 #taxes:
+#  # For Russia (default):
 #  income:
 #    2021: 4_321_012
 #    2022: 5_432_101
+#
+#  # For Germany:
+#  jurisdiction: germany            # Enable German tax calculations
+#  church_tax_rate: 9               # Optional: Kirchensteuer. Accepted: 0, 8, 9 (percent) or 0.08 / 0.09. Default 0
+#  loss_carryforward_stock: 1500    # Optional: §20(6) Aktien loss pot (festgestellter Verlustvortrag)
+#  loss_carryforward_other: 2000    # Optional: general loss pot (funds, FX, dividends, interest)
+#  sparer_pauschbetrag: 1000        # Optional: saver's allowance; default 1000 (2023+) / 801 (before)
+#  etf_classification:              # Optional: ETF Teilfreistellung classification by ISIN
+#    IE00BK5BQT80: equity           # Vanguard FTSE All-World UCITS ETF (VWCE.DE) - 30% exemption
+#    IE00B4L5Y983: equity           # iShares Core MSCI World UCITS ETF - 30% exemption
+#    IE00BDBRDM35: mixed            # iShares Core Global Aggregate Bond UCITS ETF - 15% exemption
+#    LU0274211480: bond             # Xtrackers II Eurozone Government Bond ETF - 0% exemption
+#  # Vorabpauschale (§18 InvStG): advance lump-sum taxation of funds held at year end. Year-boundary
+#  # NAVs are entered by hand — a foreign broker's statement carries no German redemption prices.
+#  basiszins:                       # Optional: BMF Basiszins per year (fraction). Ships 2023/24/25 defaults.
+#    2025: 0.0253                   # published each January; only needed to override a shipped default
+#  fund_nav:                        # Per-ISIN, per-year redemption price (EUR per unit) at 2 Jan and 31 Dec
+#    IE00B4L5Y983:
+#      2024:
+#        jan1: 80.50
+#        dec31: 92.30
+#        acquired_month: 4          # Optional: month bought this year (Zwölftelung); omit if held all year
+#  vorabpauschale_carryforward:     # Per-ISIN accumulated gross Vorabpauschale; reduces the sale gain (§19)
+#    IE00B4L5Y983: 128.24
 
 # Your individual broker + bank account configuration. For now specifies your bank commissions for transferring funds
 # from your bank account to your broker account. Will be taken into account during portfolio performance analysis.
+# Note: These are NOT tax-deductible expenses - they're used only for performance tracking.
 brokers:
   firstrade:
     deposit_commissions:
@@ -209,6 +258,7 @@ brokers:
     deposit_commissions:
       RUB: {fixed_amount: 0}
       USD: {fixed_amount: 0}
+      EUR: {fixed_amount: 0}  # For German users depositing in EUR
 
   tbank:
     # Sandbox token from https://developer.tbank.ru/invest/intro/intro/token

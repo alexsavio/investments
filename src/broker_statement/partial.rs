@@ -16,7 +16,7 @@ use super::corporate_actions::CorporateAction;
 use super::dividends::{DividendId, DividendAccruals};
 use super::fees::Fee;
 use super::grants::{CashGrant, StockGrant};
-use super::interest::IdleCashInterest;
+use super::interest::{IdleCashInterest, ForeignCashFlow};
 use super::trades::{ForexTrade, StockBuy, StockSell};
 use super::taxes::{TaxId, TaxAccruals, TaxAgentWithholdings};
 
@@ -30,6 +30,8 @@ pub struct PartialBrokerStatement {
     pub cash_flows: Vec<CashFlow>,
     pub fees: Vec<Fee>,
     pub idle_cash_interest: Vec<IdleCashInterest>,
+    /// Raw per-currency cash-flow ledger (IB statement of funds), replayed by the German FX FIFO.
+    pub foreign_cash_flows: Vec<ForeignCashFlow>,
     pub tax_agent_withholdings: TaxAgentWithholdings,
 
     pub exchanges: Exchanges,
@@ -48,6 +50,9 @@ pub struct PartialBrokerStatement {
     // statement (current date).
     pub assets: NetAssets,
     pub open_positions: HashMap<String, Decimal>,
+    /// Short (negative-quantity) positions, kept separate from `open_positions` for informational
+    /// reporting only — they are not fed into cost-basis or tax calculation.
+    pub short_positions: HashMap<String, Decimal>,
     pub instrument_info: InstrumentInfo,
 }
 
@@ -66,6 +71,7 @@ impl PartialBrokerStatement {
             cash_flows: Vec::new(),
             fees: Vec::new(),
             idle_cash_interest: Vec::new(),
+            foreign_cash_flows: Vec::new(),
             tax_agent_withholdings: TaxAgentWithholdings::new(),
 
             exchanges: Exchanges::new(exchanges),
@@ -89,6 +95,7 @@ impl PartialBrokerStatement {
                 other: None
             },
             open_positions: HashMap::new(),
+            short_positions: HashMap::new(),
             instrument_info: InstrumentInfo::new(),
         }
     }
@@ -123,6 +130,14 @@ impl PartialBrokerStatement {
         };
 
         Ok(())
+    }
+
+    /// Record a short (negative-quantity) position for informational reporting. Unlike open
+    /// positions these are not reconciled against trades or fed into tax calculation. The caller
+    /// owns the sign invariant: `quantity` is expected to be negative.
+    pub fn add_short_position(&mut self, symbol: &str, quantity: Decimal) {
+        debug_assert!(quantity < Decimal::ZERO, "short position {symbol} must be negative");
+        self.short_positions.insert(symbol.to_owned(), quantity);
     }
 
     pub fn dividend_accruals(&mut self, date: Date, issuer: InstrumentId, strict: bool) -> &mut DividendAccruals {
