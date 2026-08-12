@@ -1,0 +1,36 @@
+# Navarra Round — Review Findings & Fix Plan
+
+**Date**: 2026-08-12
+**Branch**: `003-navarra-tax` (continue; after N10 close-out)
+**Inputs**: adversarial review of the 14-commit diff (verdict **WARN**, no CRITICAL/HIGH; the Gipuzkoa/Común byte-identity invariant was verified empirically against base-and-HEAD binaries, including 4-vintage carryforward configs) and a consistency audit (7 mismatches). This plan fixes all of it. House rules as ever: failing test first where a behavior changes, per-task gate, one Conventional Commit per task, statuses in-place. Gipuzkoa/Común bytes must remain identical except where a fix explicitly targets a shared label (V1 — regime-gate it so they don't move).
+
+Verified-correct by the reviewers (do not touch): the `NavarraOrdered` compensation arm (recomputed from the statute; the at-most-one-direction property was proven, the warning amount is exact), the scale vectors, the F-93 mapping cell-for-cell against the specimen (including 8815=8885+8895 semantics and the aggregate 818/8875 carry-out boxes), the fee-cap base and its exemption interactions, the pre-1994 `<` boundary, sign conventions, and the absence of any new panic paths.
+
+## Tasks
+
+- **V1 — Regime-correct summary labels.** Status: DONE (`78e813e6`)
+  `csv_formatter.rs:569/575` label the `SUMMARY_CROSS_OFFSET_*` rows "fase 1ª (25% — sólo Territorio Común)" — emitted with non-zero values under Navarra (a passing test asserts €1,300). Make the four cross/prior-cross row labels regime-dependent (AEAT "fase" vocabulary for Común; "art. 54.2" vocabulary for Navarra; Gipuzkoa keeps its current never-fires wording) via the params, so Común/Gipuzkoa bytes are unchanged. Update the contract's row descriptions to note the per-regime label.
+  Commit: `fix(navarra-tax): label the cross-offset rows with the regime's own statute`
+- **V2 — H3 loss-year guidance.** Status: TODO
+  `csv_formatter.rs:1150-1165`: the fallback comment tells a loss-year filer the H3 amount is "the H1 row above with the sign reversed" — but that row is `max(0, gyp_net)` = 0.00 exactly then. Emit the real figure: a `MODELO_F93_8816` row carrying the negative-transmissions saldo (specimen evidence: the H3 box column mirrors H4's, running `8816 / 817`; cite it and mark the number medium-confidence in the label note), and fix the comment to point at it. Close plan Left-open item 5 accordingly.
+  Commit: `fix(navarra-tax): report the H3 negative-transmissions saldo in its own box`
+- **V3 — Discriminating fixtures for the pinned readings.** Status: TODO
+  (a) `small_disposal` uses two identical sales, so the year-global vs per-transmission readings coincide — replace with two UNEQUAL sales where the readings differ, pin the year-global numbers in Appendix A and the fixture (adversarial report has the arithmetic shape). (b) Add a mixed gain/loss year (sale A +700 on €1,200, sale B −400 on €800): pin that the exemption eats only the gain and the surviving figure is the loss (−400), matching the form's own column arithmetic (656/1658/657) — the reviewer believes current behavior is right; the fixture proves it and Appendix A records it. (c) The proceeds measure `G` is currently net of sell commissions and untested: pin the current choice with a non-zero-commission fixture variant, document gross-vs-net as an OPEN register entry (art. 40 "importe real" vs "valor de transmisión"; F-93 box 651 "Valor de transmisión" favors net), and cite it in the code.
+  Commit: `test(navarra-tax): pin the small-disposals readings with discriminating fixtures`
+- **V4 — Warning and register polish.** Status: TODO
+  (a) LOW-6: the exemption-withheld warning fires with "€0.00 of securities transmissions" when only FX gains exist — suppress it when `small_disposals_gains == 0` AND securities proceeds are 0 (nothing was withheld), keep it otherwise; re-pin the test. (b) LOW-8: state the `MODELO_F93_8850` sign convention (positive magnitude of the negative saldo) in its label and the contract. (c) LOW-11: document the `fx_borrowed_review` asymmetry in the register's suppression entry. (d) LOW-10: extend `navarra_params_come_from_the_foral_statute` to assert `custody_fee_cap_fraction` and `small_disposals_exemption`. (e) LOW-9: add the fractional-cent carry-out note to the plan's Left-open list (pre-existing, all regimes).
+  Commit: `fix(navarra-tax): correct the exemption-withheld warning and pin conventions`
+- **V5 — Three-regime citation sweep (consistency M4).** Status: TODO
+  Shared surfaces still citing only two statutes now serve three: margin-interest note/warning + register §7 (`processor.rs:1136-1150`, docs:625/968) gain the TRLFIRPF cite; the fee note/warning cites art. 32.1.a under Navarra instead of LIRPF art. 26.1.a (message builder takes the regime's article); venue-review and deferral notes name the Navarra articles (39.6.f/g); wash-sale doc section (docs:199-288) gains the art. 39.6 citations incl. the direct MiFID II reference; FX section wording; stale "both regimes"/"either regime" comments (`scale.rs:226`, `taxes/mod.rs:656`).
+  Commit: `docs(navarra-tax): cite all three statutes on shared surfaces`
+- **V6 — Contract and plan corrections (consistency M1/M2/M5/M6, adversarial LOW-7).** Status: TODO
+  Contract: add the DT 7.ª abatement banner (fifth) + the H3 block/8816 row; fix the "four warning banners" count; document the per-regime cross-offset labels (V1). Plan: N10 hash `40d1eae0` → `0b61bf86` (the self-referential-amend orphan); the F-93 carryforward-box inventory row corrected to what shipped (aggregates 818/8875, per-year cells named as on-form-only); replace the plan's "TODO(verify) in the register" phrasing with the register's actual "OPEN" convention (M6); note (M7) that N1's corrections 1–6 predate the plan's first commit by design.
+  Commit: `docs(navarra-tax): correct the contract and plan against the audits`
+- **V7 — Gate + close-out.** Status: TODO
+  Full gate (`cargo test spain --lib` ≥ 344 with the new fixtures; `./check`; German suites untouched); byte-identity re-check of the Gipuzkoa smoke CSV (V1's regime-gating must keep it byte-identical — the cross rows are zero there, but the label must not change for Gipuzkoa/Común); Navarra smoke re-run explained; close-out appended here listing fixed/accepted.
+  Commit: `docs(navarra-tax): close the review round`
+
+## Accepted as-is (recorded, not fixed)
+- Double console reporting of new messages — matches the established pattern.
+- The broad "en el mismo orden" reading + its warning — the flagged register OPEN item; the strictly narrow reading would make carried-saldo crossing impossible, which is its own argument for the broad reading.
+- Plan Left-open items 1–4, 6 (Modelo 109 four-column defect, asymmetric coefficient rejection, Navarra-only abatement warning scope, 10-arg constructor, FY2024/2026 box caveats) — follow-up-round material, already recorded.
