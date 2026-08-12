@@ -30,6 +30,28 @@ Verified-correct by the reviewers (do not touch): the `NavarraOrdered` compensat
   Full gate (`cargo test spain --lib` ≥ 344 with the new fixtures; `./check`; German suites untouched); byte-identity re-check of the Gipuzkoa smoke CSV (V1's regime-gating must keep it byte-identical — the cross rows are zero there, but the label must not change for Gipuzkoa/Común); Navarra smoke re-run explained; close-out appended here listing fixed/accepted.
   Commit: `docs(navarra-tax): close the review round`
 
+## Second pass — findings on the V-round diff (adversarial WARN + consistency ≤ LOW), fix tasks
+
+Everything below is text/contract/coverage; both reviewers independently reproduced every euro of the V round.
+
+- **W1 — Regime-gate the two rows V1 missed.** Status: TODO
+  `csv_formatter.rs:559-569`: `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` still say "fase 2ª-1º" and carry non-zero Navarra amounts (test pins €2,000 through one). Same regime-gated treatment as V1 (Navarra: art. 54.2 own-group vocabulary; Gipuzkoa/Común strings byte-unchanged); also the "Fase 2ª-2º" doc comment at `statement.rs:837`. Widen `the_cross_offset_rows_name_the_regimes_own_statute` past its `CROSS_OFFSET_` filter so the whole compensation block is covered. Contract row descriptions updated.
+  Commit: `fix(navarra-tax): label the own-group compensation rows with the regime's statute`
+- **W2 — Withheld-exemption caveat: gains-only predicate.** Status: TODO
+  `statement.rs:736-745`: an all-loss securities year under €3,000 plus an FX gain still triggers the caveat, though `I = 0` makes the relief zero for any `G` — the counterfactual is closed and the text is false. Failing test first (all-loss + FX-gain fixture or config variant → no caveat; `small_disposal_fx` keeps firing); replace the proceeds disjunct with `small_disposals_gains > 0` and delete the then-provably-dead `|| total_fx_gains > 0` clause. Behavior is message-only (verify no euro moves).
+  Commit: `fix(navarra-tax): silence the withheld-exemption caveat when no gain exists`
+- **W3 — Re-derive Appendix A §A.4 edge 3.** Status: TODO
+  plan.md:229-233 still says the exemption is "suppressed for any year with an FX conversion realization" — V4a narrowed that, and the plan's own primacy rule demands the amendment in its own `docs(plan)` commit. State the three boundaries as shipped (docs §13 already has them).
+  Commit: `docs(plan): re-derive Appendix A for the narrowed exemption caveat`
+- **W4 — Discriminate and register the exemption-ceiling choice.** Status: TODO
+  The implementation measures 2.º's 50% ceiling on ALL transmissions' proceeds while `I` is gains-only; no fixture can distinguish that from a gains-only ceiling, and the choice's failure direction is LESS tax (non-conservative), unregistered. Add the discriminating fixture (gain sale ~€400 proceeds/+€300; loss sale ~€2,000/−€600 → all-proceeds ceiling exempts 300, gains-only 200; use converter-representable euros, record in Appendix A first), pin the implemented all-proceeds reading, and add the register §13 entry (art. 39.5.d.2.º "importe global de la transmisión", direction noted).
+  Commit: `test(navarra-tax): pin the exemption ceiling on all transmissions' proceeds`
+- **W5 — Low/record batch.** Status: TODO — one commit:
+  (a) register the 8816/8850 positive-magnitude convention (form defines the boxes as sums < 0; the tool emits magnitudes — a stated choice, register + contract cross-ref); (b) `tests.rs:483-487` doc comment → three statutes; (c) `tests.rs:235` "both regimes" → name the two compared regimes; (d) review.md record polish: annotate the V2 task line (label ships the specimen note, not a medium-confidence hedge — deviation recorded in close-out), fix the "every other box carries" phrasing, annotate V3's task-prose euros as superseded by the recorded substitution.
+  Commit: `chore(navarra-tax): close the second-pass low findings`
+- **W6 — Gate + byte identity + close-out.** Status: TODO — full gate; `cmp` the Gipuzkoa smoke CSV against `es-final3.csv` (W1 must keep Gipuzkoa/Común bytes identical); Navarra smoke re-run (expect only the two W1 label lines to differ from V7's CSV); close-out appended here.
+  Commit: `docs(navarra-tax): close the second review pass`
+
 ## Accepted as-is (recorded, not fixed)
 - Double console reporting of new messages — matches the established pattern.
 - The broad "en el mismo orden" reading + its warning — the flagged register OPEN item; the strictly narrow reading would make carried-saldo crossing impossible, which is its own argument for the broad reading.
