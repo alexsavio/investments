@@ -227,7 +227,12 @@ mod tests {
     /// floors starting at zero, with strictly positive rates.
     #[rstest]
     fn shipped_years_are_well_formed(
-        #[values(SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun)] regime: SpanishTaxRegime,
+        #[values(
+            SpanishTaxRegime::Gipuzkoa,
+            SpanishTaxRegime::Comun,
+            SpanishTaxRegime::Navarra
+        )]
+        regime: SpanishTaxRegime,
         #[values(2024, 2025, 2026)] year: i32,
     ) {
         let scale = SavingsScale::for_year(regime, year).unwrap();
@@ -324,7 +329,11 @@ mod tests {
     #[case("-100")]
     #[case("-1000000")]
     fn non_positive_base_is_untaxed(#[case] base: &str) {
-        for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+        for regime in [
+            SpanishTaxRegime::Gipuzkoa,
+            SpanishTaxRegime::Comun,
+            SpanishTaxRegime::Navarra,
+        ] {
             let scale = SavingsScale::for_year(regime, 2026).unwrap();
             assert_eq!(scale.tax(base.parse().unwrap()), dec!(0));
             assert_eq!(scale.average_rate(base.parse().unwrap()), dec!(0));
@@ -383,13 +392,103 @@ mod tests {
         assert_eq!(scale.tax(dec!(19692)), dec!(3957.24));
     }
 
+    /// TRLFIRPF art. 60 publishes its own cumulative cuota-íntegra column at every threshold, so
+    /// these five are the statute's own numbers rather than hand-derived expectations. The sixth is
+    /// above the last threshold, where the law publishes none: 78,380 + 100,000 × 28%.
+    #[rstest]
+    #[case("6000", "1200")]
+    #[case("10000", "2080")]
+    #[case("15000", "3280")]
+    #[case("200000", "51380")]
+    #[case("300000", "78380")]
+    #[case("400000", "106380")]
+    // Mid-bracket: 1,200 + 2,000 × 22%.
+    #[case("8000", "1640")]
+    // Mid-bracket: 2,080 + 2,000 × 24%.
+    #[case("12000", "2560")]
+    // The `fifo` fixture's Navarra base: 3,280 + 7,500 × 26%.
+    #[case("22500", "5230")]
+    // Inside the first bracket, where the average rate is the marginal one.
+    #[case("963", "192.60")]
+    fn navarra_reproduces_the_published_cuota_integra(#[case] base: &str, #[case] expected: &str) {
+        for year in [2024, 2025, 2026] {
+            let scale = SavingsScale::for_year(SpanishTaxRegime::Navarra, year).unwrap();
+            assert_eq!(
+                scale.tax(base.parse().unwrap()),
+                expected.parse::<Decimal>().unwrap(),
+                "year {year}"
+            );
+        }
+    }
+
+    /// One table for the whole shipped range: LF 36/2022 set art. 60 with effect from 2023 and LF
+    /// 17/2025, which carries the 2026 changes, does not touch it. A year-sensitive Navarra scale
+    /// would mean the tool had invented a reform.
+    #[test]
+    fn the_navarra_scale_does_not_move_across_the_shipped_years() {
+        let y2024 = SavingsScale::for_year(SpanishTaxRegime::Navarra, 2024).unwrap();
+        let y2025 = SavingsScale::for_year(SpanishTaxRegime::Navarra, 2025).unwrap();
+        let y2026 = SavingsScale::for_year(SpanishTaxRegime::Navarra, 2026).unwrap();
+
+        assert_eq!(y2024, y2025);
+        assert_eq!(y2025, y2026);
+        assert_eq!(y2024.brackets().len(), 6);
+        assert_eq!(y2024.brackets()[0], (dec!(0), dec!(0.20)));
+        assert_eq!(y2024.brackets()[5], (dec!(300000), dec!(0.28)));
+    }
+
+    /// No two regimes may share a scale: each is a different statute, and a copy-paste between them
+    /// would be invisible in the golden vectors above, which only ever look at one regime.
+    #[test]
+    fn the_three_regimes_ship_three_different_scales() {
+        let gipuzkoa = SavingsScale::for_year(SpanishTaxRegime::Gipuzkoa, 2026).unwrap();
+        let comun = SavingsScale::for_year(SpanishTaxRegime::Comun, 2026).unwrap();
+        let navarra = SavingsScale::for_year(SpanishTaxRegime::Navarra, 2026).unwrap();
+
+        assert_ne!(gipuzkoa, comun);
+        assert_ne!(comun, navarra);
+        assert_ne!(gipuzkoa, navarra);
+
+        // On one base the three statutes charge three different amounts, which is the whole reason
+        // the regime cannot be guessed.
+        assert_eq!(gipuzkoa.tax(dec!(22500)), dec!(4575));
+        assert_eq!(comun.tax(dec!(22500)), dec!(4605));
+        assert_eq!(navarra.tax(dec!(22500)), dec!(5230));
+    }
+
+    /// Art. 67.2 requires the tipo medio efectivo "expresado con dos decimales", exactly as arts.
+    /// 76.2 / 80.2 do for the other two regimes, and the credit cap is computed from the rounded
+    /// rate. These are the Navarra vectors of that rule.
+    #[rstest]
+    // 5,230 / 22,500 = 23.244…% → 23.24%.
+    #[case(dec!(22500), dec!(0.2324))]
+    // 1,640 / 8,000 = 20.50%, already exact.
+    #[case(dec!(8000), dec!(0.2050))]
+    // 2,560 / 12,000 = 21.333…% → 21.33%.
+    #[case(dec!(12000), dec!(0.2133))]
+    // 106,380 / 400,000 = 26.595% → 26.60%, half away from zero.
+    #[case(dec!(400000), dec!(0.2660))]
+    // Inside the first bracket the average rate is the marginal rate.
+    #[case(dec!(963), dec!(0.20))]
+    fn navarra_average_rate_is_expressed_with_two_decimals(
+        #[case] base: Decimal,
+        #[case] expected: Decimal,
+    ) {
+        let scale = SavingsScale::for_year(SpanishTaxRegime::Navarra, 2026).unwrap();
+        assert_eq!(scale.average_rate(base), expected);
+    }
+
     /// An unshipped year errors and the message names the supported range, so the user is told how
     /// to fix it rather than being handed a silently extrapolated rate.
     #[rstest]
     #[case(2023)]
     #[case(2027)]
     fn unsupported_year_errors_naming_the_range(#[case] year: i32) {
-        for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+        for regime in [
+            SpanishTaxRegime::Gipuzkoa,
+            SpanishTaxRegime::Comun,
+            SpanishTaxRegime::Navarra,
+        ] {
             let error = SavingsScale::for_year(regime, year).unwrap_err().to_string();
             assert!(error.contains(&year.to_string()), "{error}");
             assert!(error.contains("2024-2026"), "{error}");
