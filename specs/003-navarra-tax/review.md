@@ -37,7 +37,7 @@ Everything below is text/contract/coverage; both reviewers independently reprodu
 - **W1 — Regime-gate the two rows V1 missed.** Status: DONE (`c2c01629`)
   `csv_formatter.rs:559-569`: `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` still say "fase 2ª-1º" and carry non-zero Navarra amounts (test pins €2,000 through one). Same regime-gated treatment as V1 (Navarra: art. 54.2 own-group vocabulary; Gipuzkoa/Común strings byte-unchanged); also the "Fase 2ª-2º" doc comment at `statement.rs:837`. Widen `the_cross_offset_rows_name_the_regimes_own_statute` past its `CROSS_OFFSET_` filter so the whole compensation block is covered. Contract row descriptions updated.
   Commit: `fix(navarra-tax): label the own-group compensation rows with the regime's statute`
-- **W2 — Withheld-exemption caveat: gains-only predicate.** Status: TODO
+- **W2 — Withheld-exemption caveat: gains-only predicate.** Status: DONE (`bea4392b`)
   `statement.rs:736-745`: an all-loss securities year under €3,000 plus an FX gain still triggers the caveat, though `I = 0` makes the relief zero for any `G` — the counterfactual is closed and the text is false. Failing test first (all-loss + FX-gain fixture or config variant → no caveat; `small_disposal_fx` keeps firing); replace the proceeds disjunct with `small_disposals_gains > 0` and delete the then-provably-dead `|| total_fx_gains > 0` clause. Behavior is message-only (verify no euro moves).
   Commit: `fix(navarra-tax): silence the withheld-exemption caveat when no gain exists`
 - **W3 — Re-derive Appendix A §A.4 edge 3.** Status: TODO
