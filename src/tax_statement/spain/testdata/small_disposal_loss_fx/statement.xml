@@ -1,0 +1,18 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20250101" toDate="20261231" period="Custom" whenGenerated="20270115;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="-600" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <Trades>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20250310;100000" settleDate="20250312" quantity="10" tradePrice="100" tradeMoney="-1000" ibCommission="0" buySell="BUY" openCloseIndicator="O"/>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20260315;100000" settleDate="20260317" quantity="-6" tradePrice="50" tradeMoney="300" ibCommission="0" buySell="SELL" openCloseIndicator="C"/>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20260515;100000" settleDate="20260519" quantity="-4" tradePrice="25" tradeMoney="100" ibCommission="0" buySell="SELL" openCloseIndicator="C"/>
+      </Trades>
+      <StmtFunds>
+        <StatementOfFundsLine currency="USD" date="20260210" activityCode="DEP" activityDescription="EUR TO USD CONVERSION" amount="10000" levelOfDetail="Currency" balance="10000"/>
+        <StatementOfFundsLine currency="USD" date="20260810" activityCode="WITH" activityDescription="USD TO EUR CONVERSION" amount="-10000" levelOfDetail="Currency" balance="0"/>
+      </StmtFunds>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

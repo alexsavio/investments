@@ -2030,6 +2030,45 @@ fn no_withholding_caveat_when_the_year_has_no_securities_transmissions() {
     assert_eq!(navarra.savings_quota, dec!(200));
 }
 
+/// A year whose securities transmissions all made a **loss** has no incremento for art. 39.5.d to
+/// relieve, so the conversions hide nothing: whatever the unmeasurable global amount turns out to
+/// be, `min(I, 50% × G)` is zero because `I` is zero. The caveat's counterfactual is closed, so
+/// saying the relief was withheld states something false.
+///
+/// The fixture sells the whole 2025 lot at a loss during 2026 — €360 of proceeds, which is under the
+/// €3,000 gate, so condition 1.º is not what stops the relief — and converts $10,000 across the
+/// revaluation, which is what used to make the caveat fire through its FX-gain disjunct.
+#[test]
+fn no_withholding_caveat_when_the_year_has_no_transmission_gain() {
+    let statement = read_fixture("small_disposal_loss_fx");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (navarra, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Navarra),
+    )
+    .unwrap();
+
+    // Under the €3,000 gate and with a real conversion in the year: the caveat's other two
+    // conditions both hold, and only the absent incremento keeps it quiet.
+    assert_eq!(navarra.small_disposals_proceeds, dec!(360));
+    assert_eq!(navarra.small_disposals_gains, dec!(0));
+    assert!(navarra.total_fx_gains > Decimal::ZERO);
+
+    assert!(!navarra.small_disposals_unmeasurable);
+    assert!(navarra.small_disposals_message().is_none());
+
+    // Message-only: the relief is zero on both sides of the predicate, so no euro moves. `gyp_net`
+    // is the year's own arithmetic with nothing exempted.
+    assert_eq!(navarra.small_disposals_exemption, dec!(0));
+    assert_eq!(navarra.total_capital_gains, dec!(-540));
+    assert_eq!(
+        navarra.gyp_net,
+        navarra.total_capital_gains + navarra.total_fx_result
+    );
+}
+
 /// Above the threshold the missing conversion amounts cannot rescue the year — they only add to the
 /// total — so there is nothing open to report and no warning is emitted.
 #[test]

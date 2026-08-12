@@ -728,18 +728,14 @@ impl SpanishTaxStatement {
             return;
         }
 
-        // Nothing is withheld from a year that had no securities transmissions at all: the relief is
-        // measured on their proceeds and their increments, both zero, so it would have come to zero
-        // however the conversions were counted. Saying "€0.00 of transmissions had its relief
-        // withheld" reports a non-event. That the article is never applied to a conversion gain in
-        // its own right is a scope limit, recorded in the register rather than warned about yearly.
-        let had_securities_transmissions = self.small_disposals_proceeds > Decimal::ZERO
-            || self.small_disposals_gains > Decimal::ZERO;
-
-        if !self.fx_gains.is_empty()
-            && had_securities_transmissions
-            && (self.small_disposals_gains > Decimal::ZERO || self.total_fx_gains > Decimal::ZERO)
-        {
+        // Nothing is withheld from a year with no *incremento* to relieve. The exemption is
+        // `min(I, 50% × G)`, so a year whose transmissions produced no gain — none at all, or only
+        // disminuciones — would have been relieved of exactly zero however the conversions were
+        // counted, whatever they did to `G`. Saying the relief was withheld there states something
+        // false about a counterfactual that is closed. That the article is never applied to a
+        // conversion gain in its own right is a scope limit, recorded in the register rather than
+        // warned about yearly.
+        if !self.fx_gains.is_empty() && self.small_disposals_gains > Decimal::ZERO {
             self.small_disposals_unmeasurable = true;
             return;
         }

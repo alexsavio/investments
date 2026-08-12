@@ -1113,11 +1113,13 @@ failed the test.
 
 Three boundaries on that suppression, each deliberate:
 
-- **A year with no securities disposals at all is silent.** The relief is measured on securities
-  proceeds and securities increments, both zero, so it would have come to zero however the
-  conversions were counted; announcing a withheld relief there reports a non-event. The article is
-  never applied to a **conversion gain in its own right**, in that year or any other — that is a
-  scope limit of this tool, not something the year-by-year message can repair.
+- **A year with no transmission *gain* is silent.** The relief is `min(I, 50% × G)`, so a year whose
+  securities transmissions produced no incremento — because there were none, or because every one of
+  them made a loss — would have been relieved of exactly zero however the conversions were counted,
+  whatever they did to `G`. Announcing a withheld relief there reports a counterfactual that is
+  already closed. The article is never applied to a **conversion gain in its own right**, in that
+  year or any other — that is a scope limit of this tool, not something the year-by-year message can
+  repair.
 - **Only results on a *held* balance suppress it.** Conversion results on a **borrowed** balance are
   parked in the manual-review bucket of §7 and never reach the ganancias group, so they do not
   trigger the suppression either. Their importe is just as unmeasurable, so a year whose only
