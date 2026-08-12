@@ -19,11 +19,11 @@ Work exactly like the prior plans (`specs/002-spain-tax/*`): phases in order, fa
 | Pre-1994 lots | DT 7.ª abatement regime (pre-2007 gain slice reduced/exempted; **no €400k cap**, and DT 7.ª.3.a) needs the 2006 Impuesto sobre el Patrimonio value a broker statement cannot supply) — NOT computed. Its own trigger is "elementos patrimoniales adquiridos **antes de 31 de diciembre de 1994**", so the warning fires on `acquisition_date < 1994-12-31`, not on "before 1995": an acquisition **on** 31-12-1994 is outside the regime (N9) | DT 7.ª (LMV cite updated by LF 17/2025) |
 | €1,500 dividend exemption | **Repealed** by LF 29/2014 (gone since 2015; old art. 7.v). Navarra = Común here, NOT Gipuzkoa | nota o=1 |
 | Custody/admin fees | Deductible from savings RCM **with a cap**: "los gastos de administración y depósito de valores negociables, **con el límite del 3 por 100 de los ingresos íntegros, que no hayan resultado exentos, procedentes de dichos valores**" (art. 32.1.a; second paragraph excludes discretionary portfolio management, same exclusion the classifier already applies). Reuses the doctrine-based classifier; the cap is Navarra-only. Cap base = non-exempt gross income **from the securities**, which in this tool's data means dividends — broker cash-account interest is a cesión de capitales propios, not income from a valor negociable (Appendix A §A.3) | art. 32.1.a |
-| Foreign WHT credit | art. 67: lesser of (a) tax paid abroad, (b) **tipo medio efectivo** × foreign-taxed base-liquidable slice; tipo = **cuota líquida / base liquidable × 100**, split general vs savings, **two decimals** (art. 67.2). In our scope savings cuota líquida = savings cuota íntegra (no savings-side deductions are modelled) — implement with the existing rounded-average-rate machinery and record the líquida-vs-íntegra proxy in the register with a `TODO(verify)`. Treaty cap: no express clause; Convenio Económico art. 2.1.c binds Navarra to the treaties — keep the per-dividend treaty-capped limb | art. 67; Ley 28/1990 art. 2.1.c |
+| Foreign WHT credit | art. 67: lesser of (a) tax paid abroad, (b) **tipo medio efectivo** × foreign-taxed base-liquidable slice; tipo = **cuota líquida / base liquidable × 100**, split general vs savings, **two decimals** (art. 67.2). In our scope savings cuota líquida = savings cuota íntegra (no savings-side deductions are modelled) — implement with the existing rounded-average-rate machinery and record the líquida-vs-íntegra proxy in the register as an `OPEN` entry, the convention the register itself uses. Treaty cap: no express clause; Convenio Económico art. 2.1.c binds Navarra to the treaties — keep the per-dividend treaty-capped limb | art. 67; Ley 28/1990 art. 2.1.c |
 | **€3,000 small-disposals exemption** | art. 39.5.d verbatim: "Estarán exentos del impuesto los incrementos de patrimonio que se pongan de manifiesto: … d) Con ocasión de transmisiones onerosas en las que concurran los siguientes requisitos: **1.º Que el importe global de las citadas transmisiones no exceda de 3.000 euros durante el año natural. 2.º Que la cuantía gravable del incremento de patrimonio no exceda del 50 por 100 del importe global de la transmisión. En los supuestos en los que la cuantía gravable del incremento de patrimonio exceda del referido porcentaje únicamente se someterá a gravamen el citado exceso.**" Unique to Navarra; both conditions are year-global. Mechanics, edges and the residual ambiguity are pinned in Appendix A §A.4 | art. 39.5.d |
 | Minima | Personal/family minima are quota credits (art. 62.9) — the savings quota is exactly `scale(base)`; nothing to model | art. 62.9 |
 | Tax year | Calendar year, accrual 31-Dec (art. 76); FX gains on conversion (art. 78.7, same as implemented) | arts. 76/78 |
-| Form | **F-93**, approved per campaign by Orden Foral (FY2025: OF 24/2026, BON nº 66 07-04-2026; FY2024: OF 28/2025). The **BON Anexo I publishes the fully numbered official form** — FY2025 casillas verified from the specimen (`F93_2025.pdf`): dividends gross **031**, gastos admin y depósito **047**, RCM neto **050**, Spanish-withholdings total **030**→**579** (foreign WHT NEVER there), transfers savings-part total **706**/Anexo-1 blocks, compensation blocks **8808/809/8815/8809** and **8810/8825/8805/8840** (carryforward boxes are **year-labeled**: 8091–8094, 8880/8820s), TOTAL **8841** → base **815** (= summary **524**) → cuota **829** (= **527**), **DDI = 572** (do NOT use 613 — that is international fiscal transparency), cuota líquida 569, resultado 582. FY2024 layout unverified (same structure, box-level identity unconfirmed); 2026 unpublished → emit FY2025 layout labeled, warn | BON Anexo I PDF (URL pattern `O{YY}-{NNN}_AnexoI_Modelo_F-93.pdf`) |
+| Form | **F-93**, approved per campaign by Orden Foral (FY2025: OF 24/2026, BON nº 66 07-04-2026; FY2024: OF 28/2025). The **BON Anexo I publishes the fully numbered official form** — FY2025 casillas verified from the specimen (`F93_2025.pdf`): dividends gross **031**, gastos admin y depósito **047**, RCM neto **050**, Spanish-withholdings total **030**→**579** (foreign WHT NEVER there), transfers savings-part total **706**/Anexo-1 blocks, compensation blocks **8808/809/8815/8809** and **8810/8825/8805/8840**; the negative-saldo blocks **8816** (H3) and **8850** (H4), and the carry-out **aggregates 818** (transmissions) and **8875** (RCM) — those two are what the tool emits, while the per-year cells behind them (8091–8094, 8180–8183, 8870–8873, the 8820s/8880s) are labelled on the form itself and are named as on-form-only rather than mapped, TOTAL **8841** → base **815** (= summary **524**) → cuota **829** (= **527**), **DDI = 572** (do NOT use 613 — that is international fiscal transparency), cuota líquida 569, resultado 582. FY2024 layout unverified (same structure, box-level identity unconfirmed); 2026 unpublished → emit FY2025 layout labeled, warn | BON Anexo I PDF (URL pattern `O{YY}-{NNN}_AnexoI_Modelo_F-93.pdf`) |
 | Rounding | No stated amount rule (cents like the state); **rates two decimals** (arts. 59.2/67.2) — existing `format_eur` + rounded-rate machinery fit | OF 24/2026 full-text grep |
 | Informational | Navarra files **foral Modelo 720** (OF 80/2013, mod. OF 58/2026) and its **own crypto Modelo 721** (OF 29/2023), both 1 Jan–31 Mar — doc notes only | navarra.es trámites |
 | Out of scope (doc + register) | DT 7.ª abatement computation; exit tax DA 46.ª; fund-traspaso deferral history (LF 19/2021 + DT 29.ª grandfathering); joint-return saldo sharing (art. 74); related-party interest reclassification; debt-instrument (bond) transfer results being RCM not GyP (art. 29 — also true in state law). **Corrected in N9 against the code**: the shared IB parser already drops every non-`STK` `assetCategory` with its own "Skipping non-stock instrument" warning, so a bond disposal never reaches the Spanish processor and is not taxed as GyP — it is absent entirely. No new runtime warning is warranted; the fact is a register entry instead | — |
@@ -51,11 +51,11 @@ Work exactly like the prior plans (`specs/002-spain-tax/*`): phases in order, fa
   Commit: `feat(navarra-tax): cap deductible custody fees at three percent of gross`
 - **N7 — Small-disposals exemption.** Status: DONE (`3748b5bc`) — art. 39.5.d per N1's pinned mechanics: detect year-total onerous-transmission proceeds ≤ €3,000, apply the exemption to qualifying gains, keep losses/wash-sale interactions correct (a wash-deferred loss is not proceeds; document the interaction), report an `ExemptionEntry`/summary row + warning explaining what was exempted. Fixture: small year fully under the threshold; boundary year just above (no exemption).
   Commit: `feat(navarra-tax): apply the small-disposals exemption`
-- **N8 — F-93 mapping + credit.** Status: DONE (`064ed237`) — per-campaign casilla tables (FY2025 verified per the specimen; FY2024 same-labels flagged unverified; 2026 = FY2025 layout + warning), keys `MODELO_F93_<box>` with the established sheet-labeling discipline; DDI 572; foreign WHT excluded from 030/579 with the standard warning; credit at the Navarra rounded savings rate with the líquida-vs-íntegra proxy `TODO(verify)`. Update the CSV contract (version bump) and console summary.
+- **N8 — F-93 mapping + credit.** Status: DONE (`064ed237`) — per-campaign casilla tables (FY2025 verified per the specimen; FY2024 same-labels flagged unverified; 2026 = FY2025 layout + warning), keys `MODELO_F93_<box>` with the established sheet-labeling discipline; DDI 572; foreign WHT excluded from 030/579 with the standard warning; credit at the Navarra rounded savings rate with the líquida-vs-íntegra proxy recorded `OPEN` in the register. Update the CSV contract (version bump) and console summary.
   Commit: `feat(navarra-tax): emit the F-93 statement mapping`
 - **N9 — Warnings + register.** Status: DONE (`af54fd86`) — new warning: FIFO lot acquired **before 31-12-1994** detected (DT 7.ª abatement not computed — names the lots and dates; Navarra only, since the Gipuzkoa and state equivalents were not researched this round). The planned bond/debt-instrument warning was **dropped after checking the code**: non-`STK` instruments are discarded by the shared IB parser before the Spanish processor sees them, so there is nothing to warn about at this layer — it became a register entry instead. Carried-saldo cross-offset (from N5) and the F-93 ejercicio caveats (from N8) are already emitted. Register entries in `docs/spain-taxes.md` for each, plus doc notes: foral 720/721, traspaso grandfathering, exit tax, related-party interest, joint returns.
   Commit: `feat(navarra-tax): warn on unmodelled Navarra rules and register them`
-- **N10 — Docs, gate, close-out.** Status: DONE (`40d1eae0`) — `docs/spain-taxes.md` Navarra sections (config, scale table with sources, the three-regime differences table from this plan, fee cap, exemption, F-93 usage) + README + `config-example.yaml`; full gate; smoke test re-run under `regime: gipuzkoa` (must be bit-identical — Navarra work must not move the user's own figures) and a second run with a scratch `regime: navarra` config on the same statement, figures explained against Appendix A reasoning; close-out appended here.
+- **N10 — Docs, gate, close-out.** Status: DONE (`0b61bf86`) — `docs/spain-taxes.md` Navarra sections (config, scale table with sources, the three-regime differences table from this plan, fee cap, exemption, F-93 usage) + README + `config-example.yaml`; full gate; smoke test re-run under `regime: gipuzkoa` (must be bit-identical — Navarra work must not move the user's own figures) and a second run with a scratch `regime: navarra` config on the same statement, figures explained against Appendix A reasoning; close-out appended here.
   Commit: `docs(navarra-tax): document the Navarra regime and close the round`
 
 ## Verification
@@ -129,7 +129,7 @@ anteriores" — the order being both own-group absorption *and* the 25% cross. N
 consulta was located that settles it. The tool implements the **broad** reading (a carried saldo may
 also cross, at 25% of the other group's post-carryforward positive) because that is what "el mismo
 orden" says on its face, and it names the euro amount in a warning whenever a *carried* saldo — as
-opposed to a current-year negative — is what crossed. `TODO(verify)` in the register.
+opposed to a current-year negative — is what crossed. Recorded `OPEN` in the register (entry 11).
 
 **Case 1 — the three regimes diverge on identical inputs.** Filing 2026; current RCM −800, current
 ganancias +4 000, prior-year RCM saldo 500 (2024), prior-year ganancias saldo 2 800 (2024). These
@@ -169,8 +169,8 @@ Stating this explicitly is the guard against "Navarra ≠ Común" being asserted
 administration fees, cap)`; the excess is reported, never silently dropped. Cap base = gross dividend
 income less any exempt slice (zero in Navarra). Broker cash-account interest is **excluded** from the
 cap base: art. 29 income from a cesión de capitales propios is not "procedente de dichos valores".
-The failure direction is a smaller cap, i.e. more tax — the tool's standing convention. `TODO(verify)`
-in the register.
+The failure direction is a smaller cap, i.e. more tax — the tool's standing convention. Recorded
+`OPEN` in the register (entry 12).
 
 **`income` fixture under Navarra** (dividend $1 000 → €900 gross, $300 → €270 withheld; broker
 interest $100 → €90; custody fee $50 → €45):
@@ -222,7 +222,7 @@ Four edges pinned with it:
    "importe global" as the year total, and a per-disposal numerator against a global denominator is
    incoherent. Differs from a per-disposal reading only in a multi-disposal year with **unequal**
    gain-to-proceeds ratios; the `small_disposal` fixture below is built to be exactly such a year, so
-   the two readings give different euros. OPEN in the register.
+   the two readings give different euros. Recorded `OPEN` in the register (entry 13).
 2. **Wash sale.** A deferred loss does not change `G` (the transmission happened, at its proceeds)
    and does not enter `I` (a *disminución*, and a blocked one). A reintegrated loss likewise stays
    out of `I`.
@@ -357,7 +357,8 @@ Two points recorded rather than computed:
 - **Líquida-vs-íntegra proxy.** Art. 67.2 divides *cuota líquida*, and the tool models no savings-side
   deduction (the art. 62.9 minima are quota credits against the general part), so within this tool's
   scope savings cuota líquida = savings cuota íntegra and the existing `average_rate` is exact.
-  `TODO(verify)` in the register, since a filer with a savings-side deduction would need a lower rate.
+  Recorded `OPEN` in the register (entry 14), since a filer with a savings-side deduction would need
+  a lower rate.
 
 ### A.6 — The regime-independent fixtures under Navarra (N4)
 
@@ -425,7 +426,12 @@ granting a relief the year may not be entitled to, and the message says how to c
 
 ### Statute-text corrections made to this plan
 
-All in N1 (`8ded6bbd`) unless noted, after reading `trlfirpf.txt` verbatim:
+All in N1 (`8ded6bbd`) unless noted, after reading `trlfirpf.txt` verbatim.
+
+Corrections 1–6 therefore land in the round's **first** commit, which is why the tables above already
+read as corrected: N1's whole job was to check the plan's summaries against the statute before any
+code existed, and it amended them in place. That is by design, not a lost history — the diff of
+`8ded6bbd` is where the before-and-after lives.
 
 1. **art. 54.2** — the summary did not say that own-group absorption fires **only** when the current
    year's result is positive ("si el resultado fuera positivo"); a group whose result is negative

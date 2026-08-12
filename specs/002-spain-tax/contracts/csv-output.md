@@ -210,6 +210,7 @@ figure is entered per transmission it names the block (`1658-1672`).
 | `MODELO_F93_1658-1672` | Incremento exento, otros supuestos — the art. 39.5.d relief, one cell per transmission. Emitted only when non-zero |
 | `MODELO_F93_8808` / `809` / `8815` / `8809` | Apartado H1: positive transmissions saldo, own-group compensation, RCM losses crossed in, and the net (`8809 = 8808 − 809 − 810 − 8815`) |
 | `MODELO_F93_8810` / `8825` / `8805` / `8840` | Apartado H2, the RCM mirror (`8840 = 8810 − 8825 − 8835 − 8805`) |
+| `MODELO_F93_8816` | Apartado H3, saldo negativo procedente de transmisiones, as a **positive magnitude** — the row carries `max(0, −gyp_net)`. Emitted only when the transmissions result is negative, i.e. when H3 replaces H1 |
 | `MODELO_F93_8850` | Apartado H4, saldo negativo del capital mobiliario, as a **positive magnitude** — the row carries `max(0, −rcm_net)`, not a negative number. Emitted only when the RCM result is negative |
 | `MODELO_F93_8841` | Total parte especial del ahorro (`= 8809 + 8840`) |
 | `MODELO_F93_815 (= 524)` | Base liquidable especial del ahorro |
@@ -253,8 +254,9 @@ Comment lines start with `#`. A consumer must skip them.
 | `# MODELO F-93 — declaración del IRPF de la Comunidad Foral de Navarra` | Regime is `navarra` |
 | `# WARNING: the ejercicio-<year> form has the same structure but its own…` | Regime is `navarra` and the filing year is earlier than 2025 |
 | `# WARNING: no form is published for ejercicio <year> yet — it is filed in <year+1>.` | Regime is `navarra` and the filing year is later than 2025 |
+| `# WARNING: The year's disposals consumed FIFO lots acquired before 31 December 1994…` | Regime is `navarra` and a FIFO lot consumed this year was acquired before 31-12-1994, so TRLFIRPF DT 7.ª's abatement applies and the tool does not compute it |
 | `# WARNING: €<x> of transmission gains was exempted under TRLFIRPF art. 39.5.d…` | The Navarra small-disposals exemption applied |
-| `# WARNING: The year's securities transmissions came to €<x>, under the €3,000…` | The exemption was withheld because a foreign-currency conversion made the global transmission amount unmeasurable |
+| `# WARNING: The year's securities transmissions came to €<x>, under the €3,000…` | The exemption was withheld because a conversion on a **held** balance made the global transmission amount unmeasurable. A year with no securities transmissions at all is silent: the relief would have been zero regardless, so there is nothing to report as withheld |
 | `# WARNING: €<x> of otherwise deductible custody and administration fees was NOT deducted…` | The Navarra 3% ceiling disallowed part of the year's qualifying fees |
 | `# WARNING: €<x> of prior-year negative savings-base saldos was set against the other group…` | Under Navarra, a carried saldo crossed into the other group |
 | `# WARNING: these are the ejercicio-2025 box numbers, read from Anexo I of the…` | Regime is `comun`, always, before the box rows |
@@ -294,9 +296,11 @@ warning about them is printed on the console only.
 - **Version 1.3**: Navarra round (2026-08-12) — the `MODELO_F93_<casilla>` key family for the third
   regime, two Navarra-only summary rows for the art. 32.1.a fee ceiling
   (`SUMMARY_RCM_FEE_CAP`, `SUMMARY_RCM_FEES_OVER_CAP`), one for the art. 39.5.d exemption
-  (`SUMMARY_GYP_SMALL_DISPOSALS_EXEMPTION`), and four warning banners (small-disposals exemption
-  applied, exemption withheld for an unmeasurable conversion, fee ceiling bound, carried saldo
-  crossed). `SUMMARY_GYP_NET` now subtracts the exemption
+  (`SUMMARY_GYP_SMALL_DISPOSALS_EXEMPTION`), and five warning banners (DT 7.ª abatement not
+  computed, small-disposals exemption applied, exemption withheld for an unmeasurable conversion,
+  fee ceiling bound, carried saldo crossed). `SUMMARY_GYP_NET` now subtracts the exemption.
+  The four `SUMMARY_*CROSS_OFFSET_*` labels became per-regime: Común and Gipuzkoa keep the AEAT
+  "fase" wording, Navarra names TRLFIRPF art. 54.2.a / 54.2.b
 - **Version 1.2**: open-items round (2026-08-11) — Modelo 109 keys carry the sheet
   (`MODELO_109_HOJA_<n>` / `MODELO_109_ANEXO3_<n>`, replacing `MODELO_109_CASILLA_<n>`), the
   double-taxation and cuota-líquida casillas follow the ejercicio (60/64 through 2024, 70/74 from
