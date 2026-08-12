@@ -208,6 +208,10 @@ figure is entered per transmission it names the block (`1658-1672`).
 | `MODELO_F93_572` | Deducción por doble imposición internacional. **Not** 613, which is the transparencia fiscal internacional deduction |
 | `MODELO_F93_818` / `MODELO_F93_8875` | Saldos negativos a compensar en los ejercicios siguientes, transmissions and RCM. Emitted only when non-zero; the per-year cells are labelled on the form itself |
 
+Every `MODELO_F93_*` row stays inside the summary block's three fields. (`MODELO_109_*` rows are the
+standing exception: their `(hoja, casilla <n>)` label suffix has carried a comma since the first
+release, so those rows are four fields wide.)
+
 `810` and `8835` are the joint-return rows and are never emitted: the tool computes an individual
 return, so they are always zero. Casillas 569 (cuota líquida), 576 and 582 are **not** emitted
 either — they net the whole return, including the general part this tool does not compute.

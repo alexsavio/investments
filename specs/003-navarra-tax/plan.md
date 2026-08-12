@@ -55,7 +55,7 @@ Work exactly like the prior plans (`specs/002-spain-tax/*`): phases in order, fa
   Commit: `feat(navarra-tax): emit the F-93 statement mapping`
 - **N9 — Warnings + register.** Status: DONE (`af54fd86`) — new warning: FIFO lot acquired **before 31-12-1994** detected (DT 7.ª abatement not computed — names the lots and dates; Navarra only, since the Gipuzkoa and state equivalents were not researched this round). The planned bond/debt-instrument warning was **dropped after checking the code**: non-`STK` instruments are discarded by the shared IB parser before the Spanish processor sees them, so there is nothing to warn about at this layer — it became a register entry instead. Carried-saldo cross-offset (from N5) and the F-93 ejercicio caveats (from N8) are already emitted. Register entries in `docs/spain-taxes.md` for each, plus doc notes: foral 720/721, traspaso grandfathering, exit tax, related-party interest, joint returns.
   Commit: `feat(navarra-tax): warn on unmodelled Navarra rules and register them`
-- **N10 — Docs, gate, close-out.** Status: TODO — `docs/spain-taxes.md` Navarra sections (config, scale table with sources, the three-regime differences table from this plan, fee cap, exemption, F-93 usage) + README + `config-example.yaml`; full gate; smoke test re-run under `regime: gipuzkoa` (must be bit-identical — Navarra work must not move the user's own figures) and a second run with a scratch `regime: navarra` config on the same statement, figures explained against Appendix A reasoning; close-out appended here.
+- **N10 — Docs, gate, close-out.** Status: DONE (`40d1eae0`) — `docs/spain-taxes.md` Navarra sections (config, scale table with sources, the three-regime differences table from this plan, fee cap, exemption, F-93 usage) + README + `config-example.yaml`; full gate; smoke test re-run under `regime: gipuzkoa` (must be bit-identical — Navarra work must not move the user's own figures) and a second run with a scratch `regime: navarra` config on the same statement, figures explained against Appendix A reasoning; close-out appended here.
   Commit: `docs(navarra-tax): document the Navarra regime and close the round`
 
 ## Verification
@@ -298,3 +298,108 @@ The wash-sale fixtures assert deferral and reintegration amounts, not tax, and t
 regime-parameterized only through the coefficient and the exemption — Navarra takes coefficient 1
 like Común, and every wash-sale fixture's proceeds exceed €3 000, so its deferral figures must equal
 Común's to the cent.
+
+## Close-out (2026-08-12)
+
+### Gate
+
+| Check | Result |
+|---|---|
+| `cargo check --all-targets` | clean |
+| `cargo test spain --lib` | **344 passed**, 0 failed (baseline 267 → +77) |
+| `cargo test --lib` | 823 passed, **34 failed** — the pre-existing `parse_real` set, unchanged |
+| `./check` | the same **3** upstream clippy errors (`statistics.rs`, `xls/table.rs`, `rebalancing.rs`), nothing new |
+
+### Smoke runs
+
+Config at `<scratchpad>/es-smoke`, portfolio `ibkr-miren`, year 2025.
+
+**`regime: gipuzkoa`** — base **€17.32**, cuota íntegra **€3.46**, cuota líquida **€3.46**, exactly
+as before, and the emitted CSV is **byte-identical** to `es-final3.csv`, the file the 002 round left
+behind. Nothing in this round moved the user's own figures.
+
+**`regime: navarra`** on the same statement (scratch config at `<scratchpad>/es-smoke-navarra`):
+
+| Figure | Gipuzkoa | Navarra | Why |
+|---|---|---|---|
+| Dividends | 82.23 | 82.23 | same statement |
+| Dividend exemption | 82.23 | **0.00** | LF 29/2014 repealed Navarra's relief in 2015 |
+| Interest | 1.14 | 1.14 | — |
+| Deductible fees | 0.00 | 0.00 | the year has no custody fee; the 3% ceiling never engages |
+| RCM neto | 1.14 | **83.37** | the whole dividend is income under Navarra |
+| Ganancias netas | 16.18 | 16.18 | coefficient 1 vs Gipuzkoa's — the year's lots are all 2025, so the coefficient was 1 either way |
+| Base liquidable | 17.32 | **99.55** | 1.14 + 16.18 vs 83.37 + 16.18 |
+| Cuota íntegra | 3.46 | **19.91** | 99.55 × 20% (art. 60's first bracket) |
+| Foreign credit | 0.00 | **12.33** | under Gipuzkoa the dividend is exempt, so it bears no Spanish tax and carries no credit; under Navarra it is taxed, and the treaty limb min(12.33, 82.23 × 15% = 12.33) binds |
+| Cuota líquida | 3.46 | **7.58** | 19.91 − 12.33 |
+
+The whole gap is the €1,500 exemption and the scale: on this statement the two regimes differ by
+exactly the tax on the €82.23 of dividends Gipuzkoa exempts, less the credit that becomes available
+once they are taxed. Every figure follows Appendix A's rules.
+
+One Navarra-only warning fired, and it is the one the round expected to be noisy on a real statement:
+the year's securities transmissions came to **€149.12** — under the €3,000 of art. 39.5.d — but the
+statement also contains foreign-currency conversions, so the global transmission amount cannot be
+measured and the exemption was withheld (Appendix A §A.4 edge 3). That overstates the tax rather than
+granting a relief the year may not be entitled to, and the message says how to check by hand.
+
+### Statute-text corrections made to this plan
+
+All in N1 (`8ded6bbd`) unless noted, after reading `trlfirpf.txt` verbatim:
+
+1. **art. 54.2** — the summary did not say that own-group absorption fires **only** when the current
+   year's result is positive ("si el resultado fuera positivo"); a group whose result is negative
+   leaves its own prior saldos untouched. Added, with the statute quoted.
+2. **art. 54.2** — confirmed and made explicit that the 25% is measured on "el saldo positivo
+   **resultante de la letra b)**", i.e. the other group's figure *after* it absorbed its own
+   carryforwards. That is the whole difference from the AEAT order and it was worth quoting.
+3. **DT 7.ª** — the plan said "warn when any FIFO lot predates 1995". The article's own trigger is
+   "elementos patrimoniales adquiridos **antes de 31 de diciembre de 1994**", so a lot acquired *on*
+   31-12-1994 is outside it. The warning fires on `acquisition_date < 1994-12-31` and the fixture
+   pins the one-day boundary.
+4. **art. 32.1.a** — the cap base is "los ingresos íntegros, que no hayan resultado exentos,
+   **procedentes de dichos valores**". Pinned that this means dividend income and not broker
+   cash-account interest, which is art. 29 income from a cesión de capitales propios rather than
+   from a valor negociable.
+5. **art. 39.5.d** — quoted verbatim; the plan's summary was accurate. The residual ambiguity is
+   2.º's singular "el importe global de **la transmisión**" against 1.º's plural, pinned to the
+   year-global reading in Appendix A §A.4.
+6. **art. 60 and art. 67** — read verbatim, no divergence from the plan's summary. The five golden
+   cuota vectors are the statute's own published column and all five reproduce.
+7. **Appendix A arithmetic fix** (N7, `3748b5bc`): the Gipuzkoa row of the `small_disposal` table
+   said 1 332 × 20% = 266.40. The reformed 2026 foral scale opens at **19%**, so it is 253.08.
+
+### Codebase corrections made to this plan
+
+- **N9's bond warning was dropped.** The plan asked for an all-regime warning on debt-instrument
+  sales, on the premise that "the tool taxes them as GyP". It does not: the shared Interactive
+  Brokers parser discards every instrument whose `assetCategory` is not `STK`, with its own warning,
+  before the Spanish processor sees anything. A bond disposal is therefore absent from both
+  savings-base groups rather than misclassified, and there is nothing at this layer to detect. It
+  became register entry §17 instead.
+
+### Left open
+
+1. **A pre-existing four-column defect in the Gipuzkoa Modelo rows.** `MODELO_109_*` labels carry a
+   `(hoja, casilla <n>)` suffix whose comma splits the row into four fields, breaking the summary
+   block's three-column shape. It predates this round and fixing it would move Gipuzkoa output, which
+   this round had to leave byte-identical. `modelo_rows_are_three_columns` asserts the shape as it is,
+   per regime, so it cannot regress unnoticed; the contract records it. **Recommended as the first
+   item of a follow-up round.**
+2. **The coefficients-under-Navarra rejection is asymmetric.** A `taxes.spain.coefficients` block is
+   an error under `navarra` and silently ignored under `comun`, which has no actualization either.
+   The plan asked for the Navarra rejection specifically and the bit-identical constraint ruled out
+   touching Común. Worth unifying in a follow-up.
+3. **The abatement warning is Navarra-only.** LIRPF DT 9.ª and NF 3/2014 have their own abatement
+   regimes for pre-1994 acquisitions, with a €400,000 lifetime cap the Navarra one lacks. They were
+   not researched this round, so the tool says nothing about them rather than citing the wrong
+   statute. `abatement_lots` is populated for every regime, so extending the warning is a
+   message-builder change once the research is done.
+4. **`SpanishTaxStatement::new` now takes ten positional arguments.** Each is regime-derived and
+   already lives together on `SpanishTaxParams`; grouping them into one struct would be the natural
+   cleanup, but it is the kind of structural change this plan explicitly reserved.
+5. **F-93 apartado H3.** The negative-transmissions block's casillas could not be disambiguated from
+   the specimen's extracted layout, so no number is emitted for it — a `#` comment names the block
+   instead. A filer with a loss-making year has to read it off their own form.
+6. **The `verified` ejercicio is 2025 only.** FY2024 and FY2026 reuse its numbering under an explicit
+   warning. Verifying the FY2024 Anexo I (Orden Foral 28/2025) would remove one caveat.

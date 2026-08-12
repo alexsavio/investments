@@ -250,7 +250,8 @@ portfolios:
 #  # See docs/spain-taxes.md.
 #  jurisdiction: spain
 #  spain:
-#    regime: gipuzkoa               # Required, no default: gipuzkoa (Norma Foral 3/2014) or comun (LIRPF)
+#    regime: gipuzkoa               # Required, no default: gipuzkoa (Norma Foral 3/2014),
+#                                   # comun (LIRPF) or navarra (Decreto Foral Legislativo 4/2008)
 #    loss_carryforward:             # Saldos negativos pendientes, keyed by the year each arose in
 #      gyp: {2024: '1200.50'}       # Ganancias y pérdidas patrimoniales (4-year window)
 #      rcm: {2025: '80.00'}         # Rendimientos del capital mobiliario (4-year window)
@@ -259,6 +260,7 @@ portfolios:
 #         acquisition_date: 2025-12-20, sale_date: 2025-12-10}
 #    coefficients:                  # Optional: override/extend the shipped Decreto Foral tables
 #      2027: {2020: '1.11'}         # disposal year -> acquisition year -> coefficient
+#                                   # Gipuzkoa only: rejected under navarra, which has no actualization
 
 # Your individual broker + bank account configuration. For now specifies your bank commissions for transferring funds
 # from your bank account to your broker account. Will be taken into account during portfolio performance analysis.

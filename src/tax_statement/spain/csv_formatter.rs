@@ -1010,17 +1010,20 @@ impl CsvFormatter {
                 let boxes = [
                     (
                         modelo_f93::RCM_DIVIDENDS,
-                        "Dividendos y participación en beneficios (art. 28.a y b) — importe íntegro                          (página 2)",
+                        "Dividendos y participación en beneficios (art. 28.a y b) \
+                         — importe íntegro (página 2)",
                         statement.total_dividend_income,
                     ),
                     (
                         modelo_f93::RCM_INTEREST,
-                        "Intereses de cuentas y otros rendimientos por cesión de capitales propios                          (página 2)",
+                        "Intereses de cuentas y otros rendimientos por cesión de capitales \
+                         propios (página 2)",
                         statement.total_interest_income,
                     ),
                     (
                         modelo_f93::RCM_EXPENSES,
-                        "Gastos de administración y depósito, tras el límite del 3% (art. 32.1.a)                          (página 2)",
+                        "Gastos de administración y depósito tras el límite del 3% \
+                         (art. 32.1.a) (página 2)",
                         statement.total_deductible_fees,
                     ),
                     (
@@ -1030,7 +1033,8 @@ impl CsvFormatter {
                     ),
                     (
                         modelo_f93::TRANSFERS_TOTAL,
-                        "Incremento o disminución de la parte especial del ahorro por transmisiones                          (anexo 1)",
+                        "Incremento o disminución de la parte especial del ahorro por \
+                         transmisiones (anexo 1)",
                         statement.gyp_net,
                     ),
                     (
@@ -1055,17 +1059,20 @@ impl CsvFormatter {
                     ),
                     (
                         modelo_f93::H2_RCM_POSITIVE,
-                        "H2 — saldo positivo procedente de rendimientos del capital mobiliario                          (anexo 2)",
+                        "H2 — saldo positivo procedente de rendimientos del capital mobiliario \
+                         (anexo 2)",
                         std::cmp::max(zero, statement.rcm_net),
                     ),
                     (
                         modelo_f93::H2_OWN_LOSSES,
-                        "H2 — compensación con saldos negativos propios del capital mobiliario                          (anexo 2)",
+                        "H2 — compensación con saldos negativos propios del capital mobiliario \
+                         (anexo 2)",
                         statement.rcm_own_group_losses_applied(),
                     ),
                     (
                         modelo_f93::H2_TRANSFER_LOSSES_CROSSED,
-                        "H2 — compensación con saldos negativos procedentes de transmisiones                          (anexo 2)",
+                        "H2 — compensación con saldos negativos procedentes de transmisiones \
+                         (anexo 2)",
                         statement.cross_offset_gyp_to_rcm + statement.prior_cross_offset_gyp_to_rcm,
                     ),
                     (
@@ -1080,12 +1087,12 @@ impl CsvFormatter {
                     ),
                     (
                         modelo_f93::SAVINGS_BASE,
-                        "Base liquidable especial del ahorro (anexo 2, repetida en la página 7)",
+                        "Base liquidable especial del ahorro (anexo 2; repetida en la página 7)",
                         statement.savings_base,
                     ),
                     (
                         modelo_f93::SAVINGS_QUOTA,
-                        "Cuota íntegra especial del ahorro (anexo 2, repetida en la página 7)",
+                        "Cuota íntegra especial del ahorro (anexo 2; repetida en la página 7)",
                         statement.savings_quota,
                     ),
                     (
@@ -1108,22 +1115,26 @@ impl CsvFormatter {
                 let conditional = [
                     (
                         modelo_f93::TRANSFERS_EXEMPT,
-                        "Incremento exento, otros supuestos — exención de transmisiones hasta                          3.000 € (art. 39.5.d; una celda por transmisión, anexo 1)",
+                        "Incremento exento — otros supuestos — exención de transmisiones hasta \
+                         3.000 € (art. 39.5.d; una celda por transmisión; anexo 1)",
                         statement.small_disposals_exemption,
                     ),
                     (
                         modelo_f93::H4_RCM_NEGATIVE,
-                        "H4 — saldo negativo procedente de rendimientos del capital mobiliario                          (anexo 2)",
+                        "H4 — saldo negativo procedente de rendimientos del capital mobiliario \
+                         (anexo 2)",
                         std::cmp::max(zero, -statement.rcm_net),
                     ),
                     (
                         modelo_f93::TRANSFERS_CARRYFORWARD,
-                        "Saldo negativo de transmisiones a compensar en los ejercicios siguientes                          (anexo 2; las casillas por año están rotuladas en el propio impreso)",
+                        "Saldo negativo de transmisiones a compensar en los ejercicios \
+                         siguientes (anexo 2; las casillas por año están rotuladas en el impreso)",
                         statement.gyp_ledger_next.total(),
                     ),
                     (
                         modelo_f93::RCM_CARRYFORWARD,
-                        "Saldo negativo del capital mobiliario a compensar en los ejercicios                          siguientes (anexo 2; las casillas por año están rotuladas en el impreso)",
+                        "Saldo negativo del capital mobiliario a compensar en los ejercicios \
+                         siguientes (anexo 2; las casillas por año están rotuladas en el impreso)",
                         statement.rcm_ledger_next.total(),
                     ),
                 ];
@@ -2001,6 +2012,45 @@ mod tests {
         assert_eq!(cell("050"), cell("031") + cell("037") - cell("047"), "{output}");
         // The cross row carries something, so the first identity is not satisfied trivially.
         assert!(cell("8815") > dec!(0), "{output}");
+    }
+
+    /// A Modelo row must stay inside the summary block's three columns: a comma in a label silently
+    /// splits the casilla's amount into a fourth field.
+    ///
+    /// Gipuzkoa is the standing exception. Its labels carry a `(hoja, casilla <n>)` suffix whose
+    /// comma has been in the emitted format since the first release, so its rows are four fields
+    /// wide. Changing that would move output this round must leave alone, so the shape is asserted
+    /// as it is rather than left to be rediscovered.
+    #[rstest]
+    #[case(SpanishTaxRegime::Gipuzkoa, 4)]
+    #[case(SpanishTaxRegime::Comun, 3)]
+    #[case(SpanishTaxRegime::Navarra, 3)]
+    fn modelo_rows_are_three_columns(#[case] regime: SpanishTaxRegime, #[case] columns: usize) {
+        let mut spain = SpanishTaxStatement::new(
+            2025,
+            regime,
+            SavingsScale::for_year(regime, 2025).unwrap(),
+            LossLedger::default(),
+            LossLedger::from_config(&BTreeMap::from([(2024, dec!(2000))]), 2025, "gyp").unwrap(),
+            CrossOffset::None,
+            dec!(0.15),
+            Decimal::ZERO,
+            Some(dec!(0.03)),
+            true,
+        );
+        spain.capital_gains.push(capital_gain());
+        spain.calculate_totals();
+
+        let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
+        let rows: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("MODELO_"))
+            .collect();
+
+        assert!(!rows.is_empty(), "{regime:?} emitted no box rows: {output}");
+        for row in rows {
+            assert_eq!(row.split(',').count(), columns, "{regime:?}: {row}");
+        }
     }
 
     /// The Navarra block must name F-93 and nothing else: emitting a Modelo 109 or 100 casilla

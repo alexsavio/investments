@@ -3,17 +3,37 @@
 ## Overview
 
 Investments computes Spanish IRPF **savings-income** tax (base del ahorro) on a foreign broker
-statement and writes a CSV working paper you transcribe into your return. Two regimes are supported
-and they are not interchangeable:
+statement and writes a CSV working paper you transcribe into your return. Three regimes are
+supported and they are not interchangeable:
 
 | Regime | Law | Return |
 |---|---|---|
 | `gipuzkoa` | Norma Foral 3/2014, as amended by Norma Foral 1/2025 | Modelo 109, filed through Zergabidea |
 | `comun` | Ley 35/2006 (LIRPF) | Modelo 100, filed through the AEAT |
+| `navarra` | Decreto Foral Legislativo 4/2008 (TRLFIRPF) | Modelo F-93, filed through Hacienda Foral de Navarra |
 
-They differ in the savings scale, in whether acquisition costs are actualized, in whether the two
-savings-base groups may offset each other, and in whether custody fees are deductible. Every one of
-those changes the tax due, so the regime has no default: omit it and the tool refuses to run.
+They differ in the savings scale, in whether acquisition costs are actualized, in how the two
+savings-base groups may offset each other, in whether custody fees are deductible and by how much,
+and in which gains are exempt. Every one of those changes the tax due, so the regime has no default:
+omit it and the tool refuses to run.
+
+### What separates the three
+
+| | Gipuzkoa | Territorio Común | Navarra |
+|---|---|---|---|
+| Savings scale | NF 3/2014 art. 76.1 — reformed for 2026 | LIRPF arts. 66/76 — top bracket 30% from 2025 | TRLFIRPF art. 60 — one table for 2024–2026 |
+| Actualization of acquisition cost | Decreto Foral coefficients, per acquisition year | none (coefficient 1) | none (coefficient 1) — art. 41 never had it |
+| Cross-group offset | never: the groups integrate "exclusivamente entre sí" | 25%, AEAT Manual cap. 12 order | 25%, but art. 54.2's own order (own-group carryforwards first) |
+| Custody and administration fees | not deductible at all | deductible, no ceiling | deductible, capped at 3% of non-exempt gross securities income (art. 32.1.a) |
+| Dividend exemption | first €1,500 a year (art. 9.24) | none since 2015 | none since 2015 (LF 29/2014) |
+| Small-disposals exemption | none | none | year's transmissions ≤ €3,000 → gain exempt up to half of them (art. 39.5.d) |
+| Wash-sale window | 2 months, listed | 2 months, listed | 2 months, listed (art. 39.6.f) |
+| Loss carry-forward | 4 years | 4 years | 4 years |
+
+On the same trades those differences do not cancel out. The `fifo` test fixture — two AAPL sales
+totalling €49,500 of proceeds — produces a cuota íntegra del ahorro of **€3,957.24** under Gipuzkoa,
+**€4,605.00** under Común and **€5,230.00** under Navarra. Navarra shares Común's base and neither
+regime's tax.
 
 Supported tax years: **2024, 2025, 2026**. A year the tool ships no statutory scale for is an error,
 never an extrapolation.
@@ -27,7 +47,7 @@ Patrimonio), partial-year residency, and the Beckham regime are all out of scope
 taxes:
   jurisdiction: spain
   spain:
-    regime: gipuzkoa            # or: comun
+    regime: gipuzkoa            # or: comun, navarra
 
     # Saldos negativos pendientes de compensación brought in from prior returns, keyed by the year
     # each arose in. A balance may be offset only in the four following years, so the origin year
@@ -44,6 +64,8 @@ taxes:
 
     # Optional: override or extend the shipped Decreto Foral actualization tables, keyed by
     # disposal year then acquisition year. Lets a newly published year be used before a release.
+    # Gipuzkoa only: Común and Navarra have no actualization, and under `navarra` the block is
+    # rejected outright rather than silently ignored.
     coefficients:
       2027: {2020: '1.11'}
 ```
@@ -114,6 +136,24 @@ The top bracket was created at 28% by Ley 31/2022 (PGE 2023) and rose to 30% fro
 7/2024 df 7ª. There is no PGE 2026 — the 2025 budget was prorogued — and arts. 66 / 76 were not
 touched, so 2026 repeats the 2025 scale.
 
+### Navarra
+
+TRLFIRPF art. 60, in the wording Ley Foral 36/2022 gave it with effect from 1 January 2023. One table
+for every supported year: Ley Foral 17/2025, which carries the 2026 changes, does not touch it.
+
+| Base liquidable hasta | Cuota íntegra | Resto base hasta | Tipo |
+|---|---|---|---|
+| — | — | 6,000 | 20% |
+| 6,000 | 1,200 | 4,000 | 22% |
+| 10,000 | 2,080 | 5,000 | 24% |
+| 15,000 | 3,280 | 185,000 | 26% |
+| 200,000 | 51,380 | 100,000 | 27% |
+| 300,000 | 78,380 | rest | 28% |
+
+Unlike the other two, the Navarra statute publishes its own cumulative cuota-íntegra column, so those
+five figures are the law's own numbers rather than a derivation. The tool reproduces all five exactly;
+above the last threshold there is no published cuota and the 28% marginal rate applies.
+
 ## FIFO and actualization coefficients
 
 Lots are consumed in acquisition order (NF 3/2014 art. 47.2 / LIRPF art. 37.2, "los adquiridos en
@@ -126,6 +166,11 @@ different one to each.
 
 Under **Territorio Común** the coefficient is always 1. Ley 26/2014 art. 1.21 deleted LIRPF art. 35.2
 with effect from 2015, and even before then it applied only to real estate, never to securities.
+
+Under **Navarra** the coefficient is always 1 as well, for a different reason: TRLFIRPF art. 41 has
+never carried an actualization rule at all. A `taxes.spain.coefficients` block under that regime is
+therefore rejected with an error naming the regime — accepting and ignoring it would leave you
+believing costs were actualized when they were not.
 
 Worked example — buy 100 AAPL at $100 on 2021-03-10, buy 100 more at $200 on 2024-06-10, sell 100 at
 $250 on 2026-04-15 and 100 at $300 on 2026-09-15, no commissions, EUR/USD 0.9:
@@ -361,7 +406,37 @@ The CSV reports the two prior-year steps **disjointly**, so nothing is counted t
 the prior-year RCM balance this year consumed — €200 in the example above, all of it crossed, so the
 own-group row reads 0. The ganancias pair works the same way.
 
-### Both regimes
+### Navarra
+
+TRLFIRPF art. 54.2 runs the same three moves in a different order, and measures the 25% on a
+different figure. Per group, independently first:
+
+1. Sum the year's own items.
+2. **Only if that result is positive**, absorb the group's own prior-year saldos, oldest vintage
+   first, floored at zero. A group whose result is negative leaves its own saldos untouched — the
+   statute opens the absorption branch for a positive result only.
+3. A negative result then crosses into "el saldo positivo **resultante de la letra b)**", capped at
+   25% of it. That figure is what the other group arrived at *after* absorbing its own
+   carryforwards, not its raw positive.
+4. What is left carries four years "en el mismo orden establecido en los párrafos anteriores".
+
+Run the AEAT manual's own numbers — current GyP +4,000, current RCM −800, prior-year GyP 2,800,
+prior-year RCM 500 — through all three regimes and no two agree:
+
+| Regime | Route | Savings base |
+|---|---|---|
+| Gipuzkoa | GyP absorbs its own 2,800; nothing crosses | **1,200** |
+| Territorio Común | cross 800, then 2,800, then 200 of the prior RCM saldo | **200** |
+| Navarra | GyP absorbs its own 2,800 → 1,200; the RCM −800 then crosses at 25% × 1,200 = 300 | **900** |
+
+With **no** prior-year balances step 2 does nothing, so Navarra and Común give the same answer. The
+orders only separate once a carryforward exists.
+
+Whether a *carried* saldo may cross at all is the one part art. 54.2 does not settle; see
+[Open interpretations §11](#11-which-navarra-saldos-may-cross-the-groups--open) for what the tool
+does and what it says when the point bites.
+
+### All three regimes
 
 A balance whose fourth year has passed is dropped with a warning rather than carried — next year's
 config must not claim an offset the tax office will refuse. A balance older than the window in the
@@ -372,6 +447,7 @@ Simple example with no prior-year balances, RCM −2,000 against GyP +6,000:
 | | Cross-offset | GyP taxable | Carried forward |
 |---|---|---|---|
 | Territorio Común | min(2,000, 25% × 6,000) = 1,500 | 4,500 | RCM 500 |
+| Navarra | min(2,000, 25% × 6,000) = 1,500 | 4,500 | RCM 500 |
 | Gipuzkoa | none | 6,000 | RCM 2,000 |
 
 ## Foreign tax credit
@@ -480,9 +556,12 @@ This is the sharpest split between the regimes.
   closed list that allows deductions only for asistencia técnica, arrendamiento de bienes muebles,
   negocios o minas, and subarrendamientos. Confirmed by the Diputación Foral's own Renta manual,
   ch. 4 §4.5.
+- **Navarra**: the same fees are deductible as under Común (TRLFIRPF art. 32.1.a, which also
+  excludes discretionary portfolio management by name), but **capped at 3% of the non-exempt gross
+  income from those securities**. See below.
 
-A broker statement carries only a free-text description, so the tool matches on it. Under Común each
-type is treated as the DGT classifies it:
+A broker statement carries only a free-text description, so the tool matches on it. Under Común and
+Navarra each type is treated as the DGT classifies it:
 
 | Fee type | Treatment | Authority |
 |---|---|---|
@@ -513,6 +592,33 @@ medium confidence.
 None of this applies under Gipuzkoa, where art. 39 allows nothing whatever the type is: every fee row
 is informational there, and no type can raise an open question.
 
+### The Navarra 3% ceiling
+
+TRLFIRPF art. 32.1.a allows the fees "con el límite del 3 por 100 de los ingresos íntegros, que no
+hayan resultado exentos, procedentes de dichos valores". The tool measures that ceiling on **dividend
+income**: interest credited on a broker cash balance is a rendimiento from the cesión a terceros de
+capitales propios (art. 29), not income from a valor negociable.
+
+What that does to a year of €900 of dividends, €90 of broker interest and a €45 custody fee:
+
+| | Común | Navarra |
+|---|---|---|
+| Ceiling | none | 3% × 900 = **27.00** |
+| Deducted | 45.00 | **27.00** |
+| Disallowed by the ceiling | — | **18.00** |
+| Rendimiento neto | 945.00 | **963.00** |
+
+Two consequences worth knowing:
+
+- A year with fees but **no dividends** has a ceiling of zero, so nothing is deductible at all.
+- Because the ceiling is a fraction of dividend income, fees alone can never drive the Navarra RCM
+  result negative.
+
+The CSV reports the ceiling and what it disallowed on their own rows (`SUMMARY_RCM_FEE_CAP`,
+`SUMMARY_RCM_FEES_OVER_CAP`), kept separate from `SUMMARY_INFORMATIONAL_FEES`: those fees never
+qualified, these did and were capped. A binding ceiling also prints a warning. See
+[Open interpretations §12](#12-what-the-navarra-3-fee-ceiling-is-measured-on--open-by-data-limit).
+
 ### Interest paid on a margin loan
 
 IB reports margin interest as a **negative** "Broker Interest Paid" accrual in the same ledger as the
@@ -520,6 +626,44 @@ credit interest, so a naive sum would net it off your RCM income. Neither regime
 art. 26.1.a reaches only administration and custody of negotiable securities, and NF 3/2014 art. 39
 is narrower still. The tool reports each paid-interest row without a savings group, sums them into
 `SUMMARY_RCM_INTEREST_PAID`, and leaves the RCM result untouched.
+
+## The Navarra €3,000 small-disposals exemption
+
+TRLFIRPF **art. 39.5.d** exempts gains arising on onerous transmissions when two conditions hold
+together, both measured over the whole calendar year:
+
+1. the global amount of those transmissions does not exceed **€3,000**;
+2. the taxable increment does not exceed **50%** of that global amount — and where it does, "únicamente
+   se someterá a gravamen el citado exceso".
+
+Neither the state text nor NF 3/2014 has anything like it.
+
+Worked, on a year that sells 10 shares bought for €900 in two halves of €1,125:
+
+| | Value |
+|---|---|
+| Global transmission amount | 2,250.00 |
+| Taxable increment | 1,350.00 |
+| Half the global amount | 1,125.00 |
+| Exempt | **1,125.00** |
+| Taxed | **225.00** |
+
+Both boundaries are inclusive: exactly €3,000 of transmissions still qualifies, and an increment of
+exactly half the global amount is wholly exempt. One euro over €3,000 and the whole relief is gone —
+it is a gate, not a taper.
+
+Proceeds are counted for **every** disposal, gain- or loss-making, because condition 1 measures the
+transmissions rather than their results; only positive integrable results feed the increment, because
+a loss is a *disminución*, not an *incremento*. A wash-sale-deferred loss therefore leaves the
+proceeds alone and stays out of the increment.
+
+**Foreign-currency conversions withhold the relief.** A conversion is a transmission too (art.
+54.1.b), but the tool records only its result, never the amount converted, so a year that has one
+cannot have its global amount measured. The exemption is then not applied and the reason is printed —
+which overstates the tax rather than granting a relief the year may not be entitled to. Above €3,000
+of securities proceeds nothing is said: the missing conversions can only add to a total that has
+already failed. See
+[Open interpretations §13](#13-the-navarra-3000-exemptions-global-amount--open).
 
 ## Foreign-currency gains
 
@@ -543,7 +687,7 @@ and neither the foral nor the state text settles it.
   the FIFO queue and need nothing further; delistings, liquidations, spinoffs, scrip dividends and
   rights issues are **not** computed and each row says so.
 
-## Modelo 109 / Modelo 100 mapping
+## Modelo 109 / Modelo 100 / Modelo F-93 mapping
 
 The CSV ends with a box mapping.
 
@@ -590,14 +734,54 @@ depósito 0037, ganancias por transmisión de acciones cotizadas 0326-0340, base
 0460, deducción por doble imposición internacional 0588. The AEAT publishes a filing year's form in
 the spring of the following one, so no enacted numbering exists yet.
 
+For **Navarra** the rows carry the ejercicio-2025 numbers, read from the fully numbered Modelo F-93
+the Boletín Oficial de Navarra publishes as Anexo I of each campaign's Orden Foral (ejercicio 2025 =
+Orden Foral 24/2026, BON nº 66 of 07-04-2026). Keys are `MODELO_F93_<casilla>`.
+
+| Casilla | Row |
+|---|---|
+| 031 | Dividendos y participación en beneficios (art. 28.a y b), importe íntegro |
+| 037 | Intereses de cuentas y otros rendimientos por cesión de capitales propios |
+| 047 | Gastos de administración y depósito, after the 3% ceiling |
+| 050 | Rendimiento neto del capital mobiliario (`031 + 037 − 047`) |
+| 706 | Incremento o disminución de la parte especial del ahorro por transmisiones |
+| 1658-1672 | Incremento exento, otros supuestos — where the art. 39.5.d relief goes, one cell per transmission |
+| 8808 / 809 / 8815 / 8809 | Apartado H1: positive transmissions saldo, own-group compensation, RCM losses crossed in, net |
+| 8810 / 8825 / 8805 / 8840 | Apartado H2, the RCM mirror |
+| 8850 | Apartado H4, saldo negativo del capital mobiliario |
+| 8841 | Total parte especial del ahorro (`8809 + 8840`) |
+| 815 (= 524) | Base liquidable especial del ahorro |
+| 829 (= 527) | Cuota íntegra especial del ahorro |
+| 572 | Deducción por doble imposición internacional |
+| 818 / 8875 | Saldos negativos a compensar en los ejercicios siguientes |
+
+The mapping is cross-checked against the form's own arithmetic — `8809 = 8808 − 809 − 810 − 8815`,
+`8840 = 8810 − 8825 − 8835 − 8805`, `8841 = 8809 + 8840`, `050 = 031 + 037 − 047` — so a wrong casilla
+shows up as a sum that does not close rather than as a plausible number.
+
+Three things it deliberately leaves out:
+
+- **810 and 8835** are the joint-return rows. The tool computes an individual return, so they are
+  always zero.
+- **569, 576 and 582** net the whole return, including the general part this tool does not compute.
+  Casilla 569 in particular is the cuota líquida *before* the deducción por doble imposición, which
+  is then subtracted through 575 — putting a savings-only net figure there would be wrong twice over.
+- **613** is the transparencia fiscal internacional deduction, not the double-taxation one. The
+  double-taxation credit is 572.
+
+A filing year other than 2025 keeps these numbers under a warning: earlier campaigns share the
+structure but their own numbering was not checked against a specimen, and no form exists for a year
+that has not been filed yet. See
+[Open interpretations §15](#15-navarra-casillas--verified-for-ejercicio-2025-open-beyond).
+
 ### Foreign withholding is not a retención
 
 A **retención** is Spanish tax already withheld on your account (Modelo 109: pagos a cuenta casilla 67
 through ejercicio 2024, 77 from 2025, and `07+22` on Anexo 3 while that sheet is emitted; Modelo 100
-casilla 0597). The tax an IB statement shows is withheld by the *source* state, and it is relieved
-only through the deducción por doble imposición internacional. The tool therefore emits **no**
-retenciones row and prints a warning naming the casilla the figure does not belong in — entering it
-in both places claims the same tax twice on the same form.
+casilla 0597; Modelo F-93 casilla 030, which feeds 579). The tax an IB statement shows is withheld by
+the *source* state, and it is relieved only through the deducción por doble imposición internacional.
+The tool therefore emits **no** retenciones row and prints a warning naming the casilla the figure
+does not belong in — entering it in both places claims the same tax twice on the same form.
 
 ## CSV output
 
@@ -969,6 +1153,11 @@ year's return.
 
 A `loss_carryforward` entry is older than the window. Remove it — it can no longer be used.
 
+### "taxes.spain.coefficients is set but the regime is navarra"
+
+Navarra has no actualization: TRLFIRPF art. 41 computes the gain from the acquisition value as paid.
+Remove the block, or switch the regime if you meant to file in Gipuzkoa.
+
 ### Missing exchange rates
 
 A conversion failure names the date and currency. It usually means the ECB published no reference
@@ -980,6 +1169,9 @@ Retrieved 2026-08-11 unless noted.
 
 | Rule | Source |
 |---|---|
+| Navarra: savings scale (art. 60), compensation order (art. 54), fee ceiling (art. 32.1.a), small-disposals exemption (art. 39.5.d), FIFO (art. 43.2), wash sale (art. 39.6), no actualization (art. 41), credit (art. 67), abatement (DT 7.ª) | Decreto Foral Legislativo 4/2008 consolidated text, `lexnavarra.navarra.es` (retrieved 2026-08-12) |
+| Navarra: Modelo F-93 casillas for ejercicio 2025 | Anexo I of Orden Foral 24/2026, BON nº 66 of 07-04-2026 (retrieved 2026-08-12) |
+| Navarra: foral Modelo 720 and Modelo 721 | Orden Foral 80/2013 (mod. OF 58/2026); Orden Foral 29/2023 |
 | Gipuzkoa savings scale 2026 (art. 76.1), and that NF 1/2025 leaves art. 9.24 alone | NF 1/2025 full text (`primeralecturaediciones.com/documentos_diana/LEYES_2025/GUIPUZKOA/NF_1_2025_Gipuzkoa_IRPF.pdf`) |
 | Fungible-crypto FIFO wording in art. 47.2; art. 9.24 untouched | NF 2/2025 de 24 de noviembre (`primeralecturaediciones.com/documentos_diana/LEYES_2025/GUIPUZKOA/GIPUZKOA_NF2_2025.pdf`) |
 | €1,500 dividend exemption, art. 9.24, item 24 verbatim with its exclusions | Diputación Foral de Gipuzkoa, Modelo 109 "Exenciones", ejercicios [2023](https://www.gipuzkoa.eus/es/web/ogasuna/impuestos/modelo/109/2023/exenciones) / [2024](https://www.gipuzkoa.eus/es/web/ogasuna/impuestos/modelo/109/2024/exenciones) / [2025](https://www.gipuzkoa.eus/es/web/ogasuna/impuestos/modelo/109/2025/exenciones) — **OFFICIAL** |
