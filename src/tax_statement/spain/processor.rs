@@ -949,7 +949,7 @@ fn process_dividends(
             dividend.issuer, dividend.date
         );
         let gross_eur = convert_to_eur(converter, dividend.date, dividend.amount, &context)?;
-        let withheld_eur = convert_to_eur(converter, dividend.date, dividend.paid_tax, &context)?;
+        let withheld_eur = convert_to_eur(converter, dividend.date, dividend.tax_withheld, &context)?;
 
         let instrument_info = broker_statement.instrument_info.get(&dividend.issuer);
         let isin = instrument_info
