@@ -26,7 +26,7 @@ Verified-correct by the reviewers (do not touch): the `NavarraOrdered` compensat
 - **V6 — Contract and plan corrections (consistency M1/M2/M5/M6, adversarial LOW-7).** Status: DONE (`9920e72e`)
   Contract: add the DT 7.ª abatement banner (fifth) + the H3 block/8816 row; fix the "four warning banners" count; document the per-regime cross-offset labels (V1). Plan: N10 hash `40d1eae0` → `0b61bf86` (the self-referential-amend orphan); the F-93 carryforward-box inventory row corrected to what shipped (aggregates 818/8875, per-year cells named as on-form-only); replace the plan's "TODO(verify) in the register" phrasing with the register's actual "OPEN" convention (M6); note (M7) that N1's corrections 1–6 predate the plan's first commit by design.
   Commit: `docs(navarra-tax): correct the contract and plan against the audits`
-- **V7 — Gate + close-out.** Status: TODO
+- **V7 — Gate + close-out.** Status: DONE
   Full gate (`cargo test spain --lib` ≥ 344 with the new fixtures; `./check`; German suites untouched); byte-identity re-check of the Gipuzkoa smoke CSV (V1's regime-gating must keep it byte-identical — the cross rows are zero there, but the label must not change for Gipuzkoa/Común); Navarra smoke re-run explained; close-out appended here listing fixed/accepted.
   Commit: `docs(navarra-tax): close the review round`
 
@@ -34,3 +34,72 @@ Verified-correct by the reviewers (do not touch): the `NavarraOrdered` compensat
 - Double console reporting of new messages — matches the established pattern.
 - The broad "en el mismo orden" reading + its warning — the flagged register OPEN item; the strictly narrow reading would make carried-saldo crossing impossible, which is its own argument for the broad reading.
 - Plan Left-open items 1–4, 6 (Modelo 109 four-column defect, asymmetric coefficient rejection, Navarra-only abatement warning scope, 10-arg constructor, FY2024/2026 box caveats) — follow-up-round material, already recorded.
+
+## Close-out (2026-08-12)
+
+### Gate
+
+| Check | Result |
+|---|---|
+| `cargo check --all-targets` | clean |
+| `cargo test spain --lib` | **352 passed**, 0 failed (round baseline 344 → +8) |
+| `cargo test --lib` | 831 passed, **34 failed** — every one of them a `parse_real` case, the pre-existing empty-submodule set, unchanged |
+| `cargo test german --lib` / `germany --lib` | 97 / 84 passed, 0 failed — untouched |
+| `./check` | the same **3** upstream clippy errors (`statistics.rs:70`, `xls/table.rs:23`, `rebalancing.rs:519`), nothing new |
+
+### Byte identity
+
+V1 changes a label four regimes' worth of rows share, so the invariant was re-checked empirically
+against every reference the prior rounds left behind, all with the release binary built at V6:
+
+| Run | Reference | Result |
+|---|---|---|
+| `es-smoke`, `ibkr-miren` 2025, `regime: gipuzkoa` | `es-final3.csv` (the 002 round's file) | **byte-identical** (`cmp` clean; md5 `9e30f5bf…`) |
+| `adv-gipuzkoa` | `base-gipuzkoa.csv` | **byte-identical** |
+| `adv-comun` | `base-comun.csv` | **byte-identical** |
+| `adv-cf-gipuzkoa` (4-vintage carryforwards) | `basecf-gipuzkoa.csv` | **byte-identical** |
+| `adv-cf-comun` (4-vintage carryforwards) | `basecf-comun.csv` | **byte-identical** |
+
+### Navarra smoke re-run
+
+Same statement, `regime: navarra`. Every figure is the one the N10 close-out recorded — base
+**€99.55**, cuota íntegra **€19.91**, foreign credit **€12.33**, cuota líquida **€7.58**, ganancias
+netas €16.18, RCM neto €83.37 — and the art. 39.5.d warning still fires on the year's **€149.12** of
+securities transmissions being unmeasurable against the statement's conversions.
+
+Diffed against the N10 run's CSV, exactly **four lines** moved and no value changed: the four
+`SUMMARY_*CROSS_OFFSET_*` labels, from the AEAT "fase" wording to `art. 54.2.a` / `art. 54.2.b`.
+That is V1 and nothing else. The V4 warning narrowing does not reach this statement — it has
+securities transmissions, so its withholding caveat is unaffected — and the V2 H3 row does not
+appear because the year's transmissions are positive; that path is covered by
+`a_negative_transmissions_year_reports_its_own_h3_saldo` instead.
+
+### Fixed
+
+| Task | Commit | What moved |
+|---|---|---|
+| V1 | `78e813e6` | The four cross-offset labels are per regime. Navarra names art. 54.2.a / 54.2.b and the 25% base each is measured on; Común and Gipuzkoa keep their bytes. Contract records the split. |
+| V2 | `f05dca17` | A loss-making year emits `MODELO_F93_8816` with the H3 saldo as a positive magnitude, and the `#` comment points at that row instead of at casilla 8808, which is 0.00 exactly then. Plan Left-open 5 closed. |
+| V3 | `b96e6d6e` (Appendix A) + `f3e66f75` | `small_disposal` rebuilt on two **unequal** sales so the year-global and per-transmission readings of 2.º give different euros (1 035 vs 900); `small_disposal_mixed` pins that the exemption eats only the incremento and the disminución survives whole (`gyp_net = −450`); `small_disposal_commission` pins `G` net of the sell commission on a case where the commission alone decides condition 1.º. Gross-vs-net recorded OPEN in register §13 and cited in the code. |
+| V4 | `6bd23cd7` | The withholding caveat no longer fires on a year with no securities transmissions at all; `MODELO_F93_8850`'s positive-magnitude convention is stated in its label and the contract; the `fx_borrowed_review` asymmetry is written into §13's suppression entry; the params test asserts the two Navarra-only parameters and a new case asserts they are off elsewhere; the fractional-cent carry-out defect is Left-open item 7. |
+| V5 | `bc3a517f` | Margin-interest note and warning, the fee notes and the unsettled-fee warning (now taking the regime's own article through a substitution token), the venue-review and deferral notes, the wash-sale and FX doc sections, register §7, and the stale "both regimes" comments in `scale.rs`, `taxes/mod.rs`, `processor.rs` and `statement.rs` all name three statutes. TRLFIRPF art. 39.6.f's direct MiFID II citation is called out where the state text's superseded chain is discussed. |
+| V6 | `9920e72e` | Contract gains the DT 7.ª banner row and the `MODELO_F93_8816` row, the banner count goes four → five, and the withholding-caveat condition is restated. Plan: N10's hash corrected to `0b61bf86`, the F-93 carryforward inventory row rewritten to what shipped (aggregates 818/8875; per-year cells named as on-form-only), every `TODO(verify)` phrasing replaced by the register's `OPEN` convention with its entry number, and N1's corrections 1–6 explained as first-commit-by-design. |
+| V7 | this commit | Gate, byte identity, smoke re-run, close-out. |
+
+### Findings worth carrying forward
+
+- **The F-93 H3 casilla is better evidenced than the review assumed.** The review marked 8816 a
+  medium-confidence inference from a flat text extraction. Re-checked with word bounding boxes on
+  page 9 of the specimen, `8816` sits at y=620.7 against H3's y=621.3 — the same 0.6pt offset `8850`
+  has from H4 (694.4 vs 695.0) — and `817` / `818` line up with H3's remaining two lines exactly as
+  `8865` / `8875` do with H4's. It rests on the same evidence as every other box the reviewers
+  verified cell-for-cell, so the label carries the FY2025-specimen caveat every other box carries
+  rather than a separate confidence hedge.
+- **No hand-computation disagreed with the implementation.** All three V3 fixtures were worked in
+  Appendix A first and every asserted figure passed on the first run — proceeds, increments,
+  exemption, `gyp_net`, cuota and carryforward, in all three regimes. Nothing was re-pinned.
+- **The adversarial report's euros for the mixed case were not representable.** "+700 on €1,200,
+  −400 on €800" needs $1 333.33… through the shared flat-0.9 fixture converter. The fixture keeps the
+  shape with euros the converter can produce (+900 on €1,800, −450 on €900) and Appendix A says why.
+- **Left open, new:** the fractional-cent carry-out (plan item 7). Deciding it means choosing where
+  the statutory rounding point sits, not changing a format string.
