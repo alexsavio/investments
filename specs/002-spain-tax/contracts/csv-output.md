@@ -104,18 +104,21 @@ at full precision.
 | `SUMMARY_GYP_DEFERRED` | Loss this year's disposals deferred under the valores-homogéneos rule, as a positive magnitude |
 | `SUMMARY_GYP_REINTEGRATED` | Deferred loss this year's disposals released, as a positive magnitude |
 | `SUMMARY_GYP_NET` | `capital gains + FX − reintegrated − small-disposals exemption` |
-| `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` | Prior-year balances consumed **inside their own group** this year (Fase 2ª-1º) |
+| `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` | Prior-year balances consumed **inside their own group** this year: Fase 2ª-1º under Común and Gipuzkoa, TRLFIRPF art. 54.2's own-group absorption under Navarra |
 | `SUMMARY_CROSS_OFFSET_RCM_TO_GYP` / `_GYP_TO_RCM` | Current-year cross-group offset: Fase 1ª under Común, TRLFIRPF art. 54.2's own cross under Navarra; always 0 under Gipuzkoa |
 | `SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP` / `_GYP_TO_RCM` | Prior-year balance crossed into the other group: Fase 2ª-2º under Común, and under Navarra the part of the cross that only the broad reading of art. 54.2 allows |
 
-The label on those four rows is **per regime**, because the amount comes from a different statute in
-each. Común and Gipuzkoa carry the AEAT numbering (`fase 1ª (25% — sólo Territorio Común)` and
-`fase 2ª-2º (saldos de ejercicios anteriores)`); Navarra carries TRLFIRPF art. 54.2's own, where
-letra a) is the capital-mobiliario group and letra b) the transmisiones one, so the RCM row cites
-`art. 54.2.a` and the ganancias row `art. 54.2.b`, each capped at 25% of the *other* letra's positive
-after that letra absorbed its own carryforwards. Gipuzkoa's rows are structurally zero — it
-integrates the groups "exclusivamente entre sí" — and keep the state wording rather than earning a
-third vocabulary for a row that cannot fire. The keys never change; only the label cell does.
+The label on all **six** rows of the compensation block is **per regime**, because the amount comes
+from a different statute in each. Común and Gipuzkoa carry the AEAT numbering (`fase 2ª-1º`,
+`fase 1ª (25% — sólo Territorio Común)` and `fase 2ª-2º (saldos de ejercicios anteriores)`); Navarra
+carries TRLFIRPF art. 54.2's own, where letra a) is the capital-mobiliario group and letra b) the
+transmisiones one, so every RCM row cites `art. 54.2.a` and every ganancias row `art. 54.2.b`. The
+own-group rows name the statute's two conditions on that absorption — it happens only when the
+group's own result is positive and it cannot drive that result below zero — and the cross rows name
+the 25% of the *other* letra's positive after that letra absorbed its own carryforwards. Gipuzkoa's
+cross rows are structurally zero — it integrates the groups "exclusivamente entre sí" — and keep the
+state wording rather than earning a third vocabulary for a row that cannot fire. The keys never
+change; only the label cell does.
 | `SUMMARY_RCM_TAXABLE` / `SUMMARY_GYP_TAXABLE` | Each group after compensation |
 | `SUMMARY_SAVINGS_BASE` | Base liquidable del ahorro |
 | `SUMMARY_SAVINGS_QUOTA` | Cuota íntegra del ahorro |
@@ -299,8 +302,9 @@ warning about them is printed on the console only.
   (`SUMMARY_GYP_SMALL_DISPOSALS_EXEMPTION`), and five warning banners (DT 7.ª abatement not
   computed, small-disposals exemption applied, exemption withheld for an unmeasurable conversion,
   fee ceiling bound, carried saldo crossed). `SUMMARY_GYP_NET` now subtracts the exemption.
-  The four `SUMMARY_*CROSS_OFFSET_*` labels became per-regime: Común and Gipuzkoa keep the AEAT
-  "fase" wording, Navarra names TRLFIRPF art. 54.2.a / 54.2.b
+  The six labels of the compensation block (`SUMMARY_*_LOSSES_APPLIED` and
+  `SUMMARY_*CROSS_OFFSET_*`) became per-regime: Común and Gipuzkoa keep the AEAT "fase" wording,
+  Navarra names TRLFIRPF art. 54.2.a / 54.2.b
 - **Version 1.2**: open-items round (2026-08-11) — Modelo 109 keys carry the sheet
   (`MODELO_109_HOJA_<n>` / `MODELO_109_ANEXO3_<n>`, replacing `MODELO_109_CASILLA_<n>`), the
   double-taxation and cuota-líquida casillas follow the ejercicio (60/64 through 2024, 70/74 from

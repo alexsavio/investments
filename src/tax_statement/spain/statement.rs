@@ -831,11 +831,12 @@ impl SpanishTaxStatement {
         ))
     }
 
-    /// Prior-year RCM balances this year applied **within their own group** — the Fase 2ª-1º
-    /// consumption alone.
+    /// Prior-year RCM balances this year applied **within their own group** — Fase 2ª-1º under the
+    /// state order, TRLFIRPF art. 54.2.a's own-group absorption under Navarra.
     ///
-    /// `rcm_applied.used_total` is the whole ledger consumption and already contains what Fase 2ª-2º
-    /// crossed into the ganancias group, which `prior_cross_offset_rcm_to_gyp` reports on its own.
+    /// `rcm_applied.used_total` is the whole ledger consumption and already contains what crossed
+    /// into the ganancias group (Fase 2ª-2º under the state order, art. 54.2's "en el mismo orden"
+    /// under Navarra), which `prior_cross_offset_rcm_to_gyp` reports on its own.
     /// Reporting both in full prints the crossed amount twice, and a filer transcribing the two
     /// rows claims it twice. The rows are therefore disjoint, and their sum is the consumption.
     pub fn rcm_own_group_losses_applied(&self) -> Decimal {
