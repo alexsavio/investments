@@ -1629,3 +1629,87 @@ fn navarra_defers_losses_exactly_like_comun(#[case] fixture: &str) {
         "{fixture}"
     );
 }
+
+/// End to end, the third compensation ordering produces a third answer on one set of inputs.
+///
+/// The `cross_offset` fixture is a €9,000 ganancias loss against €7,200 of dividends; add a €2,000
+/// prior-year RCM saldo and the orderings separate:
+///
+/// - **Común**: the current-year loss crosses first, capped at 25% of the *original* €7,200 = 1,800
+///   → 5,400, then the prior saldo absorbs 2,000 of what is left → **3,400**.
+/// - **Navarra**: the RCM result absorbs its own 2,000 first → 5,200, and only then does the loss
+///   cross, capped at 25% of that €5,200 = 1,300 → **3,900**.
+/// - **Gipuzkoa**: nothing crosses, and €1,500 of the dividend is exempt → **3,700**.
+#[test]
+fn the_navarra_ordering_changes_the_base_end_to_end() {
+    let base = |regime| {
+        let mut config = spain_config(regime);
+        config
+            .spain
+            .as_mut()
+            .unwrap()
+            .loss_carryforward
+            .rcm
+            .insert(2025, dec!(2000));
+        run_pipeline_with_config("cross_offset", 2026, &config)
+    };
+
+    let navarra = base(SpanishTaxRegime::Navarra);
+    assert_eq!(navarra.rcm_net, dec!(7200));
+    assert_eq!(navarra.gyp_net, dec!(-9000));
+    // The prior saldo was consumed by its own group before the cross was measured.
+    assert_eq!(navarra.rcm_applied.used_total, dec!(2000));
+    assert_eq!(navarra.cross_offset_gyp_to_rcm, dec!(1300));
+    assert_eq!(navarra.savings_base, dec!(3900));
+    assert_eq!(navarra.gyp_ledger_next.balances()[&2026], dec!(7700));
+
+    let comun = base(SpanishTaxRegime::Comun);
+    assert_eq!(comun.cross_offset_gyp_to_rcm, dec!(1800));
+    assert_eq!(comun.savings_base, dec!(3400));
+
+    let gipuzkoa = base(SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.cross_offset_gyp_to_rcm, dec!(0));
+    assert_eq!(gipuzkoa.savings_base, dec!(3700));
+}
+
+/// A carried saldo crossing is the one part of the Navarra order the statute does not settle, so it
+/// is named with its euro amount wherever the statement is reported.
+///
+/// The `fifo` fixture has no RCM income at all, so a €8,000 prior-year RCM saldo has nothing of its
+/// own to attack; under the reading implemented it reaches 25% of the €22,500 ganancias result.
+#[test]
+fn a_carried_saldo_crossing_is_named_with_its_amount() {
+    let run = |regime| {
+        let mut config = spain_config(regime);
+        config
+            .spain
+            .as_mut()
+            .unwrap()
+            .loss_carryforward
+            .rcm
+            .insert(2025, dec!(8000));
+        run_pipeline_with_config("fifo", 2026, &config)
+    };
+
+    let navarra = run(SpanishTaxRegime::Navarra);
+    assert_eq!(navarra.prior_cross_offset_rcm_to_gyp, dec!(5625));
+    assert_eq!(navarra.savings_base, dec!(16875));
+    assert_eq!(navarra.rcm_ledger_next.balances()[&2025], dec!(2375));
+
+    let message = navarra.carried_cross_offset_message().unwrap();
+    assert!(message.contains("€5625.00"), "{message}");
+    assert!(message.contains("art. 54.2"), "{message}");
+    assert!(message.contains("docs/spain-taxes.md"), "{message}");
+
+    // Común reaches the same base by its own settled route (AEAT Manual cap. 12, Fase 2ª-2º), so
+    // there is no open reading to warn about there.
+    let comun = run(SpanishTaxRegime::Comun);
+    assert_eq!(comun.prior_cross_offset_rcm_to_gyp, dec!(5625));
+    assert_eq!(comun.savings_base, dec!(16875));
+    assert!(comun.carried_cross_offset_message().is_none());
+
+    // And Gipuzkoa never crosses at all.
+    let gipuzkoa = run(SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.prior_cross_offset_rcm_to_gyp, dec!(0));
+    assert!(gipuzkoa.carried_cross_offset_message().is_none());
+}

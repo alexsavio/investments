@@ -922,6 +922,27 @@ impl CsvFormatter {
             - statement.total_dividend_exemption
     }
 
+    /// Wrap a one-sentence warning into `#` comment lines of the width the rest of the file uses.
+    ///
+    /// The message itself is built once on the statement, so the console, the log and the CSV all
+    /// print the same words; only the line breaking is this formatter's business.
+    fn write_comment_block<W: Write>(writer: &mut W, message: &str) -> GenericResult<()> {
+        const WIDTH: usize = 96;
+        let mut line = String::from("# WARNING:");
+
+        for word in message.split_whitespace() {
+            if line.len() + 1 + word.len() > WIDTH {
+                writeln!(writer, "{line}")?;
+                line = String::from("#");
+            }
+            line.push(' ');
+            line.push_str(word);
+        }
+
+        writeln!(writer, "{line}")?;
+        Ok(())
+    }
+
     /// Say where the foreign withholding does **not** go.
     ///
     /// A retención is Spanish tax already paid on the filer's account; foreign tax is relieved only
@@ -1032,6 +1053,11 @@ impl CsvFormatter {
                     Self::format_decimal(review.loss_eur)
                 )?;
             }
+        }
+
+        if let Some(message) = statement.carried_cross_offset_message() {
+            writeln!(writer)?;
+            Self::write_comment_block(writer, &message)?;
         }
 
         if statement.total_dividend_exemption > Decimal::ZERO {
@@ -1936,5 +1962,59 @@ mod tests {
             CsvFormatter::write_carryforward(w, &statement(SpanishTaxRegime::Gipuzkoa))
         });
         assert!(empty.is_empty());
+    }
+
+    /// The carried-saldo warning is built once on the statement, so the CSV must print those exact
+    /// words rather than a paraphrase of its own — only the `#` line breaking belongs here.
+    #[test]
+    fn the_carried_cross_offset_warning_reproduces_the_shared_message() {
+        let regime = SpanishTaxRegime::Navarra;
+        let mut spain = SpanishTaxStatement::new(
+            2026,
+            regime,
+            SavingsScale::for_year(regime, 2026).unwrap(),
+            LossLedger::from_config(&BTreeMap::from([(2025, dec!(8000))]), 2026, "rcm").unwrap(),
+            LossLedger::default(),
+            CrossOffset::NavarraOrdered,
+            dec!(0.15),
+            Decimal::ZERO,
+        );
+        spain.capital_gains.push(capital_gain());
+        spain.calculate_totals();
+
+        let message = spain.carried_cross_offset_message().unwrap();
+        let output = render(|w| CsvFormatter::write_warnings(w, &spain));
+
+        assert!(output.contains("# WARNING:"), "{output}");
+        // Every `#` prefix and line break removed, the block is the message verbatim.
+        let printed = output
+            .lines()
+            .filter(|line| line.starts_with('#'))
+            .map(|line| line.trim_start_matches('#').trim())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(printed.contains(&message), "{printed}");
+
+        // Nothing to warn about under a regime whose cross-offset order is settled, even though
+        // the AEAT's Fase 2ª-2º crosses the same €5,625.
+        let regime = SpanishTaxRegime::Comun;
+        let mut comun = SpanishTaxStatement::new(
+            2026,
+            regime,
+            SavingsScale::for_year(regime, 2026).unwrap(),
+            LossLedger::from_config(&BTreeMap::from([(2025, dec!(8000))]), 2026, "rcm").unwrap(),
+            LossLedger::default(),
+            CrossOffset::AeatTwoPhase,
+            dec!(0.15),
+            Decimal::ZERO,
+        );
+        comun.capital_gains.push(capital_gain());
+        comun.calculate_totals();
+
+        assert_eq!(comun.prior_cross_offset(), spain.prior_cross_offset());
+        assert!(
+            !render(|w| CsvFormatter::write_warnings(w, &comun)).contains("art. 54.2"),
+            "the Común statement must not carry the Navarra caveat"
+        );
     }
 }

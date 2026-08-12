@@ -332,12 +332,14 @@ pub struct SpanishTaxStatement {
     pub rcm_applied: LedgerApplication,
     pub gyp_applied: LedgerApplication,
 
-    /// Current-year negative of one group set against the other (Territorio Común only, Fase 1ª).
+    /// Current-year negative of one group set against the other. Zero under Gipuzkoa; the AEAT
+    /// Fase 1ª under Común, and TRLFIRPF art. 54.2's own cross under Navarra.
     pub cross_offset_rcm_to_gyp: Decimal,
     pub cross_offset_gyp_to_rcm: Decimal,
 
     /// Prior-year balance of one group its own group could not absorb, set against the other's
-    /// remainder (Territorio Común only, Fase 2ª-2º).
+    /// remainder. Zero under Gipuzkoa; the AEAT Fase 2ª-2º under Común, and under Navarra the part
+    /// of the cross that only the broad reading of art. 54.2 allows.
     pub prior_cross_offset_rcm_to_gyp: Decimal,
     pub prior_cross_offset_gyp_to_rcm: Decimal,
 
@@ -592,6 +594,44 @@ impl SpanishTaxStatement {
     /// The ganancias mirror of [`Self::rcm_own_group_losses_applied`].
     pub fn gyp_own_group_losses_applied(&self) -> Decimal {
         self.gyp_applied.used_total - self.prior_cross_offset_gyp_to_rcm
+    }
+
+    /// Prior-year saldos this year crossed into the other savings-base group.
+    pub fn prior_cross_offset(&self) -> Decimal {
+        self.prior_cross_offset_rcm_to_gyp + self.prior_cross_offset_gyp_to_rcm
+    }
+
+    /// The sentence every surface reports the Navarra carried-saldo cross with, so the console, the
+    /// log and the CSV cannot drift apart. `None` when nothing turned on the open reading.
+    ///
+    /// TRLFIRPF art. 54.2 opens its 25% cross-offset for a negative *current-year* result. The
+    /// carry sentence sends what is left into the following four years "en el mismo orden
+    /// establecido en los párrafos anteriores", which the tool reads as repeating that cross for a
+    /// carried saldo too. Nothing published by the Hacienda Foral de Navarra settles the point, and
+    /// the amount below is exactly what the reading is responsible for: on the narrow one it would
+    /// stay pending and the savings base would be that much higher.
+    pub fn carried_cross_offset_message(&self) -> Option<String> {
+        if self.cross_offset != CrossOffset::NavarraOrdered {
+            return None;
+        }
+
+        let crossed = self.prior_cross_offset();
+        if crossed <= Decimal::ZERO {
+            return None;
+        }
+
+        Some(format!(
+            "€{} of prior-year negative savings-base saldos was set against the other group under \
+             TRLFIRPF art. 54.2. The article opens that 25% cross-offset for a negative \
+             current-year result; the tool reads the four-year carry rule's \"en el mismo orden \
+             establecido en los párrafos anteriores\" as repeating it for a saldo carried in from an \
+             earlier year, which is what allowed this amount. No Hacienda Foral de Navarra manual or \
+             consulta settles the point. On the narrower reading the amount would stay pending and \
+             the savings base would be €{} higher. See the open-interpretations register in \
+             docs/spain-taxes.md.",
+            super::format_eur(crossed),
+            super::format_eur(crossed)
+        ))
     }
 
     /// The credit's first limb, summed payment by payment.

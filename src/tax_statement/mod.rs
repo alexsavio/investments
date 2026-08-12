@@ -320,6 +320,10 @@ fn generate_spanish_tax_statement(
         println!("{}", Color::Yellow.paint(format!("WARNING: {}", review.message())));
     }
 
+    if let Some(message) = statement.carried_cross_offset_message() {
+        println!("{}", Color::Yellow.paint(format!("WARNING: {message}")));
+    }
+
     for review in &statement.wash_sale_venue_reviews {
         println!(
             "{}",

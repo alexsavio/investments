@@ -136,6 +136,10 @@ pub fn compute_tax_year(
         process_broker_statement(&mut statement, broker_statement, &params, converter)?;
     statement.calculate_totals();
 
+    if let Some(message) = statement.carried_cross_offset_message() {
+        warn!("{message}");
+    }
+
     // A year with no income of its own can still have a return to file. A fee creates a negative
     // RCM balance under Común and needs reporting under Gipuzkoa; a pending balance has to be
     // carried or reported as expired; a carried-in deferral has to be carried out again. Reporting
