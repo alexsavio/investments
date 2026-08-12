@@ -52,6 +52,9 @@ struct SpanishTaxParams<'a> {
     treaty_rate: Decimal,
     /// Whether custody and administration fees reduce the RCM result.
     custody_fees_deductible: bool,
+    /// Ceiling on those fees as a fraction of the non-exempt gross income from the securities they
+    /// were charged on, where the regime sets one.
+    custody_fee_cap_fraction: Option<Decimal>,
     /// Annual dividend exemption (NF 3/2014 art. 9.24), zero where the regime has none.
     dividend_exemption_limit: Decimal,
     /// How far, and in what order, a negative balance in one savings-base group may reach the other.
@@ -74,6 +77,13 @@ impl<'a> SpanishTaxParams<'a> {
             custody_fees_deductible: match config.regime {
                 SpanishTaxRegime::Gipuzkoa => false,
                 SpanishTaxRegime::Comun | SpanishTaxRegime::Navarra => true,
+            },
+            // TRLFIRPF art. 32.1.a allows the same fees as LIRPF art. 26.1.a but "con el límite
+            // del 3 por 100 de los ingresos íntegros, que no hayan resultado exentos, procedentes
+            // de dichos valores". The state text has no such ceiling.
+            custody_fee_cap_fraction: match config.regime {
+                SpanishTaxRegime::Gipuzkoa | SpanishTaxRegime::Comun => None,
+                SpanishTaxRegime::Navarra => Some(dec!(0.03)),
             },
             // NF 3/2014 art. 9.24 exempts the first €1,500 of dividends a year — confirmed in
             // force for 2024, 2025 and 2026 against the Diputación Foral's own Modelo 109 pages,
@@ -130,13 +140,20 @@ pub fn compute_tax_year(
         params.cross_offset,
         params.treaty_rate,
         params.dividend_exemption_limit,
+        params.custody_fee_cap_fraction,
     );
 
     let has_activity =
         process_broker_statement(&mut statement, broker_statement, &params, converter)?;
     statement.calculate_totals();
 
-    if let Some(message) = statement.carried_cross_offset_message() {
+    for message in [
+        statement.custody_fee_cap_message(),
+        statement.carried_cross_offset_message(),
+    ]
+    .into_iter()
+    .flatten()
+    {
         warn!("{message}");
     }
 

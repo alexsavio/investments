@@ -1713,3 +1713,79 @@ fn a_carried_saldo_crossing_is_named_with_its_amount() {
     assert_eq!(gipuzkoa.prior_cross_offset_rcm_to_gyp, dec!(0));
     assert!(gipuzkoa.carried_cross_offset_message().is_none());
 }
+
+/// The Navarra fee ceiling, end to end on the `income` fixture: a €900 dividend, €90 of broker
+/// interest and a €45 custody fee.
+///
+/// TRLFIRPF art. 32.1.a caps the deduction at 3% of the non-exempt gross income from the securities
+/// — €27 here — so €18 of the fee is disallowed and the RCM result is 900 + 90 − 27 = €963. Común
+/// deducts the whole €45 and reaches €945; Gipuzkoa deducts nothing at all.
+#[test]
+fn navarra_caps_deductible_custody_fees_at_three_percent() {
+    let navarra = run_pipeline("income", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.custody_fee_cap, Some(dec!(27)));
+    assert_eq!(navarra.total_deductible_fees, dec!(27));
+    assert_eq!(navarra.total_capped_fees, dec!(18));
+    // The disallowed part is not folded into the informational fees: those were never deductible.
+    assert_eq!(navarra.total_informational_fees, dec!(0));
+    assert_eq!(navarra.rcm_net, dec!(963));
+    assert_eq!(navarra.savings_base, dec!(963));
+    assert_eq!(navarra.savings_quota, dec!(192.60));
+    assert_eq!(navarra.average_savings_rate, dec!(0.20));
+    // The treaty limb still binds: min(270, 900 × 15%) = 135, against a rate limb of ~175.
+    assert_eq!(navarra.total_foreign_tax_credit, dec!(135));
+    assert_eq!(navarra.net_tax_due, dec!(57.60));
+
+    let message = navarra.custody_fee_cap_message().unwrap();
+    assert!(message.contains("€18.00"), "{message}");
+    assert!(message.contains("art. 32.1.a"), "{message}");
+
+    let comun = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.custody_fee_cap, None);
+    assert_eq!(comun.total_deductible_fees, dec!(45));
+    assert_eq!(comun.total_capped_fees, dec!(0));
+    assert_eq!(comun.rcm_net, dec!(945));
+    assert!(comun.custody_fee_cap_message().is_none());
+
+    let gipuzkoa = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.total_deductible_fees, dec!(0));
+    assert!(gipuzkoa.custody_fee_cap_message().is_none());
+}
+
+/// A year with fees but no securities income has a ceiling of zero, so nothing is deductible —
+/// the `cross_offset_rcm` fixture's €3,600 custody fee against a €9,000 gain and no dividends.
+///
+/// Común deducts the fee in full and crosses the resulting negative into the gain; Navarra deducts
+/// none of it, so the gain stands whole and is taxed at art. 60's own rates.
+#[test]
+fn the_navarra_fee_ceiling_is_zero_without_securities_income() {
+    let navarra = run_pipeline("cross_offset_rcm", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.custody_fee_cap, Some(dec!(0)));
+    assert_eq!(navarra.total_deductible_fees, dec!(0));
+    assert_eq!(navarra.total_capped_fees, dec!(3600));
+    assert_eq!(navarra.rcm_net, dec!(0));
+    assert_eq!(navarra.cross_offset_rcm_to_gyp, dec!(0));
+    assert_eq!(navarra.gyp_taxable, dec!(9000));
+    assert_eq!(navarra.savings_base, dec!(9000));
+    // 6,000 × 20% + 3,000 × 22%.
+    assert_eq!(navarra.savings_quota, dec!(1860));
+
+    let comun = run_pipeline("cross_offset_rcm", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.rcm_net, dec!(-3600));
+    assert_eq!(comun.savings_base, dec!(6750));
+}
+
+/// Below the ceiling nothing is clamped, and the ceiling itself is still reported so a filer can
+/// see how much headroom the year had. €2,250 of dividends allows €67.50 of fees; the fixture
+/// charges none, so the deduction is whatever the classifier found.
+#[test]
+fn the_navarra_fee_ceiling_does_not_bite_when_fees_are_small() {
+    let navarra = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.total_dividend_income, dec!(2250));
+    assert_eq!(navarra.custody_fee_cap, Some(dec!(67.50)));
+    assert_eq!(navarra.total_capped_fees, dec!(0));
+    assert!(navarra.custody_fee_cap_message().is_none());
+}

@@ -443,6 +443,20 @@ impl CsvFormatter {
             "Gastos deducibles de administración y depósito",
             statement.total_deductible_fees,
         )?;
+        if statement.custody_fee_cap.is_some() {
+            row(
+                writer,
+                "SUMMARY_RCM_FEE_CAP",
+                "Límite del 3% de los ingresos íntegros no exentos (TRLFIRPF art. 32.1.a — sólo Navarra)",
+                statement.custody_fee_cap.unwrap_or_default(),
+            )?;
+            row(
+                writer,
+                "SUMMARY_RCM_FEES_OVER_CAP",
+                "Gastos de administración y depósito excluidos por el límite del 3%",
+                statement.total_capped_fees,
+            )?;
+        }
         row(
             writer,
             "SUMMARY_RCM_NET",
@@ -1055,6 +1069,11 @@ impl CsvFormatter {
             }
         }
 
+        if let Some(message) = statement.custody_fee_cap_message() {
+            writeln!(writer)?;
+            Self::write_comment_block(writer, &message)?;
+        }
+
         if let Some(message) = statement.carried_cross_offset_message() {
             writeln!(writer)?;
             Self::write_comment_block(writer, &message)?;
@@ -1191,6 +1210,7 @@ mod tests {
             CrossOffset::None,
             dec!(0.15),
             Decimal::ZERO,
+            None,
         )
     }
 
@@ -1610,6 +1630,58 @@ mod tests {
         }
     }
 
+    /// The fee-ceiling rows exist only where a ceiling does, and stay inside the summary block's
+    /// three columns. Emitting them for every regime would invite a filer to look for a limit their
+    /// own statute does not impose.
+    #[test]
+    fn the_fee_ceiling_rows_are_navarra_only() {
+        let render_for = |regime, cap| {
+            let mut spain = SpanishTaxStatement::new(
+                2026,
+                regime,
+                SavingsScale::for_year(regime, 2026).unwrap(),
+                LossLedger::default(),
+                LossLedger::default(),
+                CrossOffset::None,
+                dec!(0.15),
+                Decimal::ZERO,
+                cap,
+            );
+            spain.dividends.push(DividendEntry {
+                symbol: "AAPL".to_string(),
+                isin: String::new(),
+                description: String::new(),
+                date: date(),
+                gross_eur: dec!(900),
+                withheld_eur: Decimal::ZERO,
+                treaty_capped_credit: Decimal::ZERO,
+                exemption_eligible: true,
+                notes: None,
+            });
+            spain.fees.push(FeeEntry {
+                date: date(),
+                description: "CUSTODY FEE".to_string(),
+                amount_eur: dec!(45),
+                deductible: true,
+                review: None,
+                notes: None,
+            });
+            spain.calculate_totals();
+            render(|w| CsvFormatter::write_summary_rows(w, &spain))
+        };
+
+        let navarra = render_for(SpanishTaxRegime::Navarra, Some(dec!(0.03)));
+        assert!(navarra.contains("SUMMARY_RCM_FEE_CAP,"), "{navarra}");
+        assert!(navarra.contains("SUMMARY_RCM_FEES_OVER_CAP,"), "{navarra}");
+        for row in navarra.lines().filter(|line| line.starts_with("SUMMARY_")) {
+            assert_eq!(row.split(',').count(), 3, "{row}");
+        }
+
+        let comun = render_for(SpanishTaxRegime::Comun, None);
+        assert!(!comun.contains("SUMMARY_RCM_FEE_CAP"), "{comun}");
+        assert!(!comun.contains("SUMMARY_RCM_FEES_OVER_CAP"), "{comun}");
+    }
+
     /// The two prior-year compensation rows must be **disjoint**: the own-group row carries what
     /// Fase 2ª-1º applied inside the group, the cross row what Fase 2ª-2º took out of it, and their
     /// sum is the ledger consumption. Printing the ledger total in both would show the crossed
@@ -1629,6 +1701,7 @@ mod tests {
             CrossOffset::AeatTwoPhase,
             dec!(0.15),
             Decimal::ZERO,
+            None,
         );
 
         spain.fees.push(FeeEntry {
@@ -1715,6 +1788,7 @@ mod tests {
             CrossOffset::None,
             dec!(0.15),
             Decimal::ZERO,
+            None,
         );
         let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
 
@@ -1820,6 +1894,7 @@ mod tests {
             CrossOffset::None,
             dec!(0.15),
             dec!(1500),
+            None,
         );
         spain.dividends.push(DividendEntry {
             symbol: "AAPL".to_string(),
@@ -1882,6 +1957,7 @@ mod tests {
             CrossOffset::None,
             dec!(0.15),
             Decimal::ZERO,
+            None,
         );
         let mut gain = capital_gain();
         gain.fiscal_gain_loss = dec!(10000);
@@ -1978,6 +2054,7 @@ mod tests {
             CrossOffset::NavarraOrdered,
             dec!(0.15),
             Decimal::ZERO,
+            None,
         );
         spain.capital_gains.push(capital_gain());
         spain.calculate_totals();
@@ -2007,6 +2084,7 @@ mod tests {
             CrossOffset::AeatTwoPhase,
             dec!(0.15),
             Decimal::ZERO,
+            None,
         );
         comun.capital_gains.push(capital_gain());
         comun.calculate_totals();

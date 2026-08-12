@@ -303,10 +303,15 @@ pub struct SpanishTaxStatement {
     /// Interest paid on a borrowed balance, as a positive magnitude. Reported only — it never
     /// reduces the RCM result.
     pub total_paid_interest: Decimal,
-    /// Fees that reduce the RCM result, as a positive magnitude.
+    /// Fees that reduce the RCM result, as a positive magnitude, after any regime cap.
     pub total_deductible_fees: Decimal,
-    /// Fees reported for information only, as a positive magnitude.
+    /// Fees reported for information only, as a positive magnitude. Excludes what the cap
+    /// disallowed, which is reported on its own so the two reasons are never conflated.
     pub total_informational_fees: Decimal,
+    /// Ceiling the regime puts on deductible custody and administration fees, and the part of them
+    /// it disallowed. `None` where the regime sets no ceiling.
+    pub custody_fee_cap: Option<Decimal>,
+    pub total_capped_fees: Decimal,
     pub total_foreign_withholding: Decimal,
     /// Integrable result of the year's disposals — what the ganancias group takes from them.
     pub total_capital_gains: Decimal,
@@ -369,6 +374,9 @@ pub struct SpanishTaxStatement {
     cross_offset: CrossOffset,
     /// Treaty cap on the source state's withholding, used for the credit's first limb.
     treaty_rate: Decimal,
+    /// Fraction of the non-exempt gross securities income that caps deductible custody fees:
+    /// `Some(0.03)` under Navarra (TRLFIRPF art. 32.1.a), `None` where the regime has no ceiling.
+    custody_fee_cap_fraction: Option<Decimal>,
 }
 
 impl SpanishTaxStatement {
@@ -381,6 +389,7 @@ impl SpanishTaxStatement {
         cross_offset: CrossOffset,
         treaty_rate: Decimal,
         dividend_exemption_limit: Decimal,
+        custody_fee_cap_fraction: Option<Decimal>,
     ) -> SpanishTaxStatement {
         SpanishTaxStatement {
             year,
@@ -389,6 +398,9 @@ impl SpanishTaxStatement {
             cross_offset,
             treaty_rate,
             dividend_exemption_limit,
+            custody_fee_cap_fraction,
+            custody_fee_cap: None,
+            total_capped_fees: Decimal::ZERO,
             rcm_ledger_prior: rcm_ledger.clone(),
             gyp_ledger_prior: gyp_ledger.clone(),
             rcm_ledger_next: rcm_ledger,
@@ -493,6 +505,8 @@ impl SpanishTaxStatement {
             std::cmp::max(Decimal::ZERO, eligible_dividends),
         );
 
+        self.apply_custody_fee_cap();
+
         self.rcm_net = self.total_dividend_income + self.total_interest_income
             - self.total_deductible_fees
             - self.total_dividend_exemption;
@@ -578,6 +592,58 @@ impl SpanishTaxStatement {
             Decimal::ZERO,
             self.savings_quota - self.total_foreign_tax_credit,
         );
+    }
+
+    /// Clamp deductible custody and administration fees to the regime's ceiling.
+    ///
+    /// TRLFIRPF art. 32.1.a allows them "con el límite del 3 por 100 de los ingresos íntegros, que
+    /// no hayan resultado exentos, procedentes de dichos valores". Two readings are pinned here:
+    ///
+    /// - the ceiling is measured on the **securities'** income, which in a broker statement means
+    ///   dividends. Interest credited on a cash balance is a cesión de capitales propios under art.
+    ///   29, not income from a valor negociable, so it does not raise the ceiling;
+    /// - "que no hayan resultado exentos" removes any exempt slice from that base. Navarra has no
+    ///   dividend exemption, so the subtraction is a no-op there and exists for the rule's sake.
+    ///
+    /// A regime with no ceiling leaves everything untouched. What the ceiling disallows is reported
+    /// as its own figure rather than folded into the informational fees, which are a different
+    /// thing: those were never deductible, this was, up to a limit.
+    fn apply_custody_fee_cap(&mut self) {
+        let Some(fraction) = self.custody_fee_cap_fraction else {
+            return;
+        };
+
+        let base = std::cmp::max(
+            Decimal::ZERO,
+            self.total_dividend_income - self.total_dividend_exemption,
+        );
+        let cap = base * fraction;
+
+        self.custody_fee_cap = Some(cap);
+        if self.total_deductible_fees > cap {
+            self.total_capped_fees = self.total_deductible_fees - cap;
+            self.total_deductible_fees = cap;
+        }
+    }
+
+    /// The sentence every surface reports a binding fee ceiling with, so the console, the log and
+    /// the CSV cannot drift apart. `None` when the ceiling did not bite.
+    pub fn custody_fee_cap_message(&self) -> Option<String> {
+        if self.total_capped_fees <= Decimal::ZERO {
+            return None;
+        }
+
+        Some(format!(
+            "€{} of otherwise deductible custody and administration fees was NOT deducted: \
+             TRLFIRPF art. 32.1.a caps them at 3% of the non-exempt gross income from the \
+             securities, which is €{} here, and the year's qualifying fees came to €{}. The \
+             ceiling is measured on dividend income; interest credited on a cash balance is not \
+             income from a valor negociable and does not raise it. See the open-interpretations \
+             register in docs/spain-taxes.md.",
+            super::format_eur(self.total_capped_fees),
+            super::format_eur(self.custody_fee_cap.unwrap_or_default()),
+            super::format_eur(self.total_deductible_fees + self.total_capped_fees)
+        ))
     }
 
     /// Prior-year RCM balances this year applied **within their own group** — the Fase 2ª-1º
@@ -739,6 +805,7 @@ mod tests {
             CrossOffset::None,
             dec!(0.15),
             Decimal::ZERO,
+            None,
         )
     }
 
@@ -856,6 +923,7 @@ mod tests {
             CrossOffset::AeatTwoPhase,
             dec!(0.15),
             Decimal::ZERO,
+            None,
         );
 
         spain.dividends.push(DividendEntry {
@@ -929,6 +997,7 @@ mod tests {
             CrossOffset::None,
             dec!(0.15),
             dec!(1500),
+            None,
         );
 
         spain.dividends.push(dividend(dec!(300), dec!(45), true));
