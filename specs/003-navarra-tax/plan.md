@@ -317,6 +317,38 @@ exemption to the net result and flooring at 0 would do the same.
 Común: base 450 → `450 × 19% =` **85.50**. Gipuzkoa: 1.020 → AAPL 1 800 − 918 = 882, MSFT
 900 − 1 377 = −477, net 405 → `405 × 19% =` **76.95**.
 
+**`small_disposal_ceiling` fixture — 2.º's 50% is measured on *all* transmissions' proceeds.**
+`I` counts only incrementos, but the ceiling `I` is compared against is half of the **global**
+amount, and the global amount includes the loss-making transmissions. The two figures therefore rest
+on different populations, which is a reading, not an identity — and no fixture so far can tell it
+from a ceiling measured on the gain-making transmissions alone. `small_disposal_mixed` cannot: its
+gain (900) is under half of its own sale's proceeds (900), so both ceilings leave it wholly exempt.
+
+Two instruments again, so the cost bases stay independent: AAPL buy 10 @ $20 on 2025-03-10
+($200 → €180) and sell 10 @ $200 on 2026-05-15 ($2 000 → €1 800), a **+1 620** incremento; MSFT buy
+10 @ $80 on 2025-04-10 ($800 → €720) and sell 10 @ $50 on 2026-09-15 ($500 → €450), a **−270**
+disminución. Every euro is 0.9 × a whole-dollar trade amount, so the shared flat-0.9 converter can
+produce all of them.
+
+Both readings agree that `I = 1 620` and both pass condition 1.º — €2 250 and €1 800 are each under
+€3 000 — so the entire difference sits in 2.º's denominator:
+
+| Reading | Ceiling base | 50% of it | Exempt | `total_capital_gains` | `gyp_net` | Navarra cuota |
+|---|---|---|---|---|---|---|
+| **All transmissions (implemented)** | 1 800 + 450 = 2 250 | 1 125 | min(1 620, 1 125) = **1 125** | 1 350 | **225** | 225 × 20% = **45.00** |
+| Gain-making transmissions only | 1 800 | 900 | min(1 620, 900) = **900** | 1 350 | 450 | 450 × 20% = 90.00 |
+
+€225 of base — €45.00 of Navarra tax — separates them, and the implemented reading is the one that
+exempts **more**: its failure direction is *less* tax, unlike every other choice in this round.
+That is what makes it worth a fixture and a register entry rather than a comment. The statutory text
+is on its side: 2.º measures "el importe global de la transmisión", and 1.º has already fixed
+"importe global" as the year's total transmissions, gain- and loss-making alike. Reading the same
+phrase two ways inside one letra would need an argument the article does not give.
+
+Común: no exemption, base 1 350 → `1 350 × 19% =` **256.50**. Gipuzkoa: 1.020 on both 2025 lots →
+AAPL 1 800 − 183.60 = 1 616.40, MSFT 450 − 734.40 = −284.40, net 1 332.00 → `1 332 × 19% =`
+**253.08**.
+
 **`small_disposal_boundary` fixture** — same buy as `small_disposal`, one sell of 10 @ $350 on
 2026-05-15 (€3 150). `G = 3 150 > 3 000`, so 1.º fails and no regime exempts anything. Navarra:
 `I = 3 150 − 900 = 2 250`, base 2 250, cuota **450.00**.
