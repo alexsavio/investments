@@ -49,7 +49,7 @@ Everything below is text/contract/coverage; both reviewers independently reprodu
 - **W5 — Low/record batch.** Status: DONE (`8f3ead76`) — one commit:
   (a) register the 8816/8850 positive-magnitude convention (form defines the boxes as sums < 0; the tool emits magnitudes — a stated choice, register + contract cross-ref); (b) `tests.rs:483-487` doc comment → three statutes; (c) `tests.rs:235` "both regimes" → name the two compared regimes; (d) review.md record polish: annotate the V2 task line (label ships the specimen note, not a medium-confidence hedge — deviation recorded in close-out), fix the "every other box carries" phrasing, annotate V3's task-prose euros as superseded by the recorded substitution.
   Commit: `chore(navarra-tax): close the second-pass low findings`
-- **W6 — Gate + byte identity + close-out.** Status: TODO — full gate; `cmp` the Gipuzkoa smoke CSV against `es-final3.csv` (W1 must keep Gipuzkoa/Común bytes identical); Navarra smoke re-run (expect only the two W1 label lines to differ from V7's CSV); close-out appended here.
+- **W6 — Gate + byte identity + close-out.** Status: DONE — full gate; `cmp` the Gipuzkoa smoke CSV against `es-final3.csv` (W1 must keep Gipuzkoa/Común bytes identical); Navarra smoke re-run (expect only the two W1 label lines to differ from V7's CSV — **the expectation was wrong**, see the second-pass close-out); close-out appended here.
   Commit: `docs(navarra-tax): close the second review pass`
 
 ## Accepted as-is (recorded, not fixed)
@@ -126,3 +126,74 @@ appear because the year's transmissions are positive; that path is covered by
   shape with euros the converter can produce (+900 on €1,800, −450 on €900) and Appendix A says why.
 - **Left open, new:** the fractional-cent carry-out (plan item 7). Deciding it means choosing where
   the statutory rounding point sits, not changing a format string.
+
+## Second-pass close-out (2026-08-12)
+
+### Gate
+
+| Check | Result |
+|---|---|
+| `cargo check --all-targets` | clean |
+| `cargo test spain --lib` | **354 passed**, 0 failed (second-pass baseline 352 → +2) |
+| `cargo test --lib` | 833 passed, **34 failed** — every one a `parse_real` case, the pre-existing empty-submodule set, unchanged |
+| `cargo test german --lib` / `germany --lib` | 97 / 84 passed, 0 failed — untouched |
+| `./check` | the same **3** upstream clippy errors (`statistics.rs:70`, `xls/table.rs:23`, `rebalancing.rs:519`), nothing new |
+
+### Byte identity
+
+W1 moves a label two more regimes share, so every reference the prior rounds left behind was
+re-checked with the release binary built at W5:
+
+| Run | Reference | Result |
+|---|---|---|
+| `es-smoke`, `ibkr-miren` 2025, `regime: gipuzkoa` | `es-final3.csv` (the 002 round's file) | **byte-identical** (`cmp` clean; md5 `9e30f5bf…`) |
+| `adv-gipuzkoa` | `base-gipuzkoa.csv` | **byte-identical** |
+| `adv-comun` | `base-comun.csv` | **byte-identical** |
+| `adv-cf-gipuzkoa` (4-vintage carryforwards) | `basecf-gipuzkoa.csv` | **byte-identical** |
+| `adv-cf-comun` (4-vintage carryforwards) | `basecf-comun.csv` | **byte-identical** |
+
+### Navarra smoke re-run — and the one prediction this pass got wrong
+
+Same statement, `regime: navarra`. Every figure the V7 close-out recorded is unchanged — base
+**€99.55**, cuota íntegra **€19.91**, foreign credit **€12.33**, cuota líquida **€7.58**, ganancias
+netas **€16.18**, RCM neto **€83.37**.
+
+Against V7's CSV, **12 lines** moved, not the two the task predicted, and no value changed:
+
+- the two `SUMMARY_*_LOSSES_APPLIED` labels, from `fase 2ª-1º` to `art. 54.2.a` / `art. 54.2.b`
+  (W1, and the `adv-nav-loss` run shows the ganancias one carrying a real €16.18 rather than a zero);
+- the eight-line art. 39.5.d withholding banner and its blank line, now **absent** (W2).
+
+W6's expectation came from V7's close-out, which reasoned that "the V4 warning narrowing does not
+reach this statement — it has securities transmissions". True of V4's narrowing, false of W2's: this
+statement's only securities transmission is the NVDA sale at **−€12.25**, a *disminución*, so
+`small_disposals_gains = 0` and the year's **+€28.43** of held-balance conversion result is exactly
+what used to trip the caveat through the `|| total_fx_gains > 0` clause W2 deleted. With `I = 0` the
+relief is zero however the conversions are counted, so nothing was withheld and the banner was
+telling the filer to check an amount that could never have been exempt. Message-only, as W2 required:
+the euros above are identical on both sides, and the plan's N10 close-out now records the change.
+
+### Fixed
+
+| Task | Commit | What moved |
+|---|---|---|
+| W1 | `c2c01629` | The two own-group compensation labels join the four cross ones in being per regime; Navarra names art. 54.2.a / 54.2.b and the statute's two conditions on that absorption. `the_compensation_rows_name_the_regimes_own_statute` covers all six rows; the `statement.rs` accessor doc and the contract stop speaking only AEAT. Gipuzkoa and Común bytes unchanged. |
+| W2 | `bea4392b` | The withholding caveat needs an *incremento* to withhold: the predicate is `small_disposals_gains > 0` and the provably-dead FX-gain disjunct is gone. New `small_disposal_loss_fx` fixture (an all-loss €360 year plus a conversion across the revaluation) pins the silence; `small_disposal_fx` still fires. Register §13's first boundary and the contract's warning row follow. |
+| W3 | `bfcf9a90` | Appendix A §A.4 edge 3 states the suppression's three boundaries as shipped instead of "any year with an FX conversion realization", and A.6's `fx_gain` row says why that year is silent. |
+| W4 | `7f2a66a5` (Appendix A in `e6b69ef3`) | `small_disposal_ceiling` — AAPL +1 620 on €1 800, MSFT −270 on €450 — discriminates 2.º's denominator: the implemented all-transmissions ceiling exempts **1 125** and taxes 225; a gain-making-transmissions-only ceiling would exempt 900 and tax 450. €45.00 of Navarra tax, and the implemented side is the **generous** one — the round's only choice whose failure direction is less tax. Register entry 13 and the code doc say so. Hand-computed first; the implementation agreed on every figure. |
+| W5 | `8f3ead76` | 8816/8850's positive-magnitude convention registered as a stated choice (register §15 ← → contract); the margin-interest test doc names all three statutes; the `income` credit test names Común and Gipuzkoa instead of "both regimes"; three record annotations on the V-round task lines. |
+| W6 | this commit | Gate, byte identity, smoke re-runs, close-out. |
+
+### Findings worth carrying forward
+
+- **The withheld-exemption banner was firing on the user's own statement for no reason.** A
+  loss-making year with a conversion is not an unmeasurable year — it is a year with nothing to
+  measure. That the round's most visible Navarra warning turns out to be noise on the one real
+  statement available is the strongest argument for W2's predicate being the right one.
+- **The exemption-ceiling reading is the round's one non-conservative choice** and it now has a
+  fixture, an Appendix A derivation, and a register entry with its euro value. Everything else this
+  round decided errs towards more tax; this one errs towards less, so it is the first thing to ask
+  Hacienda Foral de Navarra about.
+- **No hand-computation disagreed with the implementation**, in this pass either: `small_disposal_ceiling`'s
+  proceeds, increment, exemption, `gyp_net`, cuota and both reference regimes all passed on the first run.
+- **Left open, unchanged:** plan items 1–4, 6 and 7. Nothing this pass added to the list.

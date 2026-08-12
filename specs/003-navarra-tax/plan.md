@@ -470,6 +470,12 @@ statement also contains foreign-currency conversions, so the global transmission
 measured and the exemption was withheld (Appendix A §A.4 edge 3). That overstates the tax rather than
 granting a relief the year may not be entitled to, and the message says how to check by hand.
 
+That warning **no longer fires on this statement**. The review round's second pass narrowed the
+suppression to years with an *incremento* to relieve (§A.4 edge 3, first boundary), and this
+statement's only transmission is the NVDA sale at −€12.25, a disminución: `I = 0` makes the relief
+zero whatever the conversions did to the global amount, so there was nothing to withhold. No figure
+in the table above moved with it.
+
 ### Statute-text corrections made to this plan
 
 All in N1 (`8ded6bbd`) unless noted, after reading `trlfirpf.txt` verbatim.
