@@ -23,7 +23,7 @@ Verified-correct by the reviewers (do not touch): the `NavarraOrdered` compensat
 - **V5 — Three-regime citation sweep (consistency M4).** Status: DONE (`bc3a517f`)
   Shared surfaces still citing only two statutes now serve three: margin-interest note/warning + register §7 (`processor.rs:1136-1150`, docs:625/968) gain the TRLFIRPF cite; the fee note/warning cites art. 32.1.a under Navarra instead of LIRPF art. 26.1.a (message builder takes the regime's article); venue-review and deferral notes name the Navarra articles (39.6.f/g); wash-sale doc section (docs:199-288) gains the art. 39.6 citations incl. the direct MiFID II reference; FX section wording; stale "both regimes"/"either regime" comments (`scale.rs:226`, `taxes/mod.rs:656`).
   Commit: `docs(navarra-tax): cite all three statutes on shared surfaces`
-- **V6 — Contract and plan corrections (consistency M1/M2/M5/M6, adversarial LOW-7).** Status: TODO
+- **V6 — Contract and plan corrections (consistency M1/M2/M5/M6, adversarial LOW-7).** Status: DONE (`9920e72e`)
   Contract: add the DT 7.ª abatement banner (fifth) + the H3 block/8816 row; fix the "four warning banners" count; document the per-regime cross-offset labels (V1). Plan: N10 hash `40d1eae0` → `0b61bf86` (the self-referential-amend orphan); the F-93 carryforward-box inventory row corrected to what shipped (aggregates 818/8875, per-year cells named as on-form-only); replace the plan's "TODO(verify) in the register" phrasing with the register's actual "OPEN" convention (M6); note (M7) that N1's corrections 1–6 predate the plan's first commit by design.
   Commit: `docs(navarra-tax): correct the contract and plan against the audits`
 - **V7 — Gate + close-out.** Status: TODO
