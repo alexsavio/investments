@@ -15,6 +15,7 @@ use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
 use crate::tax_statement::fx_fifo::compute_fx_fifo;
 use crate::taxes::spain::SpanishTaxRegime;
+use crate::taxes::spain::compensation::CrossOffset;
 use crate::taxes::spain::credit;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::taxes::{DeferredLossConfig, SpanishTaxConfig, TaxConfig};
@@ -53,8 +54,8 @@ struct SpanishTaxParams<'a> {
     custody_fees_deductible: bool,
     /// Annual dividend exemption (NF 3/2014 art. 9.24), zero where the regime has none.
     dividend_exemption_limit: Decimal,
-    /// Fraction of the other group's positive balance a negative one may offset.
-    cross_offset_fraction: Decimal,
+    /// How far, and in what order, a negative balance in one savings-base group may reach the other.
+    cross_offset: CrossOffset,
 }
 
 impl<'a> SpanishTaxParams<'a> {
@@ -67,26 +68,30 @@ impl<'a> SpanishTaxParams<'a> {
             year,
             scale: config.savings_scale(year)?,
             treaty_rate: dec!(0.15),
-            // LIRPF art. 26.1.a allows custody and administration fees; the Gipuzkoa equivalent
-            // does not exist — NF 3/2014 art. 39 is a closed list that never reaches securities
-            // income, so nothing is deductible there.
+            // LIRPF art. 26.1.a and TRLFIRPF art. 32.1.a both allow custody and administration
+            // fees; the Gipuzkoa equivalent does not exist — NF 3/2014 art. 39 is a closed list
+            // that never reaches securities income, so nothing is deductible there.
             custody_fees_deductible: match config.regime {
                 SpanishTaxRegime::Gipuzkoa => false,
-                SpanishTaxRegime::Comun => true,
+                SpanishTaxRegime::Comun | SpanishTaxRegime::Navarra => true,
             },
             // NF 3/2014 art. 9.24 exempts the first €1,500 of dividends a year — confirmed in
             // force for 2024, 2025 and 2026 against the Diputación Foral's own Modelo 109 pages,
             // and untouched by NF 1/2025 and NF 2/2025. Territorio Común lost the same relief when
-            // Ley 26/2014 repealed LIRPF art. 7.y with effect from 2015.
+            // Ley 26/2014 repealed LIRPF art. 7.y with effect from 2015, and Navarra when LF
+            // 29/2014 repealed the equivalent TRLFIRPF art. 7.v with effect from the same year.
             dividend_exemption_limit: match config.regime {
                 SpanishTaxRegime::Gipuzkoa => dec!(1500),
-                SpanishTaxRegime::Comun => Decimal::ZERO,
+                SpanishTaxRegime::Comun | SpanishTaxRegime::Navarra => Decimal::ZERO,
             },
             // Gipuzkoa integrates the two groups "exclusivamente entre sí"; Territorio Común lets
-            // a negative balance in one reach 25% of the other's positive (LIRPF art. 49.1).
-            cross_offset_fraction: match config.regime {
-                SpanishTaxRegime::Gipuzkoa => Decimal::ZERO,
-                SpanishTaxRegime::Comun => dec!(0.25),
+            // a negative balance in one reach 25% of the other's positive (LIRPF art. 49.1), and
+            // Navarra stops at the same quarter but reaches it by its own order (TRLFIRPF
+            // art. 54.2).
+            cross_offset: match config.regime {
+                SpanishTaxRegime::Gipuzkoa => CrossOffset::None,
+                SpanishTaxRegime::Comun => CrossOffset::AeatTwoPhase,
+                SpanishTaxRegime::Navarra => CrossOffset::NavarraOrdered,
             },
         })
     }
@@ -122,7 +127,7 @@ pub fn compute_tax_year(
         params.scale.clone(),
         rcm_ledger,
         gyp_ledger,
-        params.cross_offset_fraction,
+        params.cross_offset,
         params.treaty_rate,
         params.dividend_exemption_limit,
     );
@@ -1439,5 +1444,51 @@ mod tests {
     #[case("ADR FEE", FeeClass::NonDeductible)]
     fn fees_are_classified_by_dgt_doctrine(#[case] description: &str, #[case] class: FeeClass) {
         assert_eq!(classify_fee(description).class, class, "{description}");
+    }
+
+    fn spain_config(regime: SpanishTaxRegime) -> TaxConfig {
+        TaxConfig {
+            spain: Some(SpanishTaxConfig {
+                regime,
+                loss_carryforward: Default::default(),
+                deferred_losses: Vec::new(),
+                coefficients: Default::default(),
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Every per-regime decision resolves in this one place, so the Navarra arm is asserted here
+    /// rather than inferred from a downstream figure that several parameters could explain.
+    #[test]
+    fn navarra_params_come_from_the_foral_statute() {
+        let config = spain_config(SpanishTaxRegime::Navarra);
+        let params = SpanishTaxParams::resolve(&config, 2025).unwrap();
+
+        assert_eq!(params.regime, SpanishTaxRegime::Navarra);
+        // TRLFIRPF art. 32.1.a allows administración y depósito, unlike Gipuzkoa.
+        assert!(params.custody_fees_deductible);
+        // LF 29/2014 repealed the old art. 7.v, so Navarra has no dividend exemption.
+        assert_eq!(params.dividend_exemption_limit, Decimal::ZERO);
+        // Art. 54.2 crosses the groups, but in an order of its own.
+        assert_eq!(params.cross_offset, CrossOffset::NavarraOrdered);
+        // Art. 60's first bracket: 20% to €6,000.
+        assert_eq!(params.scale.brackets()[0], (dec!(0), dec!(0.20)));
+    }
+
+    /// The other two regimes keep the cross-offset mode they were built with: the enum replaces a
+    /// fraction, it does not re-decide anything.
+    #[rstest]
+    #[case(SpanishTaxRegime::Gipuzkoa, CrossOffset::None)]
+    #[case(SpanishTaxRegime::Comun, CrossOffset::AeatTwoPhase)]
+    fn the_shipped_regimes_keep_their_cross_offset_mode(
+        #[case] regime: SpanishTaxRegime,
+        #[case] expected: CrossOffset,
+    ) {
+        let config = spain_config(regime);
+        assert_eq!(
+            SpanishTaxParams::resolve(&config, 2025).unwrap().cross_offset,
+            expected
+        );
     }
 }

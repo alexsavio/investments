@@ -2,7 +2,7 @@
 
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::spain::carryforward::{LedgerApplication, LossLedger};
-use crate::taxes::spain::compensation::compensate_savings_base;
+use crate::taxes::spain::compensation::{CrossOffset, compensate_savings_base};
 use crate::taxes::spain::credit::{double_taxation_credit, treaty_capped_credit};
 use crate::taxes::DeferredLossConfig;
 use crate::taxes::spain::scale::SavingsScale;
@@ -363,9 +363,8 @@ pub struct SpanishTaxStatement {
     /// Annual dividend exemption in force: €1,500 under Gipuzkoa (NF 3/2014 art. 9.24), 0 under
     /// Territorio Común.
     dividend_exemption_limit: Decimal,
-    /// Fraction of the other group's positive balance a negative one may offset: 0 under Gipuzkoa,
-    /// 0.25 under Territorio Común.
-    cross_offset_fraction: Decimal,
+    /// How far, and in what order, a negative balance in one savings-base group may reach the other.
+    cross_offset: CrossOffset,
     /// Treaty cap on the source state's withholding, used for the credit's first limb.
     treaty_rate: Decimal,
 }
@@ -377,7 +376,7 @@ impl SpanishTaxStatement {
         scale: SavingsScale,
         rcm_ledger: LossLedger,
         gyp_ledger: LossLedger,
-        cross_offset_fraction: Decimal,
+        cross_offset: CrossOffset,
         treaty_rate: Decimal,
         dividend_exemption_limit: Decimal,
     ) -> SpanishTaxStatement {
@@ -385,7 +384,7 @@ impl SpanishTaxStatement {
             year,
             regime,
             scale,
-            cross_offset_fraction,
+            cross_offset,
             treaty_rate,
             dividend_exemption_limit,
             rcm_ledger_prior: rcm_ledger.clone(),
@@ -542,7 +541,7 @@ impl SpanishTaxStatement {
             self.gyp_net,
             self.rcm_ledger_prior.clone(),
             self.gyp_ledger_prior.clone(),
-            self.cross_offset_fraction,
+            self.cross_offset,
         );
 
         self.rcm_taxable = compensation.rcm_taxable;
@@ -697,7 +696,7 @@ mod tests {
             SavingsScale::for_year(regime, 2026).unwrap(),
             LossLedger::default(),
             LossLedger::default(),
-            Decimal::ZERO,
+            CrossOffset::None,
             dec!(0.15),
             Decimal::ZERO,
         )
@@ -814,7 +813,7 @@ mod tests {
             SavingsScale::for_year(regime, 2026).unwrap(),
             prior_rcm,
             LossLedger::default(),
-            dec!(0.25),
+            CrossOffset::AeatTwoPhase,
             dec!(0.15),
             Decimal::ZERO,
         );
@@ -887,7 +886,7 @@ mod tests {
             SavingsScale::for_year(regime, 2026).unwrap(),
             LossLedger::default(),
             LossLedger::default(),
-            Decimal::ZERO,
+            CrossOffset::None,
             dec!(0.15),
             dec!(1500),
         );

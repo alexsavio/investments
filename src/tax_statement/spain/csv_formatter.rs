@@ -893,6 +893,20 @@ impl CsvFormatter {
 
                 Self::write_withholding_warning(writer, statement, modelo_100::RCM_WITHHOLDING)?;
             }
+            SpanishTaxRegime::Navarra => {
+                writeln!(
+                    writer,
+                    "# MODELO F-93 — declaración del IRPF de la Comunidad Foral de Navarra"
+                )?;
+                writeln!(
+                    writer,
+                    "# Casillas read from the fully numbered form the Boletín Oficial de Navarra"
+                )?;
+                writeln!(
+                    writer,
+                    "# publishes as Anexo I of the campaign's Orden Foral (retrieved 2026-08-12)."
+                )?;
+            }
         }
 
         Ok(())
@@ -1125,6 +1139,7 @@ mod tests {
 
     use super::*;
     use crate::taxes::spain::carryforward::LossLedger;
+    use crate::taxes::spain::compensation::CrossOffset;
     use crate::taxes::spain::scale::SavingsScale;
     use crate::types::Date;
 
@@ -1147,7 +1162,7 @@ mod tests {
             SavingsScale::for_year(regime, 2026).unwrap(),
             LossLedger::default(),
             LossLedger::default(),
-            Decimal::ZERO,
+            CrossOffset::None,
             dec!(0.15),
             Decimal::ZERO,
         )
@@ -1585,7 +1600,7 @@ mod tests {
             SavingsScale::for_year(regime, 2026).unwrap(),
             LossLedger::from_config(&BTreeMap::from([(2024, dec!(500))]), 2026, "rcm").unwrap(),
             LossLedger::from_config(&BTreeMap::from([(2024, dec!(2800))]), 2026, "gyp").unwrap(),
-            dec!(0.25),
+            CrossOffset::AeatTwoPhase,
             dec!(0.15),
             Decimal::ZERO,
         );
@@ -1671,7 +1686,7 @@ mod tests {
             SavingsScale::for_year(regime, year).unwrap(),
             LossLedger::default(),
             LossLedger::default(),
-            Decimal::ZERO,
+            CrossOffset::None,
             dec!(0.15),
             Decimal::ZERO,
         );
@@ -1776,7 +1791,7 @@ mod tests {
             SavingsScale::for_year(regime, 2024).unwrap(),
             LossLedger::default(),
             LossLedger::default(),
-            Decimal::ZERO,
+            CrossOffset::None,
             dec!(0.15),
             dec!(1500),
         );
@@ -1838,7 +1853,7 @@ mod tests {
             SavingsScale::for_year(regime, 2026).unwrap(),
             LossLedger::default(),
             LossLedger::from_config(&BTreeMap::from([(2024, dec!(4000))]), 2026, "gyp").unwrap(),
-            Decimal::ZERO,
+            CrossOffset::None,
             dec!(0.15),
             Decimal::ZERO,
         );

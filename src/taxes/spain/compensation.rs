@@ -1,10 +1,35 @@
-//! Integration and compensation of the savings base (NF 3/2014 / LIRPF art. 49).
+//! Integration and compensation of the savings base (NF 3/2014 / LIRPF art. 49 / TRLFIRPF art. 54).
 
 use log::warn;
 
 use crate::types::Decimal;
 
 use super::carryforward::{CARRYFORWARD_YEARS, LedgerApplication, LossLedger};
+
+/// How far, and in what order, a negative savings-base balance may reach the other group.
+///
+/// A mode rather than a fraction: Navarra also stops at 25%, but measures it on a different figure
+/// and applies it at a different point in the order, so the two cannot share one number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrossOffset {
+    /// Gipuzkoa: the groups integrate "exclusivamente entre sí" and never touch (Manual de Renta
+    /// cap. 9).
+    None,
+    /// Territorio Común: LIRPF art. 49.1, in the AEAT Manual Práctico de Renta cap. 12 order.
+    AeatTwoPhase,
+    /// Navarra: TRLFIRPF art. 54.2, own-group carryforwards first, then 25% of what that leaves.
+    NavarraOrdered,
+}
+
+impl CrossOffset {
+    /// Fraction of the other group's positive balance a negative one may offset.
+    fn fraction(self) -> Decimal {
+        match self {
+            CrossOffset::None => Decimal::ZERO,
+            CrossOffset::AeatTwoPhase | CrossOffset::NavarraOrdered => dec!(0.25),
+        }
+    }
+}
 
 /// What compensation did to a year's two savings-base groups.
 #[derive(Clone, Debug)]
@@ -38,8 +63,7 @@ pub struct CompensationResult {
 
 /// Compensate one year's savings-base groups against each other and against prior-year balances.
 ///
-/// `cross_offset_fraction` is 0 under Gipuzkoa, where the groups are integrated "exclusivamente
-/// entre sí" and never touch (Gipuzkoa Manual de Renta cap. 9), and 0.25 under Territorio Común.
+/// Under [`CrossOffset::None`] the groups never touch, so only the own-group steps run.
 ///
 /// The Común order follows the AEAT Manual Práctico de Renta cap. 12 (LIRPF art. 49):
 ///
@@ -59,9 +83,10 @@ pub fn compensate_savings_base(
     gyp_net: Decimal,
     mut rcm_ledger: LossLedger,
     mut gyp_ledger: LossLedger,
-    cross_offset_fraction: Decimal,
+    cross_offset: CrossOffset,
 ) -> CompensationResult {
     let zero = Decimal::ZERO;
+    let cross_offset_fraction = cross_offset.fraction();
 
     let rcm_positive = std::cmp::max(zero, rcm_net);
     let gyp_positive = std::cmp::max(zero, gyp_net);
@@ -163,11 +188,8 @@ mod tests {
 
     use super::*;
 
-    const GIPUZKOA: Decimal = Decimal::ZERO;
-
-    fn comun() -> Decimal {
-        dec!(0.25)
-    }
+    const GIPUZKOA: CrossOffset = CrossOffset::None;
+    const COMUN: CrossOffset = CrossOffset::AeatTwoPhase;
 
     fn ledger(entries: &[(i32, &str)], filing_year: i32) -> LossLedger {
         let map: BTreeMap<i32, Decimal> = entries
@@ -273,7 +295,7 @@ mod tests {
             dec!(4000),
             ledger(&[(2024, "500")], 2026),
             ledger(&[(2024, "2800")], 2026),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_rcm_to_gyp, dec!(800));
@@ -306,7 +328,7 @@ mod tests {
             dec!(6000),
             LossLedger::default(),
             ledger(&[(2024, "4000")], 2026),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_rcm_to_gyp, dec!(1500));
@@ -328,7 +350,7 @@ mod tests {
             gyp,
             LossLedger::default(),
             LossLedger::default(),
-            comun(),
+            COMUN,
         );
 
         assert!(
@@ -377,7 +399,7 @@ mod tests {
             dec!(6000),
             LossLedger::default(),
             LossLedger::default(),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_rcm_to_gyp, dec!(1500));
@@ -395,7 +417,7 @@ mod tests {
             dec!(-2000),
             LossLedger::default(),
             LossLedger::default(),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_gyp_to_rcm, dec!(1500));
@@ -412,7 +434,7 @@ mod tests {
             dec!(6000),
             LossLedger::default(),
             LossLedger::default(),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_rcm_to_gyp, dec!(100));

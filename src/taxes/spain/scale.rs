@@ -78,6 +78,21 @@ impl SavingsScale {
                 ],
                 _ => return Err!("{}", Self::unsupported_year(regime, year)),
             },
+            // TRLFIRPF art. 60, in the wording LF 36/2022 gave it with effect from 2023-01-01.
+            // One table for every shipped year: LF 17/2025, which carries the 2026 changes, does
+            // not touch art. 60. The law publishes its own cumulative cuota-íntegra column, which
+            // `tax()` reproduces exactly (see the unit tests).
+            SpanishTaxRegime::Navarra => match year {
+                2024..=2026 => vec![
+                    (dec!(0), dec!(0.20)),
+                    (dec!(6_000), dec!(0.22)),
+                    (dec!(10_000), dec!(0.24)),
+                    (dec!(15_000), dec!(0.26)),
+                    (dec!(200_000), dec!(0.27)),
+                    (dec!(300_000), dec!(0.28)),
+                ],
+                _ => return Err!("{}", Self::unsupported_year(regime, year)),
+            },
         };
 
         Ok(SavingsScale { brackets })
