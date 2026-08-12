@@ -1885,3 +1885,47 @@ fn no_conversion_caveat_once_the_securities_alone_exceed_the_threshold() {
     assert!(!navarra.small_disposals_unmeasurable);
     assert!(navarra.small_disposals_message().is_none());
 }
+
+/// TRLFIRPF DT 7.ª is an abatement regime the tool does not compute, so a lot old enough to reach it
+/// has to be named rather than silently priced without it.
+///
+/// The fixture buys 100 shares on 1993-06-15 and another 100 on 1994-12-31, then sells all 200 in
+/// 2026. Only the 1993 lot is inside DT 7.ª: the article reaches elements acquired *before* 31
+/// December 1994, so a purchase made **on** that day is outside it. The one-day boundary is the
+/// whole point of the test.
+#[test]
+fn a_lot_acquired_before_the_1994_cut_off_is_named() {
+    let navarra = run_pipeline("pre_1995_lot", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(
+        navarra.abatement_lots,
+        vec![(
+            "AAPL".to_string(),
+            Date::from_ymd_opt(1993, 6, 15).unwrap()
+        )]
+    );
+
+    let message = navarra.abatement_message().unwrap();
+    assert!(message.contains("AAPL acquired 1993-06-15"), "{message}");
+    assert!(!message.contains("1994-12-31"), "{message}");
+    assert!(message.contains("DT 7.ª"), "{message}");
+    assert!(message.contains("OVERSTATED"), "{message}");
+
+    // The other two regimes have abatement regimes of their own that this round did not research,
+    // so the tool says nothing about them rather than citing the wrong statute.
+    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+        let other = run_pipeline("pre_1995_lot", 2026, regime);
+        assert_eq!(other.abatement_lots.len(), 1, "{regime:?}");
+        assert!(other.abatement_message().is_none(), "{regime:?}");
+    }
+}
+
+/// A statement whose oldest lot postdates the cut-off says nothing at all — the warning must not
+/// become background noise on every Navarra return.
+#[test]
+fn a_modern_portfolio_raises_no_abatement_warning() {
+    let navarra = run_pipeline("fifo", 2026, SpanishTaxRegime::Navarra);
+
+    assert!(navarra.abatement_lots.is_empty());
+    assert!(navarra.abatement_message().is_none());
+}

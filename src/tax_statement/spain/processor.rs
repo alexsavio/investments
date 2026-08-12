@@ -157,6 +157,7 @@ pub fn compute_tax_year(
     statement.calculate_totals();
 
     for message in [
+        statement.abatement_message(),
         statement.custody_fee_cap_message(),
         statement.small_disposals_message(),
         statement.carried_cross_offset_message(),

@@ -635,6 +635,33 @@ adds on top of the ones above it. Only the total is order-independent.
 8. **Tax advisor.** Wash-sale timing, joint ownership, and cross-border residency questions should be
    reviewed with a qualified adviser.
 
+### Navarra: what this tool does not compute
+
+Every item below is a real Navarra obligation or rule that the savings-base computation deliberately
+leaves alone. None of them is detectable from a broker statement.
+
+1. **Foral Modelo 720 and Modelo 721.** Navarra runs its own informational declarations of assets
+   abroad (Orden Foral 80/2013, as amended by OF 58/2026) and of virtual currencies held abroad
+   (Orden Foral 29/2023), both filed 1 January – 31 March. Filing the state versions does not
+   discharge them. This tool computes neither.
+2. **Fund traspaso deferral.** Ley Foral 19/2021 brought the rollover regime into Navarra with a
+   grandfathering rule in DT 29.ª for holdings acquired before 1 January 2022. The regime requires
+   the transfer to run through the Spanish system, so it does not reach a foreign broker — but a
+   filer with a pre-2022 Spanish-marketed holding should check DT 29.ª before assuming a disposal is
+   taxable.
+3. **Exit tax.** DA 46.ª taxes latent gains on a change of residence abroad above its own thresholds.
+   A broker statement carries no residence history, so the tool cannot see the trigger.
+4. **Related-party interest.** Art. 54.1.a moves interest on capital lent to a linked entity out of
+   the savings base and into the general one, for the part exceeding three times that entity's
+   equity (25% participation assumed where the link is not shareholder-based). Nothing in a broker
+   statement identifies a linked entity.
+5. **Joint returns.** Art. 74 lets members of a unidad familiar compensate each other's negative
+   saldos, which is what the F-93's casillas 810, 8035, 8835 and 8895 are for. The tool computes an
+   individual return and always leaves those boxes at zero.
+6. **Personal and family minima.** Art. 62.9 applies them as credits against the quota rather than
+   as reductions of the base, so the savings quota this tool reports is exactly `scale(base)`; the
+   minima come off elsewhere on the return.
+
 ## Open interpretations
 
 Every point where the tool had to choose a reading, what settles it, and what the tool says when a
@@ -774,6 +801,155 @@ split between that acquisition and the current statement is **not** applied to i
 Not an interpretation but the same kind of risk: a loss whose +2-month window runs past the
 statement's last date is deducted in full and flagged (`WASH_SALE_WINDOW_OPEN`). Export a statement
 that extends at least two months past year end and re-run.
+
+### 11. Which Navarra saldos may cross the groups — OPEN
+
+**Authority.** TRLFIRPF art. 54.2 (wording of Ley Foral 23/2015), read against art. 54.3. No
+Hacienda Foral de Navarra manual or consulta on the point was located (searched 2026-08-12).
+
+**The tool's reading.** Art. 54.2 opens its 25% cross-offset for a negative **current-year** result:
+"si el resultado fuese negativo, su importe se compensará con el saldo positivo resultante de la
+letra b) … con el límite del 25 por 100 de dicho saldo positivo". What is left then carries four
+years "en el mismo orden establecido en los párrafos anteriores", and the tool reads "el mismo
+orden" as repeating the whole order — cross included — for a saldo carried in from an earlier year.
+The current year's own negative is served first, so a carried saldo only ever takes what is left of
+the allowance, and the amount reported is exactly what the reading is responsible for.
+
+**What you see** when a carried saldo is what crossed:
+
+```text
+# WARNING: €5625.00 of prior-year negative savings-base saldos was set against the other
+# group under TRLFIRPF art. 54.2. … On the narrower reading the amount would stay pending
+# and the savings base would be €5625.00 higher.
+```
+
+**What to do.** The narrow reading gives a higher base and more tax this year, and leaves the saldo
+pending for later. If the amount matters, take advice before filing.
+
+### 12. What the Navarra 3% fee ceiling is measured on — OPEN, by data limit
+
+**Authority.** TRLFIRPF art. 32.1.a: gastos de administración y depósito de valores negociables
+"con el límite del 3 por 100 de los ingresos íntegros, que no hayan resultado exentos, procedentes de
+dichos valores".
+
+**The tool's reading.** The ceiling is measured on **dividend** income. Interest credited on a broker
+cash balance is a rendimiento from the cesión a terceros de capitales propios (art. 29), not income
+from a valor negociable, so it does not raise the ceiling. A broker statement does not separate a
+bond coupon from cash-account interest, so a filer holding bonds has a larger ceiling than the tool
+computes.
+
+**What you see** when the ceiling bites:
+
+```text
+# WARNING: €18.00 of otherwise deductible custody and administration fees was NOT deducted:
+# TRLFIRPF art. 32.1.a caps them at 3% of the non-exempt gross income from the securities…
+```
+
+**What to do.** Not deducting overstates the tax rather than understating it. If part of your
+interest is a coupon on a negotiable security, raise the ceiling by hand.
+
+### 13. The Navarra €3,000 exemption's global amount — OPEN
+
+**Authority.** TRLFIRPF art. 39.5.d.
+
+**The tool's reading.** Condition 1.º speaks of "el importe global de las citadas transmisiones",
+condition 2.º of "el importe global de la transmisión" — singular. The tool reads both as the same
+year-global figure: 1.º has already fixed "importe global" as the year total, and a per-disposal
+numerator against a global denominator is incoherent. The two readings differ only in a
+multi-disposal year. Proceeds are counted for every disposal, gain- or loss-making, because 1.º
+measures the transmissions; only positive integrable results feed the increment, because a loss is a
+*disminución*.
+
+**Also open, by data limit.** A foreign-currency conversion is a transmission too (art. 54.1.b), but
+the shared FX FIFO records only its result, never the amount converted, so the global amount cannot
+be measured in a year that has one. The exemption is then **withheld** rather than granted on an
+understated total — which overstates the tax. Above €3,000 of securities proceeds nothing is
+withheld and nothing is said: the missing conversions can only add to a total that has already
+failed the test.
+
+```text
+# WARNING: The year's securities transmissions came to €2250.00, under the €3,000 that
+# TRLFIRPF art. 39.5.d exempts, but the exemption was NOT applied: the year also contains
+# foreign-currency conversions…
+```
+
+**What to do.** Add the converted amounts to the securities proceeds. If the total is still at or
+under €3,000, claim the exemption by hand.
+
+### 14. The Navarra credit's tipo medio efectivo — OPEN, by scope
+
+**Authority.** TRLFIRPF art. 67.2: the tipo medio efectivo is `100 × cuota líquida / base liquidable`,
+split general vs ahorro, expressed with two decimals.
+
+**The tool's reading.** The article divides *cuota líquida*, and the tool models no savings-side
+deduction — Navarra's personal and family minima are quota credits under art. 62.9, applied against
+the general part — so within its scope savings cuota líquida equals savings cuota íntegra and the
+average rate it computes is exact. A filer who does carry a savings-side deduction has a **lower**
+tipo medio and therefore a lower credit ceiling than the tool reports.
+
+**What to do.** If your return carries a deduction against the savings quota, recompute the ceiling
+from your own cuota líquida.
+
+### 15. Navarra casillas — VERIFIED FOR EJERCICIO 2025, open beyond
+
+**Authority.** The fully numbered Modelo F-93 the Boletín Oficial de Navarra publishes as Anexo I of
+each campaign's Orden Foral; ejercicio 2025 = Orden Foral 24/2026, BON nº 66 of 07-04-2026 (retrieved
+2026-08-12).
+
+**The tool's reading.** The ejercicio-2025 numbering as published, cross-checked against the form's
+own arithmetic (`8809 = 8808 − 809 − 810 − 8815`, `8840 = 8810 − 8825 − 8835 − 8805`,
+`8841 = 8809 + 8840`, `050 = 031 + 037 − 047`). Casillas 810 and 8835 are the joint-return rows and
+are never emitted; 569, 576 and 582 net the whole return, including the general part this tool does
+not compute, so they are not emitted either.
+
+**Still open.** Earlier campaigns use the same structure but their numbering was not checked against
+a specimen, and no form exists for a year that has not been filed yet:
+
+```text
+# WARNING: the ejercicio-2024 form has the same structure but its own
+# numbering was not checked against a specimen. Verify every casilla.
+```
+
+**What to do.** Check each casilla against the Anexo I of your own campaign's Orden Foral.
+
+### 16. Pre-1994 lots under Navarra — NOT COMPUTED, by data limit
+
+**Authority.** TRLFIRPF DT 7.ª.
+
+**What it does.** For an element acquired **before 31 December 1994**, the part of the gain generated
+before 31 December 2006 is reduced — 25% per year of holding beyond two for listed shares — and is
+not taxed at all once the holding period at 31 December 1996 passed five years. Navarra put **no
+€400,000 lifetime cap** on the relief, unlike the state regime.
+
+**Why it is not computed.** DT 7.ª.3 measures the pre-2006 part against the element's value for the
+2006 Impuesto sobre el Patrimonio, which a broker statement does not carry. The tool therefore prices
+such a lot without the relief and says so, naming each lot and its date:
+
+```text
+# WARNING: The year's disposals consumed FIFO lots acquired before 31 December 1994
+# (AAPL acquired 1993-06-15). … The gains above are therefore OVERSTATED.
+```
+
+Note the cut-off is the article's own: an acquisition **on** 31 December 1994 is outside it. The
+warning is Navarra-only — the Gipuzkoa and state equivalents exist but were not researched, so the
+tool says nothing rather than citing the wrong statute for them.
+
+**What to do.** Take advice and compute the reduction by hand from your 2006 wealth-tax valuation.
+
+### 17. Debt instruments are not in the statement at all — DOCUMENTED LIMITATION
+
+TRLFIRPF art. 29 (and LIRPF art. 25.2) classify the result of transferring a debt instrument as
+**rendimiento del capital mobiliario**, not as a ganancia patrimonial. The question never arises
+here: the shared Interactive Brokers parser discards every instrument whose `assetCategory` is not
+`STK`, with its own warning, so a bond disposal never reaches the Spanish pipeline and appears in
+neither savings-base group.
+
+```text
+Skipping non-stock instrument <symbol> (assetCategory BOND): the tool computes taxes for
+stocks only, so derivatives and other categories are out of scope.
+```
+
+**What to do.** Declare bond disposals by hand, as RCM rather than as ganancias.
 
 ## Troubleshooting
 

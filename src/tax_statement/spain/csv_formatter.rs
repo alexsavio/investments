@@ -1303,6 +1303,11 @@ impl CsvFormatter {
             }
         }
 
+        if let Some(message) = statement.abatement_message() {
+            writeln!(writer)?;
+            Self::write_comment_block(writer, &message)?;
+        }
+
         if let Some(message) = statement.small_disposals_message() {
             writeln!(writer)?;
             Self::write_comment_block(writer, &message)?;

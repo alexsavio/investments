@@ -267,6 +267,11 @@ pub struct SpanishTaxStatement {
     /// only. Their treatment is not computed and needs manual review.
     pub short_positions: Vec<(String, Decimal)>,
 
+    /// FIFO lots acquired before 31 December 1994, by symbol and acquisition date. Those fall under
+    /// an abatement regime this tool does not compute; the entry is factual for every regime, and
+    /// only the ones with such a regime say anything about it.
+    pub abatement_lots: Vec<(String, Date)>,
+
     /// Disposal years up to and including the filing year that the statement contains but the tool
     /// ships no actualization table for. Sales in those years were replayed for the
     /// valores-homogéneos rule — they still consume lots and release earlier deferrals — but their
@@ -445,6 +450,7 @@ impl SpanishTaxStatement {
             stock_grants: Vec::new(),
             corporate_actions: Vec::new(),
             short_positions: Vec::new(),
+            abatement_lots: Vec::new(),
             wash_sale_unpriced_years: Vec::new(),
             wash_sale_reintegrations: Vec::new(),
             deferred_losses_next: Vec::new(),
@@ -565,6 +571,7 @@ impl SpanishTaxStatement {
             .map(|entry| entry.released_eur)
             .sum();
 
+        self.collect_abatement_lots();
         self.apply_small_disposals_exemption();
 
         // A released deferral is a loss that was blocked when it arose and is deductible now, so it
@@ -614,6 +621,68 @@ impl SpanishTaxStatement {
             Decimal::ZERO,
             self.savings_quota - self.total_foreign_tax_credit,
         );
+    }
+
+    /// Cut-off of the abatement regimes: TRLFIRPF DT 7.ª reaches "elementos patrimoniales adquiridos
+    /// **antes de** 31 de diciembre de 1994", so an acquisition on that day itself is outside it.
+    const ABATEMENT_CUTOFF: (i32, u32, u32) = (1994, 12, 31);
+
+    /// Note every FIFO lot old enough to fall under an abatement regime.
+    ///
+    /// One entry per (symbol, acquisition date): several sales can consume the same lot, and naming
+    /// the same 1993 purchase three times would only make the message harder to act on.
+    fn collect_abatement_lots(&mut self) {
+        let (year, month, day) = Self::ABATEMENT_CUTOFF;
+        let Some(cutoff) = Date::from_ymd_opt(year, month, day) else {
+            return;
+        };
+
+        let mut lots: Vec<(String, Date)> = self
+            .capital_gains
+            .iter()
+            .flat_map(|entry| {
+                entry
+                    .lots
+                    .iter()
+                    .filter(|lot| lot.acquisition_date < cutoff)
+                    .map(|lot| (entry.symbol.clone(), lot.acquisition_date))
+            })
+            .collect();
+
+        lots.sort();
+        lots.dedup();
+        self.abatement_lots = lots;
+    }
+
+    /// The sentence every surface reports an uncomputed abatement regime with. `None` where the
+    /// regime has none the tool leaves out, or where no lot is old enough to reach it.
+    ///
+    /// TRLFIRPF DT 7.ª reduces, and above a holding period exempts outright, the part of a gain
+    /// generated before 31 December 2006 on an element acquired before 31 December 1994. Navarra put
+    /// no €400,000 lifetime cap on it, unlike the state regime. It is not computed here because DT
+    /// 7.ª.3 measures the pre-2006 part against the element's 2006 Impuesto sobre el Patrimonio
+    /// value, which no broker statement carries.
+    pub fn abatement_message(&self) -> Option<String> {
+        if self.regime != SpanishTaxRegime::Navarra || self.abatement_lots.is_empty() {
+            return None;
+        }
+
+        let lots = self
+            .abatement_lots
+            .iter()
+            .map(|(symbol, date)| format!("{symbol} acquired {date}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Some(format!(
+            "The year's disposals consumed FIFO lots acquired before 31 December 1994 ({lots}). \
+             TRLFIRPF DT 7.ª reduces the part of such a gain that was generated before 31 December \
+             2006, and exempts it entirely above a holding period — with no €400,000 lifetime cap, \
+             unlike the state regime. The tool does NOT compute it: DT 7.ª.3 measures that part \
+             against the element's 2006 Impuesto sobre el Patrimonio value, which a broker statement \
+             does not carry. The gains above are therefore OVERSTATED. See the \
+             open-interpretations register in docs/spain-taxes.md."
+        ))
     }
 
     /// Exempt a year of small onerous transmissions (TRLFIRPF art. 39.5.d).
