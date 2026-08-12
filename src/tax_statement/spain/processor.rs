@@ -59,6 +59,8 @@ struct SpanishTaxParams<'a> {
     dividend_exemption_limit: Decimal,
     /// How far, and in what order, a negative balance in one savings-base group may reach the other.
     cross_offset: CrossOffset,
+    /// Whether the regime exempts a year of small onerous transmissions (TRLFIRPF art. 39.5.d).
+    small_disposals_exemption: bool,
 }
 
 impl<'a> SpanishTaxParams<'a> {
@@ -103,6 +105,12 @@ impl<'a> SpanishTaxParams<'a> {
                 SpanishTaxRegime::Comun => CrossOffset::AeatTwoPhase,
                 SpanishTaxRegime::Navarra => CrossOffset::NavarraOrdered,
             },
+            // TRLFIRPF art. 39.5.d exempts a year whose onerous transmissions come to €3,000 or
+            // less. Neither the state text nor NF 3/2014 has anything like it.
+            small_disposals_exemption: match config.regime {
+                SpanishTaxRegime::Gipuzkoa | SpanishTaxRegime::Comun => false,
+                SpanishTaxRegime::Navarra => true,
+            },
         })
     }
 }
@@ -141,6 +149,7 @@ pub fn compute_tax_year(
         params.treaty_rate,
         params.dividend_exemption_limit,
         params.custody_fee_cap_fraction,
+        params.small_disposals_exemption,
     );
 
     let has_activity =
@@ -149,6 +158,7 @@ pub fn compute_tax_year(
 
     for message in [
         statement.custody_fee_cap_message(),
+        statement.small_disposals_message(),
         statement.carried_cross_offset_message(),
     ]
     .into_iter()

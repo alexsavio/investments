@@ -238,9 +238,10 @@ what is under test.
 |---|---|---|---|---|---|---|---|
 | Navarra | 1.000 | 1 350 | 2 250 | 1 125 | 1 125 | 225 | 225 × 20% = **45.00** |
 | Común | 1.000 | 1 350 | 2 250 | — | 0 | 1 350 | 1 350 × 19% = **256.50** |
-| Gipuzkoa | 1.020 | 1 332 | 2 250 | — | 0 | 1 332 | 1 332 × 20% = **266.40** |
+| Gipuzkoa | 1.020 | 1 332 | 2 250 | — | 0 | 1 332 | 1 332 × 19% = **253.08** |
 
-(Gipuzkoa: cost 900 × 1.020 = 918, i.e. 459 against each €1 125 sale → 666 per sale.)
+(Gipuzkoa: cost 900 × 1.020 = 918, i.e. 459 against each €1 125 sale → 666 per sale. Its 2026
+scale opens at 19%, not 20%, so the cuota is 253.08.)
 
 **`small_disposal_boundary` fixture** — same buy, one sell of 10 @ $350 on 2026-05-15 (€3 150).
 `G = 3 150 > 3 000`, so 1.º fails and no regime exempts anything. Navarra: `I = 3 150 − 900 = 2 250`,

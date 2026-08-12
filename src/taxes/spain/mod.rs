@@ -8,6 +8,7 @@ pub mod carryforward;
 pub mod coefficients;
 pub mod compensation;
 pub mod credit;
+pub mod exemption;
 pub mod scale;
 
 use serde::Deserialize;

@@ -1789,3 +1789,99 @@ fn the_navarra_fee_ceiling_does_not_bite_when_fees_are_small() {
     assert_eq!(navarra.total_capped_fees, dec!(0));
     assert!(navarra.custody_fee_cap_message().is_none());
 }
+
+/// TRLFIRPF art. 39.5.d, end to end. Buy 10 AAPL @ $100 on 2025-03-10 (€900) and sell them in two
+/// halves of 5 @ $250 during 2026 (€1,125 each).
+///
+/// The year's global transmission amount is €2,250, at or under the €3,000 of 1.º, and the taxable
+/// increment is €1,350. 2.º exempts it up to half the global amount — €1,125 — and taxes only the
+/// €225 excess, so the base is 225 and the cuota €45. Nothing like it exists in the other two
+/// regimes: Común taxes the full €1,350 at 19% and Gipuzkoa the €1,332 its coefficient leaves.
+#[test]
+fn navarra_exempts_a_year_of_small_disposals() {
+    let navarra = run_pipeline("small_disposal", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.capital_gains.len(), 2);
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2250));
+    assert_eq!(navarra.small_disposals_gains, dec!(1350));
+    assert_eq!(navarra.small_disposals_exemption, dec!(1125));
+    assert!(!navarra.small_disposals_unmeasurable);
+
+    assert_eq!(navarra.total_capital_gains, dec!(1350));
+    assert_eq!(navarra.gyp_net, dec!(225));
+    assert_eq!(navarra.savings_base, dec!(225));
+    assert_eq!(navarra.savings_quota, dec!(45));
+
+    let message = navarra.small_disposals_message().unwrap();
+    assert!(message.contains("€1125.00"), "{message}");
+    assert!(message.contains("art. 39.5.d"), "{message}");
+
+    let comun = run_pipeline("small_disposal", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.small_disposals_exemption, dec!(0));
+    assert_eq!(comun.gyp_net, dec!(1350));
+    assert_eq!(comun.savings_quota, dec!(256.50));
+    assert!(comun.small_disposals_message().is_none());
+
+    // Gipuzkoa actualizes the 2025 cost by 1.020: 900 × 1.020 = 918.
+    let gipuzkoa = run_pipeline("small_disposal", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.capital_gains[0].actualized_cost_eur, dec!(459));
+    assert_eq!(gipuzkoa.gyp_net, dec!(1332));
+    // 1,332 inside the reformed foral scale's 19% first bracket.
+    assert_eq!(gipuzkoa.savings_quota, dec!(253.08));
+}
+
+/// One euro of proceeds over the threshold and the whole exemption is gone — the article's first
+/// condition is a hard gate, not a taper. The same buy sold whole at $350 makes €3,150.
+#[test]
+fn the_small_disposals_exemption_stops_above_the_threshold() {
+    let navarra = run_pipeline("small_disposal_boundary", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(3150));
+    assert_eq!(navarra.small_disposals_gains, dec!(2250));
+    assert_eq!(navarra.small_disposals_exemption, dec!(0));
+    assert!(navarra.small_disposals_message().is_none());
+
+    assert_eq!(navarra.gyp_net, dec!(2250));
+    assert_eq!(navarra.savings_base, dec!(2250));
+    assert_eq!(navarra.savings_quota, dec!(450));
+}
+
+/// A foreign-currency conversion is a transmission too, and the tool records its result but not the
+/// amount converted, so the year's global transmission amount cannot be measured. The exemption is
+/// withheld and the reason named rather than granted on an understated total.
+///
+/// The `fx_gain` fixture has no securities disposals at all, so the measurable proceeds are zero —
+/// which is precisely the case where a silent answer would be most misleading.
+#[test]
+fn the_small_disposals_exemption_is_withheld_when_a_conversion_hides_the_total() {
+    let statement = read_fixture("fx_gain");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (navarra, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Navarra),
+    )
+    .unwrap();
+
+    assert!(navarra.small_disposals_unmeasurable);
+    assert_eq!(navarra.small_disposals_exemption, dec!(0));
+    // The €1,000 conversion result is taxed in full.
+    assert_eq!(navarra.gyp_net, dec!(1000));
+    assert_eq!(navarra.savings_quota, dec!(200));
+
+    let message = navarra.small_disposals_message().unwrap();
+    assert!(message.contains("NOT applied"), "{message}");
+    assert!(message.contains("foreign-currency conversions"), "{message}");
+}
+
+/// Above the threshold the missing conversion amounts cannot rescue the year — they only add to the
+/// total — so there is nothing open to report and no warning is emitted.
+#[test]
+fn no_conversion_caveat_once_the_securities_alone_exceed_the_threshold() {
+    let navarra = run_pipeline("fifo", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(49500));
+    assert!(!navarra.small_disposals_unmeasurable);
+    assert!(navarra.small_disposals_message().is_none());
+}

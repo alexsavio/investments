@@ -476,6 +476,14 @@ impl CsvFormatter {
             "Ganancias y pérdidas por conversión de divisa",
             statement.total_fx_result,
         )?;
+        if statement.small_disposals_exemption > Decimal::ZERO {
+            row(
+                writer,
+                "SUMMARY_GYP_SMALL_DISPOSALS_EXEMPTION",
+                "Incrementos exentos por transmisiones onerosas hasta 3.000 € (TRLFIRPF art. 39.5.d — sólo Navarra)",
+                statement.small_disposals_exemption,
+            )?;
+        }
         row(
             writer,
             "SUMMARY_GYP_DEFERRED",
@@ -1069,6 +1077,11 @@ impl CsvFormatter {
             }
         }
 
+        if let Some(message) = statement.small_disposals_message() {
+            writeln!(writer)?;
+            Self::write_comment_block(writer, &message)?;
+        }
+
         if let Some(message) = statement.custody_fee_cap_message() {
             writeln!(writer)?;
             Self::write_comment_block(writer, &message)?;
@@ -1211,6 +1224,7 @@ mod tests {
             dec!(0.15),
             Decimal::ZERO,
             None,
+            false,
         )
     }
 
@@ -1646,6 +1660,7 @@ mod tests {
                 dec!(0.15),
                 Decimal::ZERO,
                 cap,
+                false,
             );
             spain.dividends.push(DividendEntry {
                 symbol: "AAPL".to_string(),
@@ -1702,6 +1717,7 @@ mod tests {
             dec!(0.15),
             Decimal::ZERO,
             None,
+            false,
         );
 
         spain.fees.push(FeeEntry {
@@ -1789,6 +1805,7 @@ mod tests {
             dec!(0.15),
             Decimal::ZERO,
             None,
+            false,
         );
         let output = render(|w| CsvFormatter::write_modelo_boxes(w, &spain));
 
@@ -1895,6 +1912,7 @@ mod tests {
             dec!(0.15),
             dec!(1500),
             None,
+            false,
         );
         spain.dividends.push(DividendEntry {
             symbol: "AAPL".to_string(),
@@ -1958,6 +1976,7 @@ mod tests {
             dec!(0.15),
             Decimal::ZERO,
             None,
+            false,
         );
         let mut gain = capital_gain();
         gain.fiscal_gain_loss = dec!(10000);
@@ -2055,6 +2074,7 @@ mod tests {
             dec!(0.15),
             Decimal::ZERO,
             None,
+            false,
         );
         spain.capital_gains.push(capital_gain());
         spain.calculate_totals();
@@ -2085,6 +2105,7 @@ mod tests {
             dec!(0.15),
             Decimal::ZERO,
             None,
+            false,
         );
         comun.capital_gains.push(capital_gain());
         comun.calculate_totals();

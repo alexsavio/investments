@@ -320,6 +320,10 @@ fn generate_spanish_tax_statement(
         println!("{}", Color::Yellow.paint(format!("WARNING: {}", review.message())));
     }
 
+    if let Some(message) = statement.small_disposals_message() {
+        println!("{}", Color::Yellow.paint(format!("WARNING: {message}")));
+    }
+
     if let Some(message) = statement.custody_fee_cap_message() {
         println!("{}", Color::Yellow.paint(format!("WARNING: {message}")));
     }
