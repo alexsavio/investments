@@ -210,7 +210,7 @@ figure is entered per transmission it names the block (`1658-1672`).
 | `MODELO_F93_1658-1672` | Incremento exento, otros supuestos — the art. 39.5.d relief, one cell per transmission. Emitted only when non-zero |
 | `MODELO_F93_8808` / `809` / `8815` / `8809` | Apartado H1: positive transmissions saldo, own-group compensation, RCM losses crossed in, and the net (`8809 = 8808 − 809 − 810 − 8815`) |
 | `MODELO_F93_8810` / `8825` / `8805` / `8840` | Apartado H2, the RCM mirror (`8840 = 8810 − 8825 − 8835 − 8805`) |
-| `MODELO_F93_8850` | Apartado H4, saldo negativo del capital mobiliario. Emitted only when the RCM result is negative |
+| `MODELO_F93_8850` | Apartado H4, saldo negativo del capital mobiliario, as a **positive magnitude** — the row carries `max(0, −rcm_net)`, not a negative number. Emitted only when the RCM result is negative |
 | `MODELO_F93_8841` | Total parte especial del ahorro (`= 8809 + 8840`) |
 | `MODELO_F93_815 (= 524)` | Base liquidable especial del ahorro |
 | `MODELO_F93_829 (= 527)` | Cuota íntegra especial del ahorro |

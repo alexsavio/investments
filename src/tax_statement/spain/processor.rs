@@ -1502,10 +1502,27 @@ mod tests {
         assert!(params.custody_fees_deductible);
         // LF 29/2014 repealed the old art. 7.v, so Navarra has no dividend exemption.
         assert_eq!(params.dividend_exemption_limit, Decimal::ZERO);
+        // …but caps them at 3% of the non-exempt gross income from the securities.
+        assert_eq!(params.custody_fee_cap_fraction, Some(dec!(0.03)));
         // Art. 54.2 crosses the groups, but in an order of its own.
         assert_eq!(params.cross_offset, CrossOffset::NavarraOrdered);
+        // Art. 39.5.d, which neither of the other two statutes has.
+        assert!(params.small_disposals_exemption);
         // Art. 60's first bracket: 20% to €6,000.
         assert_eq!(params.scale.brackets()[0], (dec!(0), dec!(0.20)));
+    }
+
+    /// The two Navarra-only parameters must stay off everywhere else: a stray ceiling or exemption
+    /// would silently change a filer's tax under a statute that has neither.
+    #[rstest]
+    #[case(SpanishTaxRegime::Gipuzkoa)]
+    #[case(SpanishTaxRegime::Comun)]
+    fn the_navarra_only_parameters_are_off_elsewhere(#[case] regime: SpanishTaxRegime) {
+        let config = spain_config(regime);
+        let params = SpanishTaxParams::resolve(&config, 2025).unwrap();
+
+        assert_eq!(params.custody_fee_cap_fraction, None);
+        assert!(!params.small_disposals_exemption);
     }
 
     /// The other two regimes keep the cross-offset mode they were built with: the enum replaces a

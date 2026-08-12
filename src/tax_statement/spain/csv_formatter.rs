@@ -1159,7 +1159,7 @@ impl CsvFormatter {
                     (
                         modelo_f93::H4_RCM_NEGATIVE,
                         "H4 — saldo negativo procedente de rendimientos del capital mobiliario \
-                         (anexo 2)",
+                         — importe en positivo (anexo 2)",
                         std::cmp::max(zero, -statement.rcm_net),
                     ),
                     (

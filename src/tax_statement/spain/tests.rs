@@ -1940,11 +1940,12 @@ fn the_small_disposals_exemption_stops_above_the_threshold() {
 /// amount converted, so the year's global transmission amount cannot be measured. The exemption is
 /// withheld and the reason named rather than granted on an understated total.
 ///
-/// The `fx_gain` fixture has no securities disposals at all, so the measurable proceeds are zero —
-/// which is precisely the case where a silent answer would be most misleading.
+/// The `small_disposal` fixture qualifies on its own (€2,070 of proceeds, €1,035 exempt); add a
+/// conversion to the same year and the relief is withheld, because the conversion's own importe
+/// could push the global amount over €3,000.
 #[test]
 fn the_small_disposals_exemption_is_withheld_when_a_conversion_hides_the_total() {
-    let statement = read_fixture("fx_gain");
+    let statement = read_fixture("small_disposal_fx");
     let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
     let (navarra, _has_income) = super::compute_tax_year(
         &statement,
@@ -1955,14 +1956,42 @@ fn the_small_disposals_exemption_is_withheld_when_a_conversion_hides_the_total()
     .unwrap();
 
     assert!(navarra.small_disposals_unmeasurable);
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2070));
     assert_eq!(navarra.small_disposals_exemption, dec!(0));
-    // The €1,000 conversion result is taxed in full.
-    assert_eq!(navarra.gyp_net, dec!(1000));
-    assert_eq!(navarra.savings_quota, dec!(200));
 
     let message = navarra.small_disposals_message().unwrap();
     assert!(message.contains("NOT applied"), "{message}");
     assert!(message.contains("foreign-currency conversions"), "{message}");
+    assert!(message.contains("€2070.00"), "{message}");
+}
+
+/// A year with conversions but **no securities disposals at all** has nothing the article could have
+/// relieved: the exemption is measured on securities proceeds and gains, both zero, so it would have
+/// been zero however the conversions were counted. Announcing that "€0.00 of transmissions" had its
+/// relief withheld reports a non-event and reads as a bug.
+///
+/// What the tool still does not do — apply art. 39.5.d to a conversion gain in its own right — is a
+/// scope limit recorded in the register, not something a per-year warning can fix.
+#[test]
+fn no_withholding_caveat_when_the_year_has_no_securities_transmissions() {
+    let statement = read_fixture("fx_gain");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (navarra, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Navarra),
+    )
+    .unwrap();
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(0));
+    assert_eq!(navarra.small_disposals_gains, dec!(0));
+    assert!(!navarra.small_disposals_unmeasurable);
+    assert!(navarra.small_disposals_message().is_none());
+
+    // The €1,000 conversion result is taxed in full either way.
+    assert_eq!(navarra.gyp_net, dec!(1000));
+    assert_eq!(navarra.savings_quota, dec!(200));
 }
 
 /// Above the threshold the missing conversion amounts cannot rescue the year — they only add to the

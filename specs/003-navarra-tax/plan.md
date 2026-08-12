@@ -488,3 +488,12 @@ All in N1 (`8ded6bbd`) unless noted, after reading `trlfirpf.txt` verbatim:
    block stay on-form-only, like every other year-labelled cell.
 6. **The `verified` ejercicio is 2025 only.** FY2024 and FY2026 reuse its numbering under an explicit
    warning. Verifying the FY2024 Anexo I (Orden Foral 28/2025) would remove one caveat.
+7. **Carried-out balances round to the cent on the way out but not on the way through.** The loss
+   ledgers and the deferred-loss blocks keep full precision — an actualized cost is a two-decimal
+   figure times a three-decimal coefficient, so a saldo can carry five decimals — while the
+   `CARRYFORWARD_*` and `DEFERRED_LOSS_*` rows print through `format_eur` at two. A filer who copies
+   those rows into next year's `taxes.spain.loss_carryforward` / `deferred_losses` therefore re-enters
+   a figure that can differ from the internal one by a fraction of a cent, and the difference
+   compounds across a four-year window. Pre-existing and **all three regimes**; fixing it means
+   deciding where the statutory rounding point is (per saldo, per year, or not at all) rather than
+   changing a format string, which is why it is recorded rather than patched.

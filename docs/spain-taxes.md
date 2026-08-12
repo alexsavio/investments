@@ -1093,8 +1093,24 @@ failed the test.
 # foreign-currency conversions…
 ```
 
-**What to do.** Add the converted amounts to the securities proceeds. If the total is still at or
-under €3,000, claim the exemption by hand.
+Three boundaries on that suppression, each deliberate:
+
+- **A year with no securities disposals at all is silent.** The relief is measured on securities
+  proceeds and securities increments, both zero, so it would have come to zero however the
+  conversions were counted; announcing a withheld relief there reports a non-event. The article is
+  never applied to a **conversion gain in its own right**, in that year or any other — that is a
+  scope limit of this tool, not something the year-by-year message can repair.
+- **Only results on a *held* balance suppress it.** Conversion results on a **borrowed** balance are
+  parked in the manual-review bucket of §7 and never reach the ganancias group, so they do not
+  trigger the suppression either. Their importe is just as unmeasurable, so a year whose only
+  conversions were on a borrowed balance can still be granted the relief on a securities-only total.
+  The asymmetry follows from §7's decision to keep borrowed-balance results out of the base
+  entirely; if you settle §7 the other way, this suppression has to widen with it.
+- **Nothing is withheld above €3,000**, as above.
+
+**What to do.** Add the converted amounts — held and borrowed alike — to the securities proceeds. If
+the total is still at or under €3,000, claim the exemption by hand; if a borrowed-balance conversion
+pushes it over, the relief the tool granted is too generous.
 
 ### 14. The Navarra credit's tipo medio efectivo — OPEN, by scope
 
