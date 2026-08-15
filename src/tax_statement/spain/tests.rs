@@ -984,6 +984,49 @@ fn held_balance_conversions_are_ganancias() {
     assert_eq!(spain.total_fx_borrowed_review, dec!(0));
 }
 
+/// A repayment of **borrowed** currency is referred for manual review, and the referral carries the
+/// realized amount.
+///
+/// $10,000 borrowed 2026-02-10 at 0.9 (€9,000) and repaid 2026-08-10 at 1.0 costs €10,000 to
+/// discharge, a €1,000 result on the borrowed side. It stays out of the savings base either way.
+#[test]
+fn borrowed_balance_repayments_are_referred_for_review() {
+    let statement = read_fixture("fx_borrowed");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (spain, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Gipuzkoa),
+    )
+    .unwrap();
+
+    assert_eq!(spain.fx_borrowed_review.len(), 1);
+    let review = &spain.fx_borrowed_review[0];
+    assert_eq!(review.currency, "USD");
+    assert_eq!(review.date, Date::from_ymd_opt(2026, 8, 10).unwrap());
+    assert_eq!(review.amount_eur, dec!(-1000));
+    assert_eq!(spain.total_fx_borrowed_review, dec!(-1000));
+
+    // Referred, never integrated.
+    assert!(spain.fx_gains.is_empty());
+    assert_eq!(spain.gyp_net, dec!(0));
+    assert_eq!(spain.savings_base, dec!(0));
+}
+
+/// A borrowed-balance repayment that realizes exactly €0.00 is a non-event, and reporting it as one
+/// more line to review by hand is noise — the same class of false report as V4a's withheld-exemption
+/// warning. Held-balance conversions are different: they are disposals that enter the ganancias
+/// group, so a zero one is still reported (see [`a_flat_rate_realizes_a_zero_fx_result`]).
+#[test]
+fn a_zero_borrowed_repayment_is_not_referred_for_review() {
+    let spain = run_pipeline("fx_borrowed", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert!(spain.fx_borrowed_review.is_empty());
+    assert_eq!(spain.total_fx_borrowed_review, dec!(0));
+    assert_eq!(spain.savings_base, dec!(0));
+}
+
 /// With a flat rate the conversion is still a disposal, so it is still reported — but it realizes
 /// nothing, and must not invent a figure in either direction.
 #[test]

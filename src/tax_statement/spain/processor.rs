@@ -1420,8 +1420,15 @@ fn process_fx_gains(
             });
         }
 
+        // A repayment that realized exactly nothing has nothing to review: the referral asks the
+        // filer to decide whether an amount belongs in the base, and a zero amount is the same
+        // number under either answer. The test is exact, not "rounds to €0.00" — a sub-cent
+        // realization still moves the reported total, so dropping it would silently change a figure
+        // rather than remove a non-event. Held-balance realizations are not filtered at all: those
+        // are disposals that entered the ganancias group, and a zero one still has to appear as the
+        // disposal it was.
         for realization in &result.non_taxable {
-            if realization.date.year() != params.year {
+            if realization.date.year() != params.year || realization.amount.is_zero() {
                 continue;
             }
             statement.fx_borrowed_review.push(FxGainEntry {

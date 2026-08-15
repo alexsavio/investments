@@ -44,7 +44,7 @@ Everything below is text/contract/coverage; both reviewers independently reprodu
   plan.md:229-233 still says the exemption is "suppressed for any year with an FX conversion realization" — V4a narrowed that, and the plan's own primacy rule demands the amendment in its own `docs(plan)` commit. State the three boundaries as shipped (docs §13 already has them).
   Commit: `docs(plan): re-derive Appendix A for the narrowed exemption caveat`
 - **W4 — Discriminate and register the exemption-ceiling choice.** Status: DONE (`7f2a66a5`; Appendix A hand-computation in `e6b69ef3`, no discrepancy found)
-  The implementation measures 2.º's 50% ceiling on ALL transmissions' proceeds while `I` is gains-only; no fixture can distinguish that from a gains-only ceiling, and the choice's failure direction is LESS tax (non-conservative), unregistered. Add the discriminating fixture (gain sale ~€400 proceeds/+€300; loss sale ~€2,000/−€600 → all-proceeds ceiling exempts 300, gains-only 200; use converter-representable euros, record in Appendix A first), pin the implemented all-proceeds reading, and add the register §13 entry (art. 39.5.d.2.º "importe global de la transmisión", direction noted).
+  The implementation measures 2.º's 50% ceiling on ALL transmissions' proceeds while `I` is gains-only; no fixture can distinguish that from a gains-only ceiling, and the choice's failure direction is LESS tax (non-conservative), unregistered. Add the discriminating fixture (gain sale ~€400 proceeds/+€300; loss sale ~€2,000/−€600 → all-proceeds ceiling exempts 300, gains-only 200 — **euros superseded**: the shipped `small_disposal_ceiling` is AAPL +1 620 on €1 800 and MSFT −270 on €450, exempting 1 125 against 900, recorded in the second-pass close-out and Appendix A; use converter-representable euros, record in Appendix A first), pin the implemented all-proceeds reading, and add the register §13 entry (art. 39.5.d.2.º "importe global de la transmisión", direction noted).
   Commit: `test(navarra-tax): pin the exemption ceiling on all transmissions' proceeds`
 - **W5 — Low/record batch.** Status: DONE (`8f3ead76`) — one commit:
   (a) register the 8816/8850 positive-magnitude convention (form defines the boxes as sums < 0; the tool emits magnitudes — a stated choice, register + contract cross-ref); (b) `tests.rs:483-487` doc comment → three statutes; (c) `tests.rs:235` "both regimes" → name the two compared regimes; (d) review.md record polish: annotate the V2 task line (label ships the specimen note, not a medium-confidence hedge — deviation recorded in close-out), fix the "every other box carries" phrasing, annotate V3's task-prose euros as superseded by the recorded substitution.
@@ -138,7 +138,9 @@ appear because the year's transmissions are positive; that path is covered by
   `8865` / `8875` do with H4's. It rests on the same evidence as every other box the reviewers
   verified cell-for-cell, so its label names the impreso it was read from rather than hedging its
   confidence — the whole block already carries the ejercicio-2025 caveat through register entry 15
-  and the filing-year warning.
+  and the filing-year warning. *(This paragraph was rewritten in the W5 batch; the V-round text it
+  replaced said the boxes "carry" the evidence rather than rest on it. Recorded here because the
+  close-out is dated to the V round and the wording is not the one V7 shipped.)*
 - **No hand-computation disagreed with the implementation.** All three V3 fixtures were worked in
   Appendix A first and every asserted figure passed on the first run — proceeds, increments,
   exemption, `gyp_net`, cuota and carryforward, in all three regimes. Nothing was re-pinned.
@@ -179,11 +181,15 @@ Same statement, `regime: navarra`. Every figure the V7 close-out recorded is unc
 **€99.55**, cuota íntegra **€19.91**, foreign credit **€12.33**, cuota líquida **€7.58**, ganancias
 netas **€16.18**, RCM neto **€83.37**.
 
-Against V7's CSV, **12 lines** moved, not the two the task predicted, and no value changed:
+Against V7's CSV, **12 diff-stream lines** moved, not the two the task predicted, and no value
+changed. Two file lines changed and eight were deleted; `diff` prints a changed line twice, once on
+each side, so 2 × 2 + 8 = 12:
 
 - the two `SUMMARY_*_LOSSES_APPLIED` labels, from `fase 2ª-1º` to `art. 54.2.a` / `art. 54.2.b`
-  (W1, and the `adv-nav-loss` run shows the ganancias one carrying a real €16.18 rather than a zero);
-- the eight-line art. 39.5.d withholding banner and its blank line, now **absent** (W2).
+  (W1, and the `adv-nav-loss` run shows the ganancias one carrying a real €16.18 rather than a zero)
+  — 2 file lines, 4 in the diff stream;
+- the art. 39.5.d withholding banner, now **absent** (W2) — **seven** `#` lines plus the blank line
+  that separates it from the block above, 8 file lines, 8 in the diff stream.
 
 W6's expectation came from V7's close-out, which reasoned that "the V4 warning narrowing does not
 reach this statement — it has securities transmissions". True of V4's narrowing, false of W2's: this

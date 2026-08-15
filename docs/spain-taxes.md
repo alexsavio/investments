@@ -700,7 +700,11 @@ cash ledger.
 
 Results realized on a **borrowed** (margin) balance are excluded from the base and reported for
 manual review instead: repaying a currency loan is not clearly a transfer of a patrimonial element,
-and none of the three texts settles it.
+and none of the three texts settles it. A repayment that realized **exactly** zero is not reported at
+all — there is nothing to review, because the amount is the same number under either answer. The test
+is exact, not "prints as €0.00": a sub-cent result still moves the reported total, so a review row
+showing `0.00` may still be carrying one. A zero-result conversion on a *held* balance is still
+reported either way: that one is a disposal.
 
 Under **Navarra** a conversion is also a transmission for the €3,000 exemption, and the tool records
 only the result of one, never the amount converted — so a year with a conversion on a *held* balance

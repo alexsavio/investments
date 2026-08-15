@@ -51,7 +51,7 @@ by hand into Modelo 109 (Gipuzkoa, via Zergabidea), Modelo 100 (AEAT) or Modelo 
 | 6 | `description` | String | Free text | most |
 | 7 | `quantity` | Decimal | Shares disposed of (sale row), consumed (lot row), or **vested** (stock-grant row — the column is reused) | capital gains, lots, stock grants |
 | 8 | `cost_eur` | Decimal | Acquisition cost **before** actualization, commissions included | capital gains, lots |
-| 9 | `coefficient` | Decimal (3 dp) | NF 3/2014 art. 45.2 coefficient for that lot's acquisition year; `1.000` under Común. Empty on the sale row — the coefficient is a per-lot figure and a single sale can consume lots of several vintages | lots |
+| 9 | `coefficient` | Decimal (3 dp) | NF 3/2014 art. 45.2 coefficient for that lot's acquisition year; `1.000` under Común and Navarra, neither of which actualizes. Empty on the sale row — the coefficient is a per-lot figure and a single sale can consume lots of several vintages | lots |
 | 10 | `actualized_cost_eur` | Decimal | `cost_eur × coefficient` | capital gains, lots |
 | 11 | `proceeds_eur` | Decimal | Sale proceeds net of the sell-side commission | capital gains, lots |
 | 12 | `gross_amount_eur` | Decimal | Gross dividend / interest / fee amount, and the **vest-date value** on a stock-grant row (the column is reused; empty when the statement carries no per-share FMV) | dividends, interest, fees, stock grants |
@@ -91,7 +91,7 @@ at full precision.
 |---|---|
 | `SUMMARY_REGIME` | Regime (label) and tax year (value) |
 | `SUMMARY_RCM_DIVIDENDS` | Gross dividends |
-| `SUMMARY_RCM_DIVIDEND_EXEMPTION` | Dividends exempt under the Gipuzkoa €1,500 relief (NF 3/2014 art. 9.24); always 0 under Común |
+| `SUMMARY_RCM_DIVIDEND_EXEMPTION` | Dividends exempt under the Gipuzkoa €1,500 relief (NF 3/2014 art. 9.24); always 0 under Común and Navarra, neither of which has the relief. The row is emitted under all three, and its label carries its own scope (`— sólo Gipuzkoa`) rather than being regime-gated: a self-scoped label is unambiguous on a row whose value is structurally zero elsewhere, and it keeps the label cell identical across regimes |
 | `SUMMARY_RCM_INTEREST` | Interest **received**, net of any reversal of interest credited earlier |
 | `SUMMARY_RCM_INTEREST_PAID` | Interest paid on a borrowed balance, as a positive magnitude. Reported only — it never reduces the RCM result |
 | `SUMMARY_RCM_DEDUCTIBLE_FEES` | Custody and administration fees that reduce the RCM result, after any regime ceiling (zero under Gipuzkoa) |
@@ -99,7 +99,7 @@ at full precision.
 | `SUMMARY_RCM_FEES_OVER_CAP` | Qualifying fees the ceiling disallowed. **Navarra only**; disjoint from `SUMMARY_INFORMATIONAL_FEES`, which carries fees that never qualified |
 | `SUMMARY_RCM_NET` | `dividends + interest − deductible fees − exemption` |
 | `SUMMARY_GYP_CAPITAL_GAINS` | Integrable result of the year's disposals |
-| `SUMMARY_GYP_FX` | Realized foreign-currency results on a **held** balance |
+| `SUMMARY_GYP_FX` | Realized foreign-currency results on a **held** balance. Under Navarra the label additionally states the scope limit — the result is taxed in full, is never relieved under TRLFIRPF art. 39.5.d and never counts towards its global amount — because Navarra is the only regime with that exemption; Común and Gipuzkoa keep the bare label |
 | `SUMMARY_GYP_SMALL_DISPOSALS_EXEMPTION` | Transmission gains exempted under TRLFIRPF art. 39.5.d. **Navarra only**, and emitted only when non-zero |
 | `SUMMARY_GYP_DEFERRED` | Loss this year's disposals deferred under the valores-homogéneos rule, as a positive magnitude |
 | `SUMMARY_GYP_REINTEGRATED` | Deferred loss this year's disposals released, as a positive magnitude |
@@ -107,21 +107,6 @@ at full precision.
 | `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` | Prior-year balances consumed **inside their own group** this year: Fase 2ª-1º under Común, NF 3/2014 art. 66.1's own-group integration under Gipuzkoa, TRLFIRPF art. 54.2's own-group absorption under Navarra |
 | `SUMMARY_CROSS_OFFSET_RCM_TO_GYP` / `_GYP_TO_RCM` | Current-year cross-group offset: Fase 1ª under Común, TRLFIRPF art. 54.2's own cross under Navarra; always 0 under Gipuzkoa |
 | `SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP` / `_GYP_TO_RCM` | Prior-year balance crossed into the other group: Fase 2ª-2º under Común, and under Navarra the part of the cross that only the broad reading of art. 54.2 allows |
-
-The label on all **six** rows of the compensation block is **per regime**, because the amount comes
-from a different statute in each. The keys never change; only the label cell does.
-
-The two **own-group** rows carry a real amount under all three regimes, so each names its own
-statute: `fase 2ª-1º` under Común; `NF 3/2014 art. 66.1.a` / `art. 66.1.b` under Gipuzkoa, naming
-the integration "exclusivamente entre sí" and art. 66.2's maximum-absorption rule; `art. 54.2.a` /
-`art. 54.2.b` under Navarra, naming the statute's two conditions on that absorption — it happens
-only when the group's own result is positive and it cannot drive that result below zero.
-
-The four **cross** rows are structurally zero under Gipuzkoa, which integrates the groups
-"exclusivamente entre sí", so Gipuzkoa keeps Común's state wording there (`fase 1ª (25% — sólo
-Territorio Común)` and `fase 2ª-2º (saldos de ejercicios anteriores)`) rather than earning a
-vocabulary for a row that cannot fire. Navarra names the 25% of the *other* letra's positive after
-that letra absorbed its own carryforwards.
 | `SUMMARY_RCM_TAXABLE` / `SUMMARY_GYP_TAXABLE` | Each group after compensation |
 | `SUMMARY_SAVINGS_BASE` | Base liquidable del ahorro |
 | `SUMMARY_SAVINGS_QUOTA` | Cuota íntegra del ahorro |
@@ -145,13 +130,32 @@ that letra absorbed its own carryforwards.
 empty. `WASH_SALE_WINDOW_OPEN` and `SHORT_POSITION` sit under their own warning banners at the end of
 the file.
 
+### The compensation block's per-regime labels
+
+The label on all **six** rows of the compensation block is **per regime**, because the amount comes
+from a different statute in each. The keys never change; only the label cell does.
+
+The two **own-group** rows carry a real amount under all three regimes, so each names its own
+statute: `fase 2ª-1º` under Común; `NF 3/2014 art. 66.1.a` / `art. 66.1.b` under Gipuzkoa, naming
+the integration "exclusivamente entre sí" and art. 66.2's maximum-absorption rule; `art. 54.2.a` /
+`art. 54.2.b` under Navarra, naming the statute's two conditions on that absorption — it happens
+only when the group's own result is positive and it cannot drive that result below zero.
+
+The four **cross** rows are structurally zero under Gipuzkoa, which integrates the groups
+"exclusivamente entre sí", so Gipuzkoa keeps Común's state wording there (`fase 1ª (25% — sólo
+Territorio Común)` and `fase 2ª-2º (saldos de ejercicios anteriores)`) rather than earning a
+vocabulary for a row that cannot fire. Navarra names the 25% of the *other* letra's positive after
+that letra absorbed its own carryforwards.
+
 ### Reporting the two prior-year compensation steps disjointly
 
-`SUMMARY_RCM_LOSSES_APPLIED` carries only what Fase 2ª-1º applied inside the RCM group;
-`SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP` carries only what Fase 2ª-2º crossed out of it. The two are
-**disjoint**, and their sum is the prior-year RCM balance the year consumed. Printing the ledger
-total in both rows would show the crossed amount twice, and a filer transcribing both would claim it
-twice. The ganancias pair works the same way.
+`SUMMARY_RCM_LOSSES_APPLIED` carries only what the RCM group absorbed inside itself — Fase 2ª-1º
+under Común, NF 3/2014 art. 66.1.a under Gipuzkoa, TRLFIRPF art. 54.2.a under Navarra;
+`SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP` carries only what crossed out of it — Fase 2ª-2º under
+Común, art. 54.2's "en el mismo orden" under Navarra, and structurally nothing under Gipuzkoa. The
+two are **disjoint**, and their sum is the prior-year RCM balance the year consumed. Printing the
+ledger total in both rows would show the crossed amount twice, and a filer transcribing both would
+claim it twice. The ganancias pair works the same way.
 
 ## Modelo box mapping
 
@@ -279,7 +283,12 @@ Comment lines start with `#`. A consumer must skip them.
 
 There is no FX-borrowed banner in the CSV. Borrowed-balance results appear as
 `FX Borrowed (review)` transaction rows and as the `SUMMARY_FX_BORROWED_REVIEW` total; the prose
-warning about them is printed on the console only.
+warning about them is printed on the console only. A repayment that realized **exactly** zero gets
+neither a row nor a place in the total — there is nothing to review, since the amount is the same
+number under either answer. The test is exact rather than "prints as `0.00`": a sub-cent realization
+still moves the total, so a row that shows `0.00` may still be carrying one. Held-balance
+realizations are **not** filtered that way: a zero one is still a disposal and still gets its
+`FX Gain/Loss` row.
 
 ## Validation rules
 

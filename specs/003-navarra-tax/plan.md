@@ -326,7 +326,8 @@ Común: base 450 → `450 × 19% =` **85.50**. Gipuzkoa: 1.020 → AAPL 1 800 �
 amount, and the global amount includes the loss-making transmissions. The two figures therefore rest
 on different populations, which is a reading, not an identity — and no fixture so far can tell it
 from a ceiling measured on the gain-making transmissions alone. `small_disposal_mixed` cannot: its
-gain (900) is under half of its own sale's proceeds (900), so both ceilings leave it wholly exempt.
+gain (900) is equal to half of its own sale's proceeds (900) and 2.º is inclusive, so both ceilings
+leave it wholly exempt.
 
 Two instruments again, so the cost bases stay independent: AAPL buy 10 @ $20 on 2025-03-10
 ($200 → €180) and sell 10 @ $200 on 2026-05-15 ($2 000 → €1 800), a **+1 620** incremento; MSFT buy
