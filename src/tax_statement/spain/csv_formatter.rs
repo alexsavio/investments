@@ -557,22 +557,25 @@ impl CsvFormatter {
             statement.gyp_net,
         )?;
 
-        // Each regime compensates under its own statute, and every row of this block carries a real
-        // amount under two of them, so each names the article that produced it. TRLFIRPF art. 54.2
-        // letra a) is the capital-mobiliario group and letra b) the transmisiones one: each absorbs
-        // its own prior saldos first and only when its own result is positive, and a negative in
-        // either then crosses at 25% of the other's positive *after* that other absorbed its own
-        // carryforwards — which is exactly what the AEAT "fase" numbering does not describe.
-        // Gipuzkoa integrates the groups "exclusivamente entre sí", so its cross rows are
-        // structurally zero and it keeps the state wording rather than earning a third vocabulary.
-        let (own_rcm, own_gyp, cross_rcm, cross_gyp, prior_rcm, prior_gyp) = match statement.regime {
-            SpanishTaxRegime::Gipuzkoa | SpanishTaxRegime::Comun => (
+        // The own-group rows carry a real amount under all three regimes, so each names the article
+        // that produced it. NF 3/2014 art. 66.1 integrates each group "exclusivamente entre sí" and
+        // art. 66.2 requires absorbing the maximum each year; TRLFIRPF art. 54.2 letra a) is the
+        // capital-mobiliario group and letra b) the transmisiones one, each absorbing its own prior
+        // saldos only when its own result is positive. Neither is the AEAT "fase" numbering, which
+        // is Territorio Común's own scheme.
+        let (own_rcm, own_gyp) = match statement.regime {
+            SpanishTaxRegime::Comun => (
                 "Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — fase 2ª-1º",
                 "Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — fase 2ª-1º",
-                "Compensación cruzada RCM → ganancias — fase 1ª (25% — sólo Territorio Común)",
-                "Compensación cruzada ganancias → RCM — fase 1ª (25% — sólo Territorio Común)",
-                "Compensación cruzada RCM → ganancias — fase 2ª-2º (saldos de ejercicios anteriores)",
-                "Compensación cruzada ganancias → RCM — fase 2ª-2º (saldos de ejercicios anteriores)",
+            ),
+            SpanishTaxRegime::Gipuzkoa => (
+                "Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — NF \
+                 3/2014 art. 66.1.a: los rendimientos se integran y compensan exclusivamente entre \
+                 sí y en la cuantía máxima que permita cada ejercicio (art. 66.2) — sólo Gipuzkoa",
+                "Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — \
+                 NF 3/2014 art. 66.1.b: las ganancias y pérdidas se integran y compensan \
+                 exclusivamente entre sí y en la cuantía máxima que permita cada ejercicio (art. \
+                 66.2) — sólo Gipuzkoa",
             ),
             SpanishTaxRegime::Navarra => (
                 "Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — art. \
@@ -581,6 +584,21 @@ impl CsvFormatter {
                 "Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — \
                  art. 54.2.b: sólo si el resultado del ejercicio es positivo y con el límite de \
                  cero — sólo Navarra",
+            ),
+        };
+
+        // The cross rows are structurally zero under Gipuzkoa — art. 66.1 never lets a saldo leave
+        // its own group — so it keeps the state wording rather than earning a vocabulary for a row
+        // that cannot fire. Under Navarra a negative in either letra crosses at 25% of the other's
+        // positive *after* that other absorbed its own carryforwards.
+        let (cross_rcm, cross_gyp, prior_rcm, prior_gyp) = match statement.regime {
+            SpanishTaxRegime::Gipuzkoa | SpanishTaxRegime::Comun => (
+                "Compensación cruzada RCM → ganancias — fase 1ª (25% — sólo Territorio Común)",
+                "Compensación cruzada ganancias → RCM — fase 1ª (25% — sólo Territorio Común)",
+                "Compensación cruzada RCM → ganancias — fase 2ª-2º (saldos de ejercicios anteriores)",
+                "Compensación cruzada ganancias → RCM — fase 2ª-2º (saldos de ejercicios anteriores)",
+            ),
+            SpanishTaxRegime::Navarra => (
                 "Compensación cruzada RCM → ganancias — art. 54.2.a: 25% del saldo positivo \
                  resultante de la letra b) — sólo Navarra",
                 "Compensación cruzada ganancias → RCM — art. 54.2.b: 25% del saldo positivo \
@@ -1943,14 +1961,18 @@ mod tests {
         }
     }
 
-    /// Every row of the compensation block carries a non-zero amount under Navarra, so each must
-    /// cite the statute that produced it. The AEAT "fase" numbering is Territorio Común's own scheme
-    /// and describes nothing in TRLFIRPF art. 54.2, whose letra a) is the capital-mobiliario group
-    /// and letra b) the transmisiones one.
+    /// Every own-group row of the compensation block carries a non-zero amount under all three
+    /// regimes, so each must cite the statute that produced it. The AEAT "fase" numbering is
+    /// Territorio Común's own scheme: it describes nothing in TRLFIRPF art. 54.2, whose letra a) is
+    /// the capital-mobiliario group and letra b) the transmisiones one, and nothing in NF 3/2014
+    /// art. 66.1, whose two letras integrate "exclusivamente entre sí" in the maximum amount each
+    /// year allows (art. 66.2).
     ///
-    /// Gipuzkoa integrates the groups "exclusivamente entre sí", so its cross rows are structurally
-    /// zero; it keeps the state wording rather than gaining a third vocabulary, which is also what
-    /// keeps its emitted bytes unchanged.
+    /// The cross rows are structurally zero under Gipuzkoa, so it keeps the state wording there
+    /// rather than gaining a vocabulary for a row that cannot fire.
+    ///
+    /// Asserted as full-string equality: a suffix match would pass a label that acquired a second,
+    /// contradictory statute in front of the one being checked.
     #[test]
     fn the_compensation_rows_name_the_regimes_own_statute() {
         let labels = |regime| {
@@ -1964,20 +1986,53 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
-            let rows = labels(regime);
-            assert_eq!(rows.len(), 6, "{regime:?}: {rows:?}");
-            assert!(rows[0].ends_with("fase 2ª-1º"), "{rows:?}");
-            assert!(rows[1].ends_with("fase 2ª-1º"), "{rows:?}");
-            assert!(rows[2].ends_with("fase 1ª (25% — sólo Territorio Común)"), "{rows:?}");
-            assert!(rows[3].ends_with("fase 1ª (25% — sólo Territorio Común)"), "{rows:?}");
-            assert!(
-                rows[4].ends_with("fase 2ª-2º (saldos de ejercicios anteriores)"),
-                "{rows:?}"
+        let comun = labels(SpanishTaxRegime::Comun);
+        assert_eq!(comun.len(), 6, "{comun:?}");
+        assert_eq!(
+            comun[0],
+            "Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — fase 2ª-1º"
+        );
+        assert_eq!(
+            comun[1],
+            "Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — fase 2ª-1º"
+        );
+
+        let gipuzkoa = labels(SpanishTaxRegime::Gipuzkoa);
+        assert_eq!(gipuzkoa.len(), 6, "{gipuzkoa:?}");
+        assert_eq!(
+            gipuzkoa[0],
+            "Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — NF 3/2014 \
+             art. 66.1.a: los rendimientos se integran y compensan exclusivamente entre sí y en la \
+             cuantía máxima que permita cada ejercicio (art. 66.2) — sólo Gipuzkoa"
+        );
+        assert_eq!(
+            gipuzkoa[1],
+            "Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — NF \
+             3/2014 art. 66.1.b: las ganancias y pérdidas se integran y compensan exclusivamente \
+             entre sí y en la cuantía máxima que permita cada ejercicio (art. 66.2) — sólo Gipuzkoa"
+        );
+        for label in &gipuzkoa[..2] {
+            assert!(!label.contains("fase"), "{label}");
+            assert!(!label.contains("25%"), "{label}");
+        }
+
+        // The four cross rows are the state wording under both, and Gipuzkoa's cannot fire.
+        for regime in [&comun, &gipuzkoa] {
+            assert_eq!(
+                regime[2],
+                "Compensación cruzada RCM → ganancias — fase 1ª (25% — sólo Territorio Común)"
             );
-            assert!(
-                rows[5].ends_with("fase 2ª-2º (saldos de ejercicios anteriores)"),
-                "{rows:?}"
+            assert_eq!(
+                regime[3],
+                "Compensación cruzada ganancias → RCM — fase 1ª (25% — sólo Territorio Común)"
+            );
+            assert_eq!(
+                regime[4],
+                "Compensación cruzada RCM → ganancias — fase 2ª-2º (saldos de ejercicios anteriores)"
+            );
+            assert_eq!(
+                regime[5],
+                "Compensación cruzada ganancias → RCM — fase 2ª-2º (saldos de ejercicios anteriores)"
             );
         }
 

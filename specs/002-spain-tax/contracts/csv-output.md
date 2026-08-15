@@ -104,21 +104,24 @@ at full precision.
 | `SUMMARY_GYP_DEFERRED` | Loss this year's disposals deferred under the valores-homogéneos rule, as a positive magnitude |
 | `SUMMARY_GYP_REINTEGRATED` | Deferred loss this year's disposals released, as a positive magnitude |
 | `SUMMARY_GYP_NET` | `capital gains + FX − reintegrated − small-disposals exemption` |
-| `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` | Prior-year balances consumed **inside their own group** this year: Fase 2ª-1º under Común and Gipuzkoa, TRLFIRPF art. 54.2's own-group absorption under Navarra |
+| `SUMMARY_RCM_LOSSES_APPLIED` / `SUMMARY_GYP_LOSSES_APPLIED` | Prior-year balances consumed **inside their own group** this year: Fase 2ª-1º under Común, NF 3/2014 art. 66.1's own-group integration under Gipuzkoa, TRLFIRPF art. 54.2's own-group absorption under Navarra |
 | `SUMMARY_CROSS_OFFSET_RCM_TO_GYP` / `_GYP_TO_RCM` | Current-year cross-group offset: Fase 1ª under Común, TRLFIRPF art. 54.2's own cross under Navarra; always 0 under Gipuzkoa |
 | `SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP` / `_GYP_TO_RCM` | Prior-year balance crossed into the other group: Fase 2ª-2º under Común, and under Navarra the part of the cross that only the broad reading of art. 54.2 allows |
 
 The label on all **six** rows of the compensation block is **per regime**, because the amount comes
-from a different statute in each. Común and Gipuzkoa carry the AEAT numbering (`fase 2ª-1º`,
-`fase 1ª (25% — sólo Territorio Común)` and `fase 2ª-2º (saldos de ejercicios anteriores)`); Navarra
-carries TRLFIRPF art. 54.2's own, where letra a) is the capital-mobiliario group and letra b) the
-transmisiones one, so every RCM row cites `art. 54.2.a` and every ganancias row `art. 54.2.b`. The
-own-group rows name the statute's two conditions on that absorption — it happens only when the
-group's own result is positive and it cannot drive that result below zero — and the cross rows name
-the 25% of the *other* letra's positive after that letra absorbed its own carryforwards. Gipuzkoa's
-cross rows are structurally zero — it integrates the groups "exclusivamente entre sí" — and keep the
-state wording rather than earning a third vocabulary for a row that cannot fire. The keys never
-change; only the label cell does.
+from a different statute in each. The keys never change; only the label cell does.
+
+The two **own-group** rows carry a real amount under all three regimes, so each names its own
+statute: `fase 2ª-1º` under Común; `NF 3/2014 art. 66.1.a` / `art. 66.1.b` under Gipuzkoa, naming
+the integration "exclusivamente entre sí" and art. 66.2's maximum-absorption rule; `art. 54.2.a` /
+`art. 54.2.b` under Navarra, naming the statute's two conditions on that absorption — it happens
+only when the group's own result is positive and it cannot drive that result below zero.
+
+The four **cross** rows are structurally zero under Gipuzkoa, which integrates the groups
+"exclusivamente entre sí", so Gipuzkoa keeps Común's state wording there (`fase 1ª (25% — sólo
+Territorio Común)` and `fase 2ª-2º (saldos de ejercicios anteriores)`) rather than earning a
+vocabulary for a row that cannot fire. Navarra names the 25% of the *other* letra's positive after
+that letra absorbed its own carryforwards.
 | `SUMMARY_RCM_TAXABLE` / `SUMMARY_GYP_TAXABLE` | Each group after compensation |
 | `SUMMARY_SAVINGS_BASE` | Base liquidable del ahorro |
 | `SUMMARY_SAVINGS_QUOTA` | Cuota íntegra del ahorro |
