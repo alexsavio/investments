@@ -103,6 +103,15 @@ pub fn compensate_savings_base(
 /// positive and consumed across steps 1 and 3 together. That is what makes the manual's own example
 /// come out at a base of 200 rather than 0 or 300. A `fraction` of zero is Gipuzkoa, where the
 /// groups integrate "exclusivamente entre sí" and steps 1 and 3 do nothing.
+/// The magnitude of a negative result, or zero.
+///
+/// Spelled out rather than `max(zero, -net)`: negating a zero yields `rust_decimal`'s signed
+/// negative zero, which compares equal to zero, so `max` hands it back and it survives every later
+/// `min` into the emitted summary row, where the filer reads `-0.00` on their own return.
+fn negative_part(net: Decimal) -> Decimal {
+    if net < Decimal::ZERO { -net } else { Decimal::ZERO }
+}
+
 fn aeat_order(
     filing_year: i32,
     rcm_net: Decimal,
@@ -115,8 +124,8 @@ fn aeat_order(
 
     let rcm_positive = std::cmp::max(zero, rcm_net);
     let gyp_positive = std::cmp::max(zero, gyp_net);
-    let mut rcm_negative = std::cmp::max(zero, -rcm_net);
-    let mut gyp_negative = std::cmp::max(zero, -gyp_net);
+    let mut rcm_negative = negative_part(rcm_net);
+    let mut gyp_negative = negative_part(gyp_net);
 
     // One allowance per group, on the original positive.
     let mut rcm_allowance = rcm_positive * cross_offset_fraction;
@@ -219,8 +228,8 @@ fn navarra_order(
 
     let mut rcm_taxable = std::cmp::max(zero, rcm_net);
     let mut gyp_taxable = std::cmp::max(zero, gyp_net);
-    let mut rcm_negative = std::cmp::max(zero, -rcm_net);
-    let mut gyp_negative = std::cmp::max(zero, -gyp_net);
+    let mut rcm_negative = negative_part(rcm_net);
+    let mut gyp_negative = negative_part(gyp_net);
 
     // Own-group absorption. A negative result offers a budget of zero, so `apply` leaves that
     // group's saldos alone without needing a sign test of its own.
@@ -765,5 +774,27 @@ mod tests {
         assert_eq!(result.savings_base, dec!(900));
         assert_eq!(result.gyp_ledger_next.balances()[&2024], dec!(500));
         assert_eq!(result.gyp_ledger_next.balances()[&2026], dec!(500));
+    }
+
+    /// A group that nets to exactly zero must not print its cross-offset as a negative zero: the
+    /// row reaches a return the filer hands to the tax office, where "-0.00" reads as an error.
+    #[rstest]
+    #[case::comun(COMUN)]
+    #[case::navarra(NAVARRA)]
+    #[case::gipuzkoa(CrossOffset::None)]
+    fn a_zero_group_crosses_a_positive_zero(#[case] cross_offset: CrossOffset) {
+        let result = compensate_savings_base(
+            2026,
+            Decimal::ZERO,
+            dec!(1000),
+            LossLedger::default(),
+            LossLedger::default(),
+            cross_offset,
+        );
+
+        for crossed in [result.cross_offset_rcm_to_gyp, result.cross_offset_gyp_to_rcm] {
+            assert_eq!(crossed, Decimal::ZERO);
+            assert!(!crossed.is_sign_negative(), "negative zero reached a filer-facing row");
+        }
     }
 }

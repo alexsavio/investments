@@ -24,7 +24,7 @@ SUMMARY_GYP_REINTEGRATED,Pérdidas diferidas reintegradas al transmitirse los va
 SUMMARY_GYP_NET,Saldo de ganancias y pérdidas patrimoniales,-450.00
 SUMMARY_RCM_LOSSES_APPLIED,Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — art. 54.2.a: sólo si el resultado del ejercicio es positivo y con el límite de cero — sólo Navarra,0.00
 SUMMARY_GYP_LOSSES_APPLIED,Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — art. 54.2.b: sólo si el resultado del ejercicio es positivo y con el límite de cero — sólo Navarra,0.00
-SUMMARY_CROSS_OFFSET_RCM_TO_GYP,Compensación cruzada RCM → ganancias — art. 54.2.a: 25% del saldo positivo resultante de la letra b) — sólo Navarra,-0.00
+SUMMARY_CROSS_OFFSET_RCM_TO_GYP,Compensación cruzada RCM → ganancias — art. 54.2.a: 25% del saldo positivo resultante de la letra b) — sólo Navarra,0.00
 SUMMARY_CROSS_OFFSET_GYP_TO_RCM,Compensación cruzada ganancias → RCM — art. 54.2.b: 25% del saldo positivo resultante de la letra a) — sólo Navarra,0.00
 SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP,Compensación cruzada RCM → ganancias — art. 54.2.a en el mismo orden (saldos de ejercicios anteriores),0.00
 SUMMARY_PRIOR_CROSS_OFFSET_GYP_TO_RCM,Compensación cruzada ganancias → RCM — art. 54.2.b en el mismo orden (saldos de ejercicios anteriores),0.00
