@@ -1100,7 +1100,7 @@ because 2.º says "el importe global de la transmisión" and 1.º has already fi
 the year total; reading one phrase two ways inside a single letra would need an argument the article
 does not give.
 
-Unlike every other choice recorded here, **this one's failure direction is less tax**. A year that
+This is the round's one choice whose **failure direction is less tax**. A year that
 sells one holding for €1,800 at a €1,620 gain and another for €450 at a €270 loss has `I = 1,620`
 and passes 1.º under either reading (€2,250 and €1,800 are both under €3,000). Half the global
 amount is €1,125 and half the gain-making sale's own proceeds is €900, so the tool exempts €1,125

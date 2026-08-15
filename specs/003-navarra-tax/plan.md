@@ -231,8 +231,9 @@ Four edges pinned with it:
    principal. Counting securities proceeds alone would understate `G` and could hand the exemption to
    a year that does not qualify, so the exemption is **suppressed** where a conversion realization
    leaves the global amount unknown, with a warning saying so. Failure direction: more tax. The
-   suppression is bounded on three sides, and each boundary is a case where nothing is in fact
-   hidden:
+   suppression is bounded on three sides, each boundary deliberate — the second of them hides an
+   unmeasurable importe by design, since register entry 7 keeps borrowed-balance results out of the
+   base entirely:
 
    - **A year with no transmission *gain* is silent.** The relief is `min(I, 50% × G)`, so a year
      whose securities transmissions produced no incremento — none at all, or only disminuciones —
