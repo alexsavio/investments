@@ -301,6 +301,52 @@ realizations are **not** filtered that way: a zero one is still a disposal and s
 - No thousands separators — a comma inside a number would break the delimiter
 - Negative amounts carry a `-` prefix; currency symbols are never included (all amounts EUR)
 
+## Golden corpus
+
+Everything above is enforced byte for byte by a committed corpus of emitted statements under
+`src/tax_statement/spain/testdata/golden/`, driven by `src/tax_statement/spain/golden_tests.rs`.
+Each golden is one `(fixture, regime, year, opening balances)` case run through the same
+`compute_tax_year` → `CsvFormatter::write` path the binary uses, over a committed synthetic fixture
+in `src/tax_statement/spain/testdata/` — never a real broker statement, so the corpus is safe to
+commit.
+
+Twelve cases over six fixtures, chosen for what each one makes the format say rather than for
+coverage of every fixture under every regime:
+
+| Golden | Fixture | Regime | What it pins |
+|---|---|---|---|
+| `fifo_gipuzkoa_2026` | `fifo` | Gipuzkoa | Per-lot `coefficient` and the `Lot` arithmetic note; the `MODELO_109_HOJA_*` block |
+| `fifo_comun_2026` | `fifo` | Común | Unit coefficient; the `MODELO_100_*` block |
+| `fifo_navarra_2026_carried_saldo` | `fifo` | Navarra | The `MODELO_F93_*` block; a carried RCM saldo crossing groups, with its open-reading warning banner |
+| `income_gipuzkoa_2026` | `income` | Gipuzkoa | `SUMMARY_RCM_DIVIDEND_EXEMPTION`; the custody fee as `SUMMARY_INFORMATIONAL_FEES` |
+| `income_comun_2026` | `income` | Común | Fee deducted in full; foreign withholding, its credit and the withholding warning banner |
+| `income_navarra_2026` | `income` | Navarra | `SUMMARY_RCM_FEE_CAP` / `SUMMARY_RCM_FEES_OVER_CAP` and the fee-ceiling warning banner |
+| `wash_sale_multi_lot_gipuzkoa_2026` | `wash_sale_multi_lot` | Gipuzkoa | A deferring sale row, two `Wash Sale Reintegration` rows, and the `DEFERRED_LOSS_*` carry-out block |
+| `cross_offset_comun_2026_saldo` | `cross_offset` | Común | The compensation block under the AEAT two-phase ordering, with a prior-year saldo |
+| `cross_offset_navarra_2026_saldo` | `cross_offset` | Navarra | The same inputs under the art. 54.2 ordering — different labels *and* different euros |
+| `small_disposal_navarra_2026` | `small_disposal` | Navarra | `SUMMARY_GYP_SMALL_DISPOSALS_EXEMPTION` and its warning banner |
+| `small_disposal_comun_2026` | `small_disposal` | Común | The same year with no exemption row at all |
+| `small_disposal_mixed_navarra_2026` | `small_disposal_mixed` | Navarra | The exemption leaving the year's loss intact into `CARRYFORWARD_GYP_*` |
+
+Every figure in the corpus was cross-checked against `specs/003-navarra-tax/plan.md` Appendix A and
+the value assertions in `src/tax_statement/spain/tests.rs` before being committed.
+
+### Regenerating
+
+A plain `cargo test` never writes to `testdata/golden/`. When a change to the emitted statement is
+**intentional**, rewrite the corpus with:
+
+```sh
+UPDATE_GOLDEN=1 cargo test --lib spain::golden_tests
+```
+
+then read the resulting `git diff` line by line and update the sections above to match. That diff is
+the point of the corpus: a regenerated golden nobody reviewed is worth no more than no golden.
+
+Adding a case means adding one `#[case::…]` line, one entry in the `CORPUS` array beside it, and a
+row in the table above; `every_golden_file_belongs_to_a_case` fails on any `.csv` in the directory
+that no case claims.
+
 ## Compatibility
 
 - Excel / LibreOffice Calc / Google Sheets: compatible

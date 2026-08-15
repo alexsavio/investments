@@ -1,0 +1,74 @@
+transaction_type,transaction_date,settle_date,symbol,isin,description,quantity,cost_eur,coefficient,actualized_cost_eur,proceeds_eur,gross_amount_eur,gain_loss_eur,deferred_loss_eur,integrable_amount_eur,foreign_tax_eur,treaty_capped_credit_eur,savings_group,notes
+Capital Gain,2026-06-15,2026-06-17,AAPL,US0378331005,AAPL,100.00,18000.00,,18000.00,9000.00,,-9000.00,0.00,-9000.00,,,GyP,
+Lot,2026-01-15,,AAPL,,FIFO lot acquired 2026-01-15,100.00,18000.00,1.000,18000.00,9000.00,,-9000.00,,,,,GyP,18000.00 × 1.000 = 18000.00
+Dividend,2026-05-20,2026-05-20,AAPL,US0378331005,AAPL,,,,,,7200.00,,,,0.00,0.00,RCM,
+
+# The cuota is computed once on the year's base after group compensation, NOT summed
+# from the rows: the savings scale is progressive, so per-row taxes would not add up.
+summary_key,label,value_eur
+SUMMARY_REGIME,Navarra (Decreto Foral Legislativo 4/2008),2026
+SUMMARY_RCM_DIVIDENDS,Dividendos (rendimientos del capital mobiliario),7200.00
+SUMMARY_RCM_DIVIDEND_EXEMPTION,Dividendos exentos — límite 1.500 € anuales (NF 3/2014 art. 9.24 — sólo Gipuzkoa),0.00
+SUMMARY_RCM_INTEREST,Intereses (rendimientos del capital mobiliario),0.00
+SUMMARY_RCM_INTEREST_PAID,Intereses pagados sobre saldo prestado (informativo — no deducibles),0.00
+SUMMARY_RCM_DEDUCTIBLE_FEES,Gastos deducibles de administración y depósito,0.00
+SUMMARY_RCM_FEE_CAP,Límite del 3% de los ingresos íntegros no exentos (TRLFIRPF art. 32.1.a — sólo Navarra),216.00
+SUMMARY_RCM_FEES_OVER_CAP,Gastos de administración y depósito excluidos por el límite del 3%,0.00
+SUMMARY_RCM_NET,Rendimiento neto del capital mobiliario,7200.00
+SUMMARY_GYP_CAPITAL_GAINS,Ganancias y pérdidas por transmisión de valores,-9000.00
+SUMMARY_GYP_FX,Ganancias y pérdidas por conversión de divisa (TRLFIRPF art. 54.1.b) — se gravan íntegras: no se les aplica la exención del art. 39.5.d ni cuentan para su importe global (registro §13 de docs/spain-taxes.md),0.00
+SUMMARY_GYP_DEFERRED,Pérdidas diferidas por valores homogéneos (no deducibles este año),0.00
+SUMMARY_GYP_REINTEGRATED,Pérdidas diferidas reintegradas al transmitirse los valores que las bloqueaban,0.00
+SUMMARY_GYP_NET,Saldo de ganancias y pérdidas patrimoniales,-9000.00
+SUMMARY_RCM_LOSSES_APPLIED,Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — art. 54.2.a: sólo si el resultado del ejercicio es positivo y con el límite de cero — sólo Navarra,2000.00
+SUMMARY_GYP_LOSSES_APPLIED,Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — art. 54.2.b: sólo si el resultado del ejercicio es positivo y con el límite de cero — sólo Navarra,0.00
+SUMMARY_CROSS_OFFSET_RCM_TO_GYP,Compensación cruzada RCM → ganancias — art. 54.2.a: 25% del saldo positivo resultante de la letra b) — sólo Navarra,0.00
+SUMMARY_CROSS_OFFSET_GYP_TO_RCM,Compensación cruzada ganancias → RCM — art. 54.2.b: 25% del saldo positivo resultante de la letra a) — sólo Navarra,1300.00
+SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP,Compensación cruzada RCM → ganancias — art. 54.2.a en el mismo orden (saldos de ejercicios anteriores),0.00
+SUMMARY_PRIOR_CROSS_OFFSET_GYP_TO_RCM,Compensación cruzada ganancias → RCM — art. 54.2.b en el mismo orden (saldos de ejercicios anteriores),0.00
+SUMMARY_RCM_TAXABLE,RCM integrado en la base del ahorro,3900.00
+SUMMARY_GYP_TAXABLE,Ganancias integradas en la base del ahorro,0.00
+SUMMARY_SAVINGS_BASE,Base liquidable del ahorro,3900.00
+SUMMARY_SAVINGS_QUOTA,Cuota íntegra del ahorro,780.00
+SUMMARY_AVERAGE_SAVINGS_RATE,Tipo medio de gravamen del ahorro (ratio — not EUR),0.20
+SUMMARY_FOREIGN_WITHHOLDING,Retenciones practicadas en el extranjero,0.00
+SUMMARY_FOREIGN_TAXABLE_INCOME,Renta neta obtenida en el extranjero integrada en la base (límite del tipo medio),3900.00
+SUMMARY_FOREIGN_TAX_CREDIT,Deducción por doble imposición internacional,0.00
+SUMMARY_NET_TAX_DUE,Cuota líquida del ahorro,780.00
+SUMMARY_INFORMATIONAL_FEES,Comisiones informativas (no deducibles),0.00
+SUMMARY_FX_BORROWED_REVIEW,Resultados de divisa sobre saldo prestado (excluidos — revisión manual),0.00
+
+# SALDOS NEGATIVOS PENDIENTES — put these in next year's taxes.spain.loss_carryforward,
+# keyed by the year each arose in. A balance may be offset only in the four following
+# years, so the origin year is part of the data.
+CARRYFORWARD_GYP_2026,Saldo negativo pendiente — GYP — origen 2026,7700.00
+
+# MODELO F-93 — declaración del IRPF de la Comunidad Foral de Navarra
+# Casillas read from the fully numbered form the Boletín Oficial de Navarra
+# publishes as Anexo I of the campaign's Orden Foral: the ejercicio-2025
+# specimen (Orden Foral 24/2026, BON nº 66 of 07-04-2026, retrieved 2026-08-12).
+# WARNING: no form is published for ejercicio 2026 yet — it is filed in 2027.
+# These are the ejercicio-2025 numbers, the last published layout.
+MODELO_F93_031,Dividendos y participación en beneficios (art. 28.a y b) — importe íntegro (página 2),7200.00
+MODELO_F93_037,Intereses de cuentas y otros rendimientos por cesión de capitales propios (página 2),0.00
+MODELO_F93_047,Gastos de administración y depósito tras el límite del 3% (art. 32.1.a) (página 2),0.00
+MODELO_F93_050,Rendimiento neto del capital mobiliario (página 2),7200.00
+MODELO_F93_706,Incremento o disminución de la parte especial del ahorro por transmisiones (anexo 1),-9000.00
+MODELO_F93_8808,H1 — saldo positivo procedente de transmisiones (anexo 2),0.00
+MODELO_F93_809,H1 — compensación con saldos negativos propios de transmisiones (anexo 2),0.00
+MODELO_F93_8815,H1 — compensación con saldos negativos del capital mobiliario (anexo 2),0.00
+MODELO_F93_8809,H1 — parte positiva neta procedente de transmisiones (anexo 2),0.00
+MODELO_F93_8810,H2 — saldo positivo procedente de rendimientos del capital mobiliario (anexo 2),7200.00
+MODELO_F93_8825,H2 — compensación con saldos negativos propios del capital mobiliario (anexo 2),2000.00
+MODELO_F93_8805,H2 — compensación con saldos negativos procedentes de transmisiones (anexo 2),1300.00
+MODELO_F93_8840,H2 — parte positiva neta procedente del capital mobiliario (anexo 2),3900.00
+MODELO_F93_8841,Total parte especial del ahorro (anexo 2),3900.00
+MODELO_F93_815 (= 524),Base liquidable especial del ahorro (anexo 2; repetida en la página 7),3900.00
+MODELO_F93_829 (= 527),Cuota íntegra especial del ahorro (anexo 2; repetida en la página 7),780.00
+MODELO_F93_572,Deducción por doble imposición internacional (página 6),0.00
+MODELO_F93_8816,H3 — saldo negativo procedente de transmisiones — importe en positivo (anexo 2; casilla leída del impreso de 2025),9000.00
+MODELO_F93_818,Saldo negativo de transmisiones a compensar en los ejercicios siguientes (anexo 2; las casillas por año están rotuladas en el impreso),7700.00
+# The year's transmissions are negative, so apartado H3 applies rather than
+# H1: casilla 8816 above carries the saldo, and the rest of the block —
+# the joint-return cells and the per-year carryforward ones — is labelled
+# on the form itself.
