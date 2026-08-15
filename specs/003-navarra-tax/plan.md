@@ -560,3 +560,41 @@ code existed, and it amended them in place. That is by design, not a lost histor
    compounds across a four-year window. Pre-existing and **all three regimes**; fixing it means
    deciding where the statutory rounding point is (per saldo, per year, or not at all) rather than
    changing a format string, which is why it is recorded rather than patched.
+
+   **Quantified** (`the_two_decimal_carry_out_drifts_from_the_ledger_it_came_from`, fixture
+   `continuity_rounding`). One printed vintage moves by at most **half a cent per return**, because
+   the only lossy step is `format_eur`'s round-to-two-decimals. The vintage is printed once at the
+   end of the year it arose in and once at the end of each following return it survives, so across
+   the whole four-year window the ceiling is **four prints, ±€0.02**, and the worked case reaches
+   exactly that: a €470.295 saldo (€902.25 of cost × the 1.020 coefficient, less €450 of proceeds)
+   prints as €470.30 and, absorbing a €100.005 gain in each of the four following returns, expires
+   at €70.295 against an unprinted €70.275.
+
+   The drift is **not** sign-neutral at the boundary. `format_eur` rounds half away from zero and a
+   saldo is stored as a positive magnitude, so a tail sitting exactly on the half-cent always rounds
+   the filer's pending offset **up** — the one place in this round where the failure direction is
+   *less* tax rather than more. Away from the boundary an arbitrary tail rounds either way and the
+   ±0.005-per-print bound is all that can be said. The bound is per **vintage**, not per group: a
+   ledger carrying three origin years can drift by three half-cents in one return.
+
+   **Can it move a cent of tax?** Only marginally, and only by one cent. `SavingsScale::tax` is not
+   rounded — `savings_quota` stays a full-precision `Decimal` and is rounded only when the CSV or the
+   console prints it — so €0.02 of base becomes €0.0038 of cuota at the 19% the 2026 foral and state
+   scales open with, and €0.0040 at Navarra's 20%. That surfaces as a printed cent only when the
+   unrounded cuota happens to sit within those four tenths of a cent of a half-cent boundary. It can
+   therefore change the last cent of the cuota, and cannot change more than it. The same €0.02
+   propagates undiminished into the *next* year's carry-out, so the effect on the base is permanent
+   in a way the effect on the cuota is not.
+
+   **What deciding it needs.** Not an arithmetic fix: the two candidate rounding points give
+   different, both-defensible answers and the statutes do not choose between them. (a) Round each
+   saldo to the cent when it is *booked* (`carry_forward_and_expire`), making the printed row the
+   truth and the ledger match the form — the reading the declaration forms invite, since Modelo 109,
+   the AEAT boxes and F-93's 8091-8094 / 8870-8873 cells are all cent-denominated and a filer can
+   only ever enter cents. (b) Keep full precision internally and treat the printed row as a lossy
+   rendering — the current behaviour, which is right if the statutory magnitude is the economic one
+   and the form's precision is merely presentational. LIRPF art. 49, NF 3/2014 and TRLFIRPF art. 54.2
+   all describe the saldo without naming a precision, and no Orden Foral or AEAT manual located in
+   this round states one for the carry-forward cells specifically. Choosing (a) would move Gipuzkoa
+   output, which the Navarra round had to leave byte-identical, so it belongs to a follow-up round
+   together with Left-open item 1.
