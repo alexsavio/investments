@@ -70,7 +70,7 @@ All euros verified again by both reviewers; findings are text, records, coverage
 - **X5 — Lows and record batch.** Status: DONE (`05ede9b9`) — one commit:
   (a) L6: fix the contract's summary-key table broken by the inline paragraph since V1 (move prose out of the table); (b) consistency 3 + L5: contract "Fase 2ª-1º/2º"-only paragraph (:145-151) goes per-regime; ":54 under Común" / ":94 always 0 under Común" add Navarra; (c) L8: suppress zero-amount borrowed-FX realizations from the review rows and the warn (a €0.00 non-event; same class as V4a — verify the user refs still carry their real −€17.18 row); (d) L1/L2 + consistency 2: annotate the review.md V-close-out "every other box carries" rewrite as a W5-era correction and the W4 task-line euros as superseded; (e) L7 + consistency 1: fix the close-out's banner arithmetic (seven hash lines + blank; reconcile the 12 as diff-stream count); (f) L9: plan.md:325 "under" → "equal to (2.º is inclusive)"; (g) `SUMMARY_RCM_DIVIDEND_EXEMPTION` label: add the regime-gate note to the contract (self-scoped "sólo Gipuzkoa" is acceptable, record it).
   Commit: `chore(spain-tax): close the third-pass low findings`
-- **X6 — Gate + re-baseline verification + close-out.** Status: TODO — full gate; regenerate + verify all references (X2): per-file old→new diffs must show exactly the two label lines under Gipuzkoa/Común-shared surfaces and nothing under Común (its labels are untouched); Navarra smoke re-run; German suites untouched; close-out appended with the new reference md5s.
+- **X6 — Gate + re-baseline verification + close-out.** Status: DONE — full gate; regenerate + verify all references (X2): per-file old→new diffs must show exactly the two label lines under Gipuzkoa/Común-shared surfaces and nothing under Común (its labels are untouched); Navarra smoke re-run; German suites untouched; close-out appended with the new reference md5s.
   Commit: `docs(spain-tax): close the third review pass`
 
 ## Accepted as-is (recorded, not fixed)
@@ -225,4 +225,92 @@ the euros above are identical on both sides, and the plan's N10 close-out now re
   Hacienda Foral de Navarra about.
 - **No hand-computation disagreed with the implementation**, in this pass either: `small_disposal_ceiling`'s
   proceeds, increment, exemption, `gyp_net`, cuota and both reference regimes all passed on the first run.
+- **Left open, unchanged:** plan items 1–4, 6 and 7. Nothing this pass added to the list.
+
+## Third-pass close-out (2026-08-15)
+
+### Gate
+
+| Check | Result |
+|---|---|
+| `cargo check --all-targets` | clean |
+| `cargo test spain --lib` | **358 passed**, 0 failed (third-pass baseline 354 → +4) |
+| `cargo test --lib` | 837 passed, **34 failed** — every one a `parse_real` case, the pre-existing empty-submodule set, unchanged |
+| `cargo test german --lib` / `germany --lib` | 97 / 84 passed, 0 failed — untouched |
+| `./check` | the same **3** upstream clippy errors (`statistics.rs:70`, `xls/table.rs:23`, `rebalancing.rs:519`), nothing new |
+
+### The deliberate re-baseline (X2)
+
+X2 is the first change in three rounds to move a byte the references guard. It moves a **label**;
+the references were guarding **values**, and no value moved. Every reference was regenerated with the
+release binary built at X2, and each old→new diff was inspected **before** the file was overwritten.
+
+| Reference (config) | old md5 | md5 after X2 | Diff |
+|---|---|---|---|
+| `es-smoke/es-final3.csv` (`es-smoke`, gipuzkoa) | `9e30f5bf…` | `bfd7ecee…` | exactly the two `SUMMARY_*_LOSSES_APPLIED` label lines; both values `0.00` on each side |
+| `w6-gipuzkoa.csv`, `base-gipuzkoa.csv`, `adv-gipuzkoa.csv`, `w6-adv-gipuzkoa.csv`, `es-smoke/es-navarra-check-gipuzkoa.csv` | `9e30f5bf…` | `bfd7ecee…` | same file content as above, same two lines |
+| `basecf-gipuzkoa.csv`, `w6-adv-cf-gipuzkoa.csv` (`adv-cf-gipuzkoa`, 4-vintage carryforwards) | `0b60ae81…` | `18f263c7…` | exactly the two label lines; values `1.14` and `16.18` on each side — the rows that actually carry money |
+| `base-comun.csv`, `adv-comun.csv`, `w6-adv-comun.csv` (`adv-comun`) | `4e68c803…` | `4e68c803…` | **empty** — Común's labels are untouched |
+| `basecf-comun.csv`, `w6-adv-cf-comun.csv` (`adv-cf-comun`) | `b5f2b30b…` | `b5f2b30b…` | **empty** |
+| `w6-navarra.csv` (`es-smoke-navarra`) | `8530eb55…` | `8530eb55…` | **empty** — Navarra's own vocabulary was already in place |
+| `w6-nav-loss.csv` (`adv-nav-loss`) | `1c672e23…` | `1c672e23…` | **empty** |
+
+Nothing but the two label lines appeared in any diff, so no STOP condition arose.
+
+`es-smoke-navarra/es-navarra-2025.csv` was a pre-V1 artefact rather than one of the round's guarded
+references — it still carried the N10-era labels and the W2 banner. It has been refreshed to the
+current output and is listed below with the others.
+
+### Byte identity after X3–X5
+
+The references were regenerated a second time with the release binary built at X5, to price what the
+later tasks moved:
+
+| Reference | md5 after X2 | final md5 | Diff |
+|---|---|---|---|
+| every Gipuzkoa file (`es-final3`, `w6-gipuzkoa`, `base-gipuzkoa`, `adv-gipuzkoa`, `w6-adv-gipuzkoa`, `es-navarra-check-gipuzkoa`) | `bfd7ecee…` | `bfd7ecee…` | **empty** |
+| `basecf-gipuzkoa.csv`, `w6-adv-cf-gipuzkoa.csv` | `18f263c7…` | `18f263c7…` | **empty** |
+| every Común file (`base-comun`, `adv-comun`, `w6-adv-comun`, `basecf-comun`, `w6-adv-cf-comun`) | `4e68c803…` / `b5f2b30b…` | unchanged | **empty** |
+| `w6-navarra.csv`, `es-smoke-navarra/es-navarra-2025.csv` | `8530eb55…` | `16c4b6b3…` | one line: the `SUMMARY_GYP_FX` label (X3b). Value `28.43` on both sides |
+| `w6-nav-loss.csv` | `1c672e23…` | `a9668a3c…` | the same single `SUMMARY_GYP_FX` label line |
+
+X3b is regime-gated, so it reaches Navarra only; X5c removed nothing anywhere (see the findings).
+
+### Navarra and Gipuzkoa smoke re-runs
+
+Same statement, `ibkr-miren` 2025. Every Navarra figure is the one N10, V7 and W6 recorded — base
+**€99.55**, cuota íntegra **€19.91**, foreign credit **€12.33**, cuota líquida **€7.58**, ganancias
+netas **€16.18**, RCM neto **€83.37** — and the borrowed-FX review total is still **−€17.18**.
+Gipuzkoa: RCM neto **€1.14**, ganancias netas **€16.18**, base **€17.32**, cuota **€3.46**, credit
+**€0.00**, and the same **−€17.18** review total. No value moved in this round, in any regime.
+
+### Fixed
+
+| Task | Commit | What moved |
+|---|---|---|
+| X1 | `bf30e944` | The margin-interest sentence lives once, on `SpanishTaxStatement::margin_interest_message`, and the console and the log both read it — the console's own format string, which named two statutes, is gone, and so is the processor's duplicate `paid_total` accumulator. The delisting note names NF 3/2014 art. 40 / LIRPF art. 33 / TRLFIRPF art. 39; the borrowed-FX warn names all three texts; the margin-interest test doc names all three articles and points at the builder. |
+| X2 | `1e3ae768` | Gipuzkoa's two own-group rows cite **NF 3/2014 art. 66.1.a / 66.1.b** and art. 66.2's maximum-absorption rule, with no "fase" and no "25%". Común keeps the AEAT numbering; all four cross rows stay shared between the two, since Gipuzkoa's cannot fire. The compensation-label test asserts full-string equality per regime instead of a suffix. Contract updated. References re-baselined, diffs above. |
+| X3 | `80457aed` | The closed counterfactual is now closed *under the tool's scope limit* everywhere it is stated (code comment, plan §A.4 edge 3, docs §13, this file's W2 finding), and the pre-W2 banner is no longer called noise. The scope limit gained a filer-visible, always-present surface: under Navarra the `SUMMARY_GYP_FX` label states that a conversion result is taxed in full, is never relieved under art. 39.5.d, and never counts towards its global amount, with the register cross-reference. docs:678-685 states the three boundaries instead of promising the reason is always printed. |
+| X4 | `26496587` | docs §13 says "the round's one choice", matching the code and the test; plan §A.4 says each boundary is deliberate and names the borrowed-side importe the second one hides by design. |
+| X5 | `05ede9b9` | Contract: the summary-key table is one table again with the compensation prose under its own heading, the disjointness section speaks all three statutes, the coefficient and dividend-exemption rows name Navarra, the dividend-exemption label's self-scoping is recorded, and the FX-borrowed and `SUMMARY_GYP_FX` rows are described. Code: a borrowed-balance realization of exactly zero gets no review row and no place in the total, pinned by a new `fx_borrowed` fixture from both sides. Records: the V-close-out's W5-era rewrite and W4's superseded euros are annotated, the second-pass banner arithmetic is reconciled, and plan.md's ceiling boundary says "equal to (2.º is inclusive)". |
+| X6 | this commit | Gate, re-baseline verification, smoke re-runs, close-out. |
+
+### Findings worth carrying forward
+
+- **The user's twelve `0.00` borrowed-FX rows are not zero.** X5c suppresses realizations that are
+  *exactly* zero, and on the real statement it removed **nothing**: all fifteen borrowed rows
+  survived. Their displayed amounts sum to **−17.17** against a reported total of **−17.18**, so the
+  twelve rows printing `0.00` are carrying sub-cent amounts that the 2-dp column cannot show. Making
+  the test "rounds to €0.00" instead would have moved the total to −17.17 — a value change, and
+  precisely what this round was told not to do. The sub-cent rows are plan Left-open item 7 (the
+  fractional-cent carry-out), not the €0.00 non-event L8 described, and the code and contract now say
+  the test is exact for that reason.
+- **The re-baseline cost nothing.** Six regenerations, four distinct Gipuzkoa/Común contents, and
+  every diff was the two label lines or empty. The invariant the references were built to protect —
+  no value moves — held through a change that broke their byte identity for the first time.
+- **The console surface is still untested.** X1 removes the divergence by construction (one builder,
+  both call sites) and the builder is tested from both directions, but nothing captures `println!`
+  output, so a future edit that inlines a string into `tax_statement/mod.rs` again would not be
+  caught by a test. Capturing the console block would mean making it return its messages instead of
+  printing them, which is a refactor of every warning in that function, not of this one.
 - **Left open, unchanged:** plan items 1–4, 6 and 7. Nothing this pass added to the list.
