@@ -1,0 +1,13 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20250101" toDate="20261231" period="Custom" whenGenerated="20270115;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="-502.50" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <Trades>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20250310;100000" settleDate="20250312" quantity="1" tradePrice="1002.50" tradeMoney="-1002.50" ibCommission="0" buySell="BUY" openCloseIndicator="O"/>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20260610;100000" settleDate="20260612" quantity="-1" tradePrice="500" tradeMoney="500" ibCommission="0" buySell="SELL" openCloseIndicator="C"/>
+      </Trades>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

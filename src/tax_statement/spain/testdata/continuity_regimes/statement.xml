@@ -1,0 +1,18 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20250101" toDate="20270331" period="Custom" whenGenerated="20270401;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="500" dividends="0" brokerInterest="-1000" withholdingTax="0"/>
+      </CashReport>
+      <Trades>
+        <Trade currency="USD" symbol="MSFT" isin="US5949181045" description="MICROSOFT CORP" assetCategory="STK" dateTime="20250410;100000" settleDate="20250414" quantity="100" tradePrice="150" tradeMoney="-15000" ibCommission="0" buySell="BUY" openCloseIndicator="O"/>
+        <Trade currency="USD" symbol="MSFT" isin="US5949181045" description="MICROSOFT CORP" assetCategory="STK" dateTime="20250915;100000" settleDate="20250917" quantity="-100" tradePrice="115" tradeMoney="11500" ibCommission="0" buySell="SELL" openCloseIndicator="C"/>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20260105;100000" settleDate="20260107" quantity="100" tradePrice="100" tradeMoney="-10000" ibCommission="0" buySell="BUY" openCloseIndicator="O"/>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20260615;100000" settleDate="20260617" quantity="-100" tradePrice="150" tradeMoney="15000" ibCommission="0" buySell="SELL" openCloseIndicator="C"/>
+      </Trades>
+      <CashTransactions>
+        <CashTransaction currency="USD" description="USD CREDIT INT REVERSAL" dateTime="20260731;235959" amount="-1000" type="Broker Interest Received"/>
+      </CashTransactions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>
