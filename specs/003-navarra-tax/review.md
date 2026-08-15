@@ -207,10 +207,12 @@ the euros above are identical on both sides, and the plan's N10 close-out now re
 
 ### Findings worth carrying forward
 
-- **The withheld-exemption banner was firing on the user's own statement for no reason.** A
-  loss-making year with a conversion is not an unmeasurable year — it is a year with nothing to
-  measure. That the round's most visible Navarra warning turns out to be noise on the one real
-  statement available is the strongest argument for W2's predicate being the right one.
+- **The withheld-exemption banner was firing on the user's own statement with nothing to withhold.**
+  A loss-making year with a conversion is not an unmeasurable year — it is a year with nothing to
+  measure, *given that the tool never relieves a conversion gain in its own right*. The banner was
+  not noise: it was true of the open question art. 54.1.b leaves (see the third pass's X3), and only
+  wrong about this year's relief. What replaces it is the permanent statement of that scope limit —
+  register §13 and, from X3, the Navarra `SUMMARY_GYP_FX` label the CSV always carries.
 - **The exemption-ceiling reading is the round's one non-conservative choice** and it now has a
   fixture, an Appendix A derivation, and a register entry with its euro value. Everything else this
   round decided errs towards more tax; this one errs towards less, so it is the first thing to ask

@@ -678,11 +678,18 @@ that forward. The F-93 says the same thing structurally: Anexo 1 gives each tran
 
 **Foreign-currency conversions withhold the relief.** A conversion is a transmission too (art.
 54.1.b), but the tool records only its result, never the amount converted, so a year that has one
-cannot have its global amount measured. The exemption is then not applied and the reason is printed —
-which overstates the tax rather than granting a relief the year may not be entitled to. Above €3,000
-of securities proceeds nothing is said: the missing conversions can only add to a total that has
-already failed. See
+cannot have its global amount measured. The exemption is then not applied — which overstates the tax
+rather than granting a relief the year may not be entitled to. The reason is printed where the
+relief was actually withheld, and three boundaries keep it quiet elsewhere: a year with no
+transmission *incremento* (nothing to relieve), conversions on a **borrowed** balance (they never
+reach the ganancias group), and securities proceeds already above €3,000 (the missing conversions
+can only add to a total that has failed). See
 [Open interpretations §13](#13-the-navarra-3000-exemptions-global-amount--open).
+
+**A conversion gain is never relieved in its own right.** Whatever the year looks like, the tool
+feeds only securities results into the exemption's increment; a conversion result is taxed in full
+and counts towards neither figure the article measures. That is a scope limit of this tool, not a
+reading of art. 39.5.d, and the CSV's own `SUMMARY_GYP_FX` row says so under Navarra on every run.
 
 ## Foreign-currency gains
 
@@ -697,7 +704,10 @@ and none of the three texts settles it.
 
 Under **Navarra** a conversion is also a transmission for the €3,000 exemption, and the tool records
 only the result of one, never the amount converted — so a year with a conversion on a *held* balance
-has its relief withheld. See [the exemption section](#the-navarra-3000-small-disposals-exemption).
+has its relief withheld. The conversion result itself is taxed in full: it is never relieved under
+art. 39.5.d in its own right and never counts towards the article's global amount. See
+[the exemption section](#the-navarra-3000-small-disposals-exemption) and
+[Open interpretations §13](#13-the-navarra-3000-exemptions-global-amount--open).
 
 ## Other income
 
@@ -1136,9 +1146,11 @@ Three boundaries on that suppression, each deliberate:
   securities transmissions produced no incremento — because there were none, or because every one of
   them made a loss — would have been relieved of exactly zero however the conversions were counted,
   whatever they did to `G`. Announcing a withheld relief there reports a counterfactual that is
-  already closed. The article is never applied to a **conversion gain in its own right**, in that
-  year or any other — that is a scope limit of this tool, not something the year-by-year message can
-  repair.
+  closed. It is closed **under the tool's scope limit**, not absolutely: the tool feeds only
+  securities results into `I`, and art. 54.1.b makes the conversion a transmisión, so whether a
+  conversion's own increment belongs in `I` is an open legal question rather than a settled one.
+  Nothing the year-by-year message could say would repair that, so the limit is stated permanently
+  instead — in this entry and on the CSV's own `SUMMARY_GYP_FX` row under Navarra, on every run.
 - **Only results on a *held* balance suppress it.** Conversion results on a **borrowed** balance are
   parked in the manual-review bucket of §7 and never reach the ganancias group, so they do not
   trigger the suppression either. Their importe is just as unmeasurable, so a year whose only

@@ -738,10 +738,12 @@ impl SpanishTaxStatement {
         // Nothing is withheld from a year with no *incremento* to relieve. The exemption is
         // `min(I, 50% × G)`, so a year whose transmissions produced no gain — none at all, or only
         // disminuciones — would have been relieved of exactly zero however the conversions were
-        // counted, whatever they did to `G`. Saying the relief was withheld there states something
-        // false about a counterfactual that is closed. That the article is never applied to a
-        // conversion gain in its own right is a scope limit, recorded in the register rather than
-        // warned about yearly.
+        // counted, whatever they did to `G`. Saying the relief was withheld there reports a
+        // counterfactual that is closed — closed *under this tool's scope limit*, which feeds only
+        // securities results into `I` and never a conversion gain in its own right. Art. 54.1.b
+        // makes the conversion a transmisión, so whether its own increment belongs in `I` is an
+        // open legal question, not a settled one; register §13 carries it, and the FX section note
+        // states it to the filer on every run rather than a banner stating it in some years only.
         if !self.fx_gains.is_empty() && self.small_disposals_gains > Decimal::ZERO {
             self.small_disposals_unmeasurable = true;
             return;

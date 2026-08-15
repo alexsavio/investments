@@ -237,8 +237,11 @@ Four edges pinned with it:
    - **A year with no transmission *gain* is silent.** The relief is `min(I, 50% × G)`, so a year
      whose securities transmissions produced no incremento — none at all, or only disminuciones —
      would have been relieved of exactly zero whatever the conversions did to `G`. Warning there
-     reports a counterfactual that is already closed. Applying the article to a conversion gain in
-     its own right stays outside the tool's scope, register entry 13 rather than a yearly message.
+     reports a counterfactual that is closed — closed **under the tool's scope limit**, which feeds
+     only securities results into `I`, and not absolutely: art. 54.1.b makes the conversion a
+     transmisión, so whether its own increment belongs in `I` is an open legal question. That limit
+     is stated permanently — register entry 13 and the CSV's `SUMMARY_GYP_FX` row under Navarra —
+     rather than through a message only some years carry.
    - **Only conversions on a *held* balance suppress it.** Results on a borrowed balance never reach
      the ganancias group at all (register entry 7's manual-review bucket), so they do not trigger
      the suppression even though their importe is just as unmeasurable. The asymmetry follows from

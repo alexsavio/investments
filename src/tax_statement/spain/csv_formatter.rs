@@ -524,10 +524,23 @@ impl CsvFormatter {
             "Ganancias y pérdidas por transmisión de valores",
             statement.total_capital_gains,
         )?;
+        // Navarra is the only regime with a €3,000 exemption for the conversions to be measured
+        // against, so it is the only one whose FX row has a scope limit to declare. The limit holds
+        // every year, including the ones where no relief was withheld, so it belongs on the row the
+        // file always carries rather than on a banner that fires in some years only.
         row(
             writer,
             "SUMMARY_GYP_FX",
-            "Ganancias y pérdidas por conversión de divisa",
+            match statement.regime {
+                SpanishTaxRegime::Gipuzkoa | SpanishTaxRegime::Comun => {
+                    "Ganancias y pérdidas por conversión de divisa"
+                }
+                SpanishTaxRegime::Navarra => {
+                    "Ganancias y pérdidas por conversión de divisa (TRLFIRPF art. 54.1.b) — se \
+                     gravan íntegras: no se les aplica la exención del art. 39.5.d ni cuentan para \
+                     su importe global (registro §13 de docs/spain-taxes.md)"
+                }
+            },
             statement.total_fx_result,
         )?;
         if statement.small_disposals_exemption > Decimal::ZERO {
@@ -2054,6 +2067,39 @@ mod tests {
         ] {
             assert!(navarra[index].contains(letra), "{navarra:?}");
         }
+    }
+
+    /// Only Navarra has a €3,000 exemption a conversion could be measured against, so only its FX
+    /// row declares the scope limit — that a conversion result is taxed in full and never counted
+    /// towards art. 39.5.d's global amount. The limit holds in every year, including the ones where
+    /// no relief was withheld and no banner fires, so it rides the row the file always carries.
+    #[test]
+    fn only_navarra_states_the_fx_scope_limit() {
+        let fx_label = |regime| {
+            let mut spain = statement(regime);
+            spain.calculate_totals();
+            render(|w| CsvFormatter::write_summary_rows(w, &spain))
+                .lines()
+                .find(|line| line.starts_with("SUMMARY_GYP_FX,"))
+                .map(|line| line.split(',').nth(1).unwrap().to_string())
+                .unwrap()
+        };
+
+        for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+            assert_eq!(
+                fx_label(regime),
+                "Ganancias y pérdidas por conversión de divisa",
+                "{regime:?}"
+            );
+        }
+
+        let navarra = fx_label(SpanishTaxRegime::Navarra);
+        assert_eq!(
+            navarra,
+            "Ganancias y pérdidas por conversión de divisa (TRLFIRPF art. 54.1.b) — se gravan \
+             íntegras: no se les aplica la exención del art. 39.5.d ni cuentan para su importe \
+             global (registro §13 de docs/spain-taxes.md)"
+        );
     }
 
     /// The fee-ceiling rows exist only where a ceiling does, and stay inside the summary block's
