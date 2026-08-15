@@ -161,6 +161,7 @@ pub fn compute_tax_year(
         statement.custody_fee_cap_message(),
         statement.small_disposals_message(),
         statement.carried_cross_offset_message(),
+        statement.margin_interest_message(),
     ]
     .into_iter()
     .flatten()
@@ -330,8 +331,8 @@ fn describe_corporate_action(action: &BrokerCorporateActionType) -> (String, &'s
         ),
         BrokerCorporateActionType::Delisting { quantity } => (
             format!("Delisting of {quantity} shares"),
-            "NOT computed: a delisting may or may not be a transmisión for art. 40/33 purposes. \
-             Review it by hand",
+            "NOT computed: a delisting may or may not be a transmisión for NF 3/2014 art. 40 / \
+             LIRPF art. 33 / TRLFIRPF art. 39 purposes. Review it by hand",
         ),
         BrokerCorporateActionType::Liquidation { quantity, currency, volume, .. } => (
             format!("Liquidation of {quantity} shares for {volume} {currency}"),
@@ -1096,7 +1097,6 @@ fn process_interest(
     converter: &CurrencyConverter,
 ) -> GenericResult<bool> {
     let mut has_income = false;
-    let mut paid_total = Decimal::ZERO;
 
     for interest in &broker_statement.idle_cash_interest {
         if interest.date.year() != params.year {
@@ -1119,10 +1119,6 @@ fn process_interest(
             // Formats that carry no label leave only the sign to go on.
             None => gross_eur >= Decimal::ZERO,
         };
-        if !taxable {
-            paid_total -= gross_eur;
-        }
-
         statement.interest.push(InterestEntry {
             date: interest.date,
             description: if !taxable {
@@ -1142,15 +1138,6 @@ fn process_interest(
                     .to_string()
             }),
         });
-    }
-
-    if paid_total > Decimal::ZERO {
-        warn!(
-            "€{} of broker interest paid on a borrowed (margin) balance is reported but NOT \
-             deducted from the savings base: none of LIRPF art. 26.1.a, TRLFIRPF art. 32.1.a and \
-             NF 3/2014 art. 39 allows a financing cost against rendimientos del capital mobiliario.",
-            super::format_eur(paid_total)
-        );
     }
 
     Ok(has_income)
@@ -1456,8 +1443,8 @@ fn process_fx_gains(
         warn!(
             "€{} of foreign-currency results were realized on a borrowed (margin) balance and are \
              excluded from the savings base pending manual review. Repaying a currency loan is not \
-             clearly a transfer of a patrimonial element and neither NF 3/2014 nor the LIRPF \
-             settles it.",
+             clearly a transfer of a patrimonial element and none of NF 3/2014, the LIRPF and the \
+             TRLFIRPF settles it.",
             super::format_eur(total)
         );
     }

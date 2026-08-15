@@ -834,6 +834,24 @@ impl SpanishTaxStatement {
         ))
     }
 
+    /// The sentence every surface reports non-deductible margin interest with, so the console, the
+    /// log and the CSV cannot drift apart. `None` when the year paid none.
+    ///
+    /// All three articles are closed lists that reach administration and custody of negotiable
+    /// securities at most, so a financing cost is deductible under none of them.
+    pub fn margin_interest_message(&self) -> Option<String> {
+        if self.total_paid_interest <= Decimal::ZERO {
+            return None;
+        }
+
+        Some(format!(
+            "€{} of broker interest paid on a borrowed (margin) balance is reported but NOT \
+             deducted from the savings base: none of LIRPF art. 26.1.a, TRLFIRPF art. 32.1.a and NF \
+             3/2014 art. 39 allows a financing cost against rendimientos del capital mobiliario.",
+            super::format_eur(self.total_paid_interest)
+        ))
+    }
+
     /// Prior-year RCM balances this year applied **within their own group** — Fase 2ª-1º under the
     /// state order, TRLFIRPF art. 54.2.a's own-group absorption under Navarra.
     ///
@@ -1146,9 +1164,11 @@ mod tests {
         assert_eq!(spain.net_tax_due, dec!(1455));
     }
 
-    /// Interest paid on a margin loan is reported but never netted off the interest received:
-    /// neither statute allows an expense against securities income beyond LIRPF art. 26.1.a's
-    /// administration and custody, so the RCM result is the credit interest alone.
+    /// Interest paid on a margin loan is reported but never netted off the interest received: none
+    /// of the three statutes allows an expense against securities income beyond the administration
+    /// and custody of LIRPF art. 26.1.a, TRLFIRPF art. 32.1.a and NF 3/2014 art. 39, so the RCM
+    /// result is the credit interest alone. The console, the log and the CSV all report it through
+    /// [`SpanishTaxStatement::margin_interest_message`], so none of them can name fewer.
     #[test]
     fn paid_interest_is_reported_outside_the_rcm_result() {
         let mut spain = statement();
@@ -1171,6 +1191,28 @@ mod tests {
         assert_eq!(spain.total_interest_income, dec!(90));
         assert_eq!(spain.total_paid_interest, dec!(225));
         assert_eq!(spain.rcm_net, dec!(90));
+
+        let message = spain.margin_interest_message().unwrap();
+        assert!(message.contains("€225.00"), "{message}");
+        for article in ["LIRPF art. 26.1.a", "TRLFIRPF art. 32.1.a", "NF 3/2014 art. 39"] {
+            assert!(message.contains(article), "{message}");
+        }
+    }
+
+    /// A year that paid no margin interest says nothing about it on any surface.
+    #[test]
+    fn a_year_without_margin_interest_reports_nothing() {
+        let mut spain = statement();
+        spain.interest.push(InterestEntry {
+            date: Date::from_ymd_opt(2026, 6, 30).unwrap(),
+            description: "Broker interest".to_string(),
+            gross_eur: dec!(90),
+            taxable: true,
+            notes: None,
+        });
+        spain.calculate_totals();
+
+        assert!(spain.margin_interest_message().is_none());
     }
 
     /// A reversed dividend can leave the exemption-eligible pool net-negative. An exemption is
