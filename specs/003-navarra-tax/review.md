@@ -56,7 +56,7 @@ Everything below is text/contract/coverage; both reviewers independently reprodu
 
 All euros verified again by both reviewers; findings are text, records, coverage, and one deliberate policy change (X2).
 
-- **X1 — Console margin-interest message: three statutes, one builder.** Status: TODO
+- **X1 — Console margin-interest message: three statutes, one builder.** Status: DONE (`bf30e944`)
   `tax_statement/mod.rs:425-435` has its own format string citing LIRPF + NF 3/2014 only, while the log line (`processor.rs:1147-1152`) names all three. Root cause: the console bypasses a shared builder and the console surface is untested. Move the sentence into a single builder on the statement (like the four warning builders), use it from both surfaces, and add a console-surface test (capture or builder-level). Sweep the same fix over L3's two strings (`processor.rs:333` delisting note → name TRLFIRPF art. 39; `processor.rs:1457-1461` borrowed-FX warn → add TRLFIRPF) and L4 (`statement.rs:1149-1151` doc comment → three statutes).
   Commit: `fix(spain-tax): cite all three statutes in the margin-interest and FX messages`
 - **X2 — Gipuzkoa own-group labels + DELIBERATE re-baseline.** Status: TODO
