@@ -119,7 +119,7 @@ at full precision.
 | `SUMMARY_FX_BORROWED_REVIEW` | Borrowed-balance FX results excluded from the base |
 | `CARRYFORWARD_<GROUP>_<YEAR>` | Pending negative balance to put in next year's config, by origin year |
 | `CARRYFORWARD_<GROUP>_EXPIRED` | Balance that ran out of its four-year window this year |
-| `DEFERRED_LOSS_<n>` | One surviving wash-sale block: symbol, blocked quantity, sale date, loss |
+| `DEFERRED_LOSS_<n>` | One surviving wash-sale block: symbol and ISIN, blocked quantity, acquisition date, originating sale date, loss. The ISIN is parenthesised after the symbol (`AAPL (US0378331005) — …`) and omitted only for an instrument the statement never gave one; it travels with the row because it, not the ticker, is the identity the valores-homogéneos rule matches on |
 | `WASH_SALE_WINDOW_OPEN` | One loss whose repurchase window reaches past the statement's last date |
 | `WASH_SALE_VENUE_REVIEW` | One loss whose deferral turns on which of the statute's two windows the listing venue takes: the value is what the one-year limb would defer on top of what was deferred |
 | `SHORT_POSITION` | One open short position and its quantity |

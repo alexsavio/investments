@@ -48,7 +48,7 @@ CARRYFORWARD_GYP_2026,Saldo negativo pendiente — GYP — origen 2026,180.00
 # PÉRDIDAS DIFERIDAS PENDIENTES — put these in next year's taxes.spain.deferred_losses.
 # Each is a loss still blocked by homogeneous securities bought inside the two-month
 # window and not yet disposed of; it becomes deductible as those shares are sold.
-DEFERRED_LOSS_0,AAPL — 10 shares acquired 2026-05-05 blocking the loss of 2026-03-10,90.00
+DEFERRED_LOSS_0,AAPL (US0378331005) — 10 shares acquired 2026-05-05 blocking the loss of 2026-03-10,90.00
 
 # MODELO 109 — autoliquidación del IRPF de Gipuzkoa
 # The numbers below are read off the Hacienda Foral "Propuesta de autoliquidación"

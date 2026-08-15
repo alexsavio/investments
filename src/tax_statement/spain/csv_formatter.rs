@@ -807,9 +807,17 @@ impl CsvFormatter {
         )?;
 
         for (index, deferred) in statement.deferred_losses_next.iter().enumerate() {
+            // The ISIN travels with the row because it is the identity the rule matches on. A filer
+            // copying only the ticker carries a key that resolves back to the ISIN just while the
+            // next year's statement still trades that symbol; on an instrument they stop trading —
+            // the very case a multi-year deferral makes likely — it silently degrades to the bare
+            // ticker and stops matching the lot it belongs to.
+            let instrument = match deferred.isin.as_deref() {
+                Some(isin) => format!("{} ({isin})", deferred.symbol),
+                None => deferred.symbol.clone(),
+            };
             let label = format!(
-                "{} — {} shares acquired {} blocking the loss of {}",
-                deferred.symbol,
+                "{instrument} — {} shares acquired {} blocking the loss of {}",
                 deferred.blocked_quantity.normalize(),
                 Self::format_date(deferred.acquisition_date),
                 Self::format_date(deferred.sale_date)

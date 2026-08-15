@@ -150,14 +150,17 @@ fn config_from_printed_carry_out(regime: SpanishTaxRegime, csv: &str) -> TaxConf
                 other => panic!("unexpected carryforward group {other} in {line}"),
             };
         } else if fields[0].starts_with("DEFERRED_LOSS_") {
-            // "AAPL — 100 shares acquired 2026-01-05 blocking the loss of 2025-11-10".
-            let (symbol, rest) = fields[1].split_once(" — ").unwrap();
+            // "AAPL (US0378331005) — 100 shares acquired 2026-01-05 blocking the loss of
+            // 2025-11-10", with the ISIN omitted for an instrument that never carried one.
+            let (instrument, rest) = fields[1].split_once(" — ").unwrap();
+            let (symbol, isin) = match instrument.split_once(" (") {
+                Some((symbol, isin)) => (symbol, Some(isin.trim_end_matches(')').to_owned())),
+                None => (instrument, None),
+            };
             let words: Vec<&str> = rest.split_whitespace().collect();
             spain.deferred_losses.push(DeferredLossConfig {
                 symbol: symbol.to_string(),
-                // The printed row carries no ISIN, so a filer copying the block cannot supply one
-                // either; identity falls back to the symbol resolved against the new statement.
-                isin: None,
+                isin,
                 loss: fields[2].parse().unwrap(),
                 blocked_quantity: words[0].parse().unwrap(),
                 acquisition_date: parse_iso(words[3]),
