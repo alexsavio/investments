@@ -232,7 +232,8 @@ fn comun_credits_foreign_withholding_against_the_state_scale() {
 
     assert_eq!(comun.rcm_net, dec!(945));
     assert_eq!(comun.savings_base, dec!(945));
-    // Entirely inside the 19% first bracket, which both regimes happen to share at this level.
+    // Entirely inside the 19% first bracket, which Común and Gipuzkoa happen to share at this
+    // level; Navarra's own scale opens at 20%.
     assert_eq!(comun.savings_quota, dec!(179.55));
     assert_eq!(comun.average_savings_rate, dec!(0.19));
     // Treaty limb €135 against a rate limb of 0.19 × €900 = €171.
@@ -305,7 +306,11 @@ fn run_pipeline_reporting_income(
 /// decided nothing. Reporting "no income" and writing no file loses both.
 #[test]
 fn a_fee_only_year_still_produces_a_statement() {
-    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+    for regime in [
+        SpanishTaxRegime::Gipuzkoa,
+        SpanishTaxRegime::Comun,
+        SpanishTaxRegime::Navarra,
+    ] {
         let (spain, has_income) =
             run_pipeline_reporting_income("fee_only", 2026, &spain_config(regime));
 
@@ -379,7 +384,11 @@ fn an_empty_year_reports_no_income() {
 /// is reported so the year's picture is complete and the filer is reminded to declare it.
 #[test]
 fn stock_grants_are_reported_for_the_general_base() {
-    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+    for regime in [
+        SpanishTaxRegime::Gipuzkoa,
+        SpanishTaxRegime::Comun,
+        SpanishTaxRegime::Navarra,
+    ] {
         let (spain, has_income) =
             run_pipeline_reporting_income("grants", 2026, &spain_config(regime));
 
@@ -475,14 +484,19 @@ fn rcm_income_is_reported_with_a_treaty_capped_credit_candidate() {
 /// nothing.
 ///
 /// IB reports it as a negative "Broker Interest Paid" accrual alongside the credit interest, so
-/// summing the raw amounts would silently net it off the RCM result. Neither regime allows that:
-/// LIRPF art. 26.1.a is a closed list that reaches only administration and custody of negotiable
-/// securities, and NF 3/2014 art. 39 is narrower still.
+/// summing the raw amounts would silently net it off the RCM result. No regime allows that: LIRPF
+/// art. 26.1.a is a closed list that reaches only administration and custody of negotiable
+/// securities, TRLFIRPF art. 32.1.a is the same list under a 3% ceiling, and NF 3/2014 art. 39 is
+/// narrower still.
 ///
 /// Fixture: $100 received 2026-06-30 and $250 paid 2026-09-30, at 0.9 EUR/USD.
 #[test]
 fn paid_margin_interest_does_not_reduce_the_rcm_result() {
-    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+    for regime in [
+        SpanishTaxRegime::Gipuzkoa,
+        SpanishTaxRegime::Comun,
+        SpanishTaxRegime::Navarra,
+    ] {
         let spain = run_pipeline("margin_interest", 2026, regime);
 
         // Both rows are reported; only the credit interest is income.
@@ -515,6 +529,7 @@ fn paid_margin_interest_does_not_reduce_the_rcm_result() {
 #[rstest]
 #[case(SpanishTaxRegime::Gipuzkoa)]
 #[case(SpanishTaxRegime::Comun)]
+#[case(SpanishTaxRegime::Navarra)]
 fn an_interest_reversal_nets_against_income_rather_than_being_paid_interest(
     #[case] regime: SpanishTaxRegime,
 ) {
@@ -732,6 +747,42 @@ fn fee_types_follow_dgt_doctrine_and_name_what_is_unsettled() {
     }
 }
 
+/// A fee note and the unsettled warning name the article of the **filer's own** statute. The DGT
+/// doctrine behind the classification is written against the state text, but the deduction a Navarra
+/// filer takes comes from TRLFIRPF art. 32.1.a, and a note citing LIRPF would send them to a law
+/// that does not govern them.
+#[test]
+fn fee_notes_name_the_regimes_own_deduction_article() {
+    let comun = run_pipeline("fee_types", 2026, SpanishTaxRegime::Comun);
+    let navarra = run_pipeline("fee_types", 2026, SpanishTaxRegime::Navarra);
+
+    let article = |statement: &SpanishTaxStatement, index: usize| -> String {
+        statement.fees[index].notes.clone().unwrap()
+    };
+
+    // The market-data note, which cites the article that does not reach the fee.
+    assert!(article(&comun, 1).contains("LIRPF art. 26.1.a"), "{}", article(&comun, 1));
+    assert!(
+        article(&navarra, 1).contains("TRLFIRPF art. 32.1.a"),
+        "{}",
+        article(&navarra, 1)
+    );
+    assert!(!article(&navarra, 1).contains("LIRPF art. 26.1.a"), "{}", article(&navarra, 1));
+
+    // And the unsettled-type warning, in the same words on every surface.
+    let review = navarra.fees[2].review.clone().unwrap();
+    assert!(review.contains("TRLFIRPF art. 32.1.a"), "{review}");
+    assert!(!review.contains("LIRPF art. 26.1.a"), "{review}");
+    assert_eq!(navarra.fees[2].notes.as_deref(), Some(review.as_str()));
+
+    // No note may keep the substitution token.
+    for statement in [&comun, &navarra] {
+        for fee in &statement.fees {
+            assert!(!fee.notes.clone().unwrap_or_default().contains("{article}"), "{fee:?}");
+        }
+    }
+}
+
 /// The savings base is the sum of the two groups' positive balances: neither reduces the other.
 #[test]
 fn rcm_and_gyp_enter_the_base_as_separate_groups() {
@@ -931,6 +982,49 @@ fn held_balance_conversions_are_ganancias() {
     // Nothing was borrowed, so nothing is deferred to manual review.
     assert!(spain.fx_borrowed_review.is_empty());
     assert_eq!(spain.total_fx_borrowed_review, dec!(0));
+}
+
+/// A repayment of **borrowed** currency is referred for manual review, and the referral carries the
+/// realized amount.
+///
+/// $10,000 borrowed 2026-02-10 at 0.9 (€9,000) and repaid 2026-08-10 at 1.0 costs €10,000 to
+/// discharge, a €1,000 result on the borrowed side. It stays out of the savings base either way.
+#[test]
+fn borrowed_balance_repayments_are_referred_for_review() {
+    let statement = read_fixture("fx_borrowed");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (spain, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Gipuzkoa),
+    )
+    .unwrap();
+
+    assert_eq!(spain.fx_borrowed_review.len(), 1);
+    let review = &spain.fx_borrowed_review[0];
+    assert_eq!(review.currency, "USD");
+    assert_eq!(review.date, Date::from_ymd_opt(2026, 8, 10).unwrap());
+    assert_eq!(review.amount_eur, dec!(-1000));
+    assert_eq!(spain.total_fx_borrowed_review, dec!(-1000));
+
+    // Referred, never integrated.
+    assert!(spain.fx_gains.is_empty());
+    assert_eq!(spain.gyp_net, dec!(0));
+    assert_eq!(spain.savings_base, dec!(0));
+}
+
+/// A borrowed-balance repayment that realizes exactly €0.00 is a non-event, and reporting it as one
+/// more line to review by hand is noise — the same class of false report as V4a's withheld-exemption
+/// warning. Held-balance conversions are different: they are disposals that enter the ganancias
+/// group, so a zero one is still reported (see [`a_flat_rate_realizes_a_zero_fx_result`]).
+#[test]
+fn a_zero_borrowed_repayment_is_not_referred_for_review() {
+    let spain = run_pipeline("fx_borrowed", 2026, SpanishTaxRegime::Gipuzkoa);
+
+    assert!(spain.fx_borrowed_review.is_empty());
+    assert_eq!(spain.total_fx_borrowed_review, dec!(0));
+    assert_eq!(spain.savings_base, dec!(0));
 }
 
 /// With a flat rate the conversion is still a disposal, so it is still reported — but it realizes
@@ -1483,4 +1577,651 @@ fn a_negative_rcm_balance_reaches_the_ganancias_balance_only_under_comun() {
     // 7,500 × 19% + 1,500 × 20%.
     assert_eq!(gipuzkoa.savings_quota, dec!(1725));
     assert!(gipuzkoa.rcm_ledger_next.is_empty());
+}
+
+/// Navarra takes the acquisition value as paid: TRLFIRPF art. 41 has never carried an
+/// actualization rule, so the `fifo` trades produce Común's nominal gain — but at Navarra's own
+/// scale, so the tax due matches neither of the other two regimes.
+///
+/// 22,500 − 9,000 and 27,000 − 18,000, taxed under art. 60 at
+/// 1,200 + 880 + 1,200 + 7,500 × 26% = 5,230.
+#[test]
+fn navarra_takes_the_nominal_cost_and_its_own_scale() {
+    let navarra = run_pipeline("fifo", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.regime, SpanishTaxRegime::Navarra);
+    assert_eq!(navarra.capital_gains[0].lots[0].coefficient, dec!(1));
+    assert_eq!(navarra.capital_gains[0].actualized_cost_eur, dec!(9000));
+    assert_eq!(navarra.capital_gains[0].fiscal_gain_loss, dec!(13500));
+    assert_eq!(navarra.capital_gains[1].fiscal_gain_loss, dec!(9000));
+
+    assert_eq!(navarra.gyp_net, dec!(22500));
+    assert_eq!(navarra.savings_base, dec!(22500));
+    assert_eq!(navarra.savings_quota, dec!(5230));
+    assert_eq!(navarra.average_savings_rate, dec!(0.2324));
+    assert_eq!(navarra.net_tax_due, dec!(5230));
+
+    // Same trades, three regimes, three answers: Navarra shares Común's base and neither regime's
+    // tax. A copy-pasted scale or a leaked coefficient would collapse two of these into one.
+    let gipuzkoa = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+    let comun = run_pipeline("fifo", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(navarra.gyp_net, comun.gyp_net);
+    assert_ne!(navarra.gyp_net, gipuzkoa.gyp_net);
+    assert_eq!(gipuzkoa.savings_quota, dec!(3957.24));
+    assert_eq!(comun.savings_quota, dec!(4605));
+}
+
+/// LF 29/2014 repealed Navarra's dividend exemption with effect from 2015, so the whole dividend is
+/// income there — the Común answer, not the Gipuzkoa one. Getting this backwards is the single
+/// easiest mistake to make when adding a third foral regime.
+#[test]
+fn navarra_has_no_dividend_exemption() {
+    let navarra = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.total_dividend_income, dec!(2250));
+    assert_eq!(navarra.total_dividend_exemption, dec!(0));
+
+    let comun = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(navarra.total_dividend_exemption, comun.total_dividend_exemption);
+
+    let gipuzkoa = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.total_dividend_exemption, dec!(1500));
+}
+
+/// A conversion out of a held foreign-currency balance is a transfer of a patrimonial element under
+/// TRLFIRPF art. 54.1.b too, so it joins the ganancias group under Navarra exactly as it does
+/// elsewhere. €1,000 realized, taxed inside art. 60's first bracket.
+#[test]
+fn navarra_taxes_held_balance_conversions_as_ganancias() {
+    let statement = read_fixture("fx_gain");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (navarra, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Navarra),
+    )
+    .unwrap();
+
+    assert_eq!(navarra.fx_gains.len(), 1);
+    assert_eq!(navarra.total_fx_gains, dec!(1000));
+    assert_eq!(navarra.gyp_net, dec!(1000));
+    assert_eq!(navarra.rcm_net, dec!(0));
+    assert_eq!(navarra.savings_base, dec!(1000));
+    assert_eq!(navarra.savings_quota, dec!(200));
+}
+
+/// A loss carries forward at its nominal amount and starts its own four-year window, identically to
+/// Común — there is nothing to actualize and no exemption to interact with.
+#[test]
+fn navarra_carries_a_loss_forward_at_its_nominal_amount() {
+    let navarra = run_pipeline("loss", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.capital_gains[0].lots[0].coefficient, dec!(1));
+    assert_eq!(navarra.capital_gains[0].actualized_cost_eur, dec!(18000));
+    assert_eq!(navarra.gyp_net, dec!(-9000));
+    assert_eq!(navarra.savings_base, dec!(0));
+    assert_eq!(navarra.savings_quota, dec!(0));
+    assert_eq!(navarra.gyp_ledger_next.balances()[&2026], dec!(9000));
+}
+
+/// TRLFIRPF art. 39.6.f is the same two-month valores-homogéneos rule the engine already
+/// implements, and Navarra shares Común's unit-1 coefficient, so every deferral, reintegration and
+/// carried-out blocked lot must come out identical to Común's on every wash-sale fixture. Any
+/// difference would mean the regime switch had reached the wash-sale engine, which it must not.
+#[rstest]
+#[case("wash_sale_after")]
+#[case("wash_sale_before")]
+#[case("wash_sale_chained")]
+#[case("wash_sale_multi_lot")]
+#[case("wash_sale_split")]
+#[case("wash_sale_boundary")]
+#[case("wash_sale_venue")]
+#[case("year_end_loss")]
+fn navarra_defers_losses_exactly_like_comun(#[case] fixture: &str) {
+    let navarra = run_pipeline(fixture, 2026, SpanishTaxRegime::Navarra);
+    let comun = run_pipeline(fixture, 2026, SpanishTaxRegime::Comun);
+
+    assert_eq!(navarra.total_deferred_loss, comun.total_deferred_loss, "{fixture}");
+    assert_eq!(
+        navarra.total_reintegrated_loss, comun.total_reintegrated_loss,
+        "{fixture}"
+    );
+    assert_eq!(navarra.total_capital_gains, comun.total_capital_gains, "{fixture}");
+    assert_eq!(navarra.gyp_net, comun.gyp_net, "{fixture}");
+    assert_eq!(
+        navarra.deferred_losses_next.len(),
+        comun.deferred_losses_next.len(),
+        "{fixture}"
+    );
+    for (a, b) in navarra.deferred_losses_next.iter().zip(&comun.deferred_losses_next) {
+        assert_eq!(a.loss, b.loss, "{fixture}");
+        assert_eq!(a.blocked_quantity, b.blocked_quantity, "{fixture}");
+        assert_eq!(a.acquisition_date, b.acquisition_date, "{fixture}");
+    }
+    assert_eq!(
+        navarra.wash_sale_venue_reviews.len(),
+        comun.wash_sale_venue_reviews.len(),
+        "{fixture}"
+    );
+    assert_eq!(
+        navarra.wash_sale_boundary_reviews.len(),
+        comun.wash_sale_boundary_reviews.len(),
+        "{fixture}"
+    );
+}
+
+/// End to end, the third compensation ordering produces a third answer on one set of inputs.
+///
+/// The `cross_offset` fixture is a €9,000 ganancias loss against €7,200 of dividends; add a €2,000
+/// prior-year RCM saldo and the orderings separate:
+///
+/// - **Común**: the current-year loss crosses first, capped at 25% of the *original* €7,200 = 1,800
+///   → 5,400, then the prior saldo absorbs 2,000 of what is left → **3,400**.
+/// - **Navarra**: the RCM result absorbs its own 2,000 first → 5,200, and only then does the loss
+///   cross, capped at 25% of that €5,200 = 1,300 → **3,900**.
+/// - **Gipuzkoa**: nothing crosses, and €1,500 of the dividend is exempt → **3,700**.
+#[test]
+fn the_navarra_ordering_changes_the_base_end_to_end() {
+    let base = |regime| {
+        let mut config = spain_config(regime);
+        config
+            .spain
+            .as_mut()
+            .unwrap()
+            .loss_carryforward
+            .rcm
+            .insert(2025, dec!(2000));
+        run_pipeline_with_config("cross_offset", 2026, &config)
+    };
+
+    let navarra = base(SpanishTaxRegime::Navarra);
+    assert_eq!(navarra.rcm_net, dec!(7200));
+    assert_eq!(navarra.gyp_net, dec!(-9000));
+    // The prior saldo was consumed by its own group before the cross was measured.
+    assert_eq!(navarra.rcm_applied.used_total, dec!(2000));
+    assert_eq!(navarra.cross_offset_gyp_to_rcm, dec!(1300));
+    assert_eq!(navarra.savings_base, dec!(3900));
+    assert_eq!(navarra.gyp_ledger_next.balances()[&2026], dec!(7700));
+
+    let comun = base(SpanishTaxRegime::Comun);
+    assert_eq!(comun.cross_offset_gyp_to_rcm, dec!(1800));
+    assert_eq!(comun.savings_base, dec!(3400));
+
+    let gipuzkoa = base(SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.cross_offset_gyp_to_rcm, dec!(0));
+    assert_eq!(gipuzkoa.savings_base, dec!(3700));
+}
+
+/// A carried saldo crossing is the one part of the Navarra order the statute does not settle, so it
+/// is named with its euro amount wherever the statement is reported.
+///
+/// The `fifo` fixture has no RCM income at all, so a €8,000 prior-year RCM saldo has nothing of its
+/// own to attack; under the reading implemented it reaches 25% of the €22,500 ganancias result.
+#[test]
+fn a_carried_saldo_crossing_is_named_with_its_amount() {
+    let run = |regime| {
+        let mut config = spain_config(regime);
+        config
+            .spain
+            .as_mut()
+            .unwrap()
+            .loss_carryforward
+            .rcm
+            .insert(2025, dec!(8000));
+        run_pipeline_with_config("fifo", 2026, &config)
+    };
+
+    let navarra = run(SpanishTaxRegime::Navarra);
+    assert_eq!(navarra.prior_cross_offset_rcm_to_gyp, dec!(5625));
+    assert_eq!(navarra.savings_base, dec!(16875));
+    assert_eq!(navarra.rcm_ledger_next.balances()[&2025], dec!(2375));
+
+    let message = navarra.carried_cross_offset_message().unwrap();
+    assert!(message.contains("€5625.00"), "{message}");
+    assert!(message.contains("art. 54.2"), "{message}");
+    assert!(message.contains("docs/spain-taxes.md"), "{message}");
+
+    // Común reaches the same base by its own settled route (AEAT Manual cap. 12, Fase 2ª-2º), so
+    // there is no open reading to warn about there.
+    let comun = run(SpanishTaxRegime::Comun);
+    assert_eq!(comun.prior_cross_offset_rcm_to_gyp, dec!(5625));
+    assert_eq!(comun.savings_base, dec!(16875));
+    assert!(comun.carried_cross_offset_message().is_none());
+
+    // And Gipuzkoa never crosses at all.
+    let gipuzkoa = run(SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.prior_cross_offset_rcm_to_gyp, dec!(0));
+    assert!(gipuzkoa.carried_cross_offset_message().is_none());
+}
+
+/// The Navarra fee ceiling, end to end on the `income` fixture: a €900 dividend, €90 of broker
+/// interest and a €45 custody fee.
+///
+/// TRLFIRPF art. 32.1.a caps the deduction at 3% of the non-exempt gross income from the securities
+/// — €27 here — so €18 of the fee is disallowed and the RCM result is 900 + 90 − 27 = €963. Común
+/// deducts the whole €45 and reaches €945; Gipuzkoa deducts nothing at all.
+#[test]
+fn navarra_caps_deductible_custody_fees_at_three_percent() {
+    let navarra = run_pipeline("income", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.custody_fee_cap, Some(dec!(27)));
+    assert_eq!(navarra.total_deductible_fees, dec!(27));
+    assert_eq!(navarra.total_capped_fees, dec!(18));
+    // The disallowed part is not folded into the informational fees: those were never deductible.
+    assert_eq!(navarra.total_informational_fees, dec!(0));
+    assert_eq!(navarra.rcm_net, dec!(963));
+    assert_eq!(navarra.savings_base, dec!(963));
+    assert_eq!(navarra.savings_quota, dec!(192.60));
+    assert_eq!(navarra.average_savings_rate, dec!(0.20));
+    // The treaty limb still binds: min(270, 900 × 15%) = 135, against a rate limb of ~175.
+    assert_eq!(navarra.total_foreign_tax_credit, dec!(135));
+    assert_eq!(navarra.net_tax_due, dec!(57.60));
+
+    let message = navarra.custody_fee_cap_message().unwrap();
+    assert!(message.contains("€18.00"), "{message}");
+    assert!(message.contains("art. 32.1.a"), "{message}");
+
+    let comun = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.custody_fee_cap, None);
+    assert_eq!(comun.total_deductible_fees, dec!(45));
+    assert_eq!(comun.total_capped_fees, dec!(0));
+    assert_eq!(comun.rcm_net, dec!(945));
+    assert!(comun.custody_fee_cap_message().is_none());
+
+    let gipuzkoa = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.total_deductible_fees, dec!(0));
+    assert!(gipuzkoa.custody_fee_cap_message().is_none());
+}
+
+/// A year with fees but no securities income has a ceiling of zero, so nothing is deductible —
+/// the `cross_offset_rcm` fixture's €3,600 custody fee against a €9,000 gain and no dividends.
+///
+/// Común deducts the fee in full and crosses the resulting negative into the gain; Navarra deducts
+/// none of it, so the gain stands whole and is taxed at art. 60's own rates.
+#[test]
+fn the_navarra_fee_ceiling_is_zero_without_securities_income() {
+    let navarra = run_pipeline("cross_offset_rcm", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.custody_fee_cap, Some(dec!(0)));
+    assert_eq!(navarra.total_deductible_fees, dec!(0));
+    assert_eq!(navarra.total_capped_fees, dec!(3600));
+    assert_eq!(navarra.rcm_net, dec!(0));
+    assert_eq!(navarra.cross_offset_rcm_to_gyp, dec!(0));
+    assert_eq!(navarra.gyp_taxable, dec!(9000));
+    assert_eq!(navarra.savings_base, dec!(9000));
+    // 6,000 × 20% + 3,000 × 22%.
+    assert_eq!(navarra.savings_quota, dec!(1860));
+
+    let comun = run_pipeline("cross_offset_rcm", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.rcm_net, dec!(-3600));
+    assert_eq!(comun.savings_base, dec!(6750));
+}
+
+/// Below the ceiling nothing is clamped, and the ceiling itself is still reported so a filer can
+/// see how much headroom the year had. €2,250 of dividends allows €67.50 of fees; the fixture
+/// charges none, so the deduction is whatever the classifier found.
+#[test]
+fn the_navarra_fee_ceiling_does_not_bite_when_fees_are_small() {
+    let navarra = run_pipeline("dividend_exemption", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.total_dividend_income, dec!(2250));
+    assert_eq!(navarra.custody_fee_cap, Some(dec!(67.50)));
+    assert_eq!(navarra.total_capped_fees, dec!(0));
+    assert!(navarra.custody_fee_cap_message().is_none());
+}
+
+/// TRLFIRPF art. 39.5.d, end to end, on a year where the two readings of condition 2.º **disagree**.
+///
+/// Buy 10 AAPL @ $100 on 2025-03-10 (€900, €90/share); sell 6 @ $300 (€1,620) and 4 @ $125 (€450)
+/// during 2026. The two sales carry deliberately different gain-to-proceeds ratios:
+///
+/// | Sale | Proceeds | Cost | Gain | half its own proceeds |
+/// |---|---|---|---|---|
+/// | A | 1,620 | 540 | 1,080 | 810 — the gain **exceeds** it |
+/// | B | 450 | 360 | 90 | 225 — the gain **falls short** |
+///
+/// Under the year-global reading the tool implements, `G = 2,070` and `I = 1,170`, so the exemption
+/// is `min(1,170, 1,035) = 1,035` and €135 is taxed. Under the per-disposal reading of 2.º's
+/// singular "el importe global de **la transmisión**" it would be `810 + 90 = 900`, and €270 would
+/// be taxed: B's unused headroom shelters part of A's excess only when one denominator covers the
+/// year. Register entry 13 is exactly this €135 — see Appendix A §A.4.
+#[test]
+fn navarra_exempts_a_year_of_small_disposals() {
+    let navarra = run_pipeline("small_disposal", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.capital_gains.len(), 2);
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2070));
+    assert_eq!(navarra.small_disposals_gains, dec!(1170));
+    assert_eq!(navarra.small_disposals_exemption, dec!(1035));
+    assert!(!navarra.small_disposals_unmeasurable);
+
+    // The per-disposal reading the tool rejects would exempt 810 + 90 = 900 instead.
+    let per_disposal: Decimal = navarra
+        .capital_gains
+        .iter()
+        .map(|entry| {
+            std::cmp::min(
+                std::cmp::max(Decimal::ZERO, entry.integrable_amount),
+                entry.proceeds_eur / dec!(2),
+            )
+        })
+        .sum();
+    assert_eq!(per_disposal, dec!(900));
+    assert_ne!(navarra.small_disposals_exemption, per_disposal);
+
+    assert_eq!(navarra.total_capital_gains, dec!(1170));
+    assert_eq!(navarra.gyp_net, dec!(135));
+    assert_eq!(navarra.savings_base, dec!(135));
+    assert_eq!(navarra.savings_quota, dec!(27));
+
+    let message = navarra.small_disposals_message().unwrap();
+    assert!(message.contains("€1035.00"), "{message}");
+    assert!(message.contains("art. 39.5.d"), "{message}");
+
+    let comun = run_pipeline("small_disposal", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.small_disposals_exemption, dec!(0));
+    assert_eq!(comun.gyp_net, dec!(1170));
+    assert_eq!(comun.savings_quota, dec!(222.30));
+    assert!(comun.small_disposals_message().is_none());
+
+    // Gipuzkoa actualizes the 2025 cost by 1.020: the 540/360 split becomes 550.80/367.20.
+    let gipuzkoa = run_pipeline("small_disposal", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.capital_gains[0].actualized_cost_eur, dec!(550.80));
+    assert_eq!(gipuzkoa.gyp_net, dec!(1152));
+    // 1,152 inside the reformed foral scale's 19% first bracket.
+    assert_eq!(gipuzkoa.savings_quota, dec!(218.88));
+}
+
+/// The exemption relieves an *incremento* and can never reach a *disminución*: art. 39.5.d exempts
+/// "los incrementos de patrimonio", and the F-93 gives each transmission separate Incremento (656)
+/// and Disminución (657) cells with the "Incremento exento. Otros supuestos" cell (1658) sitting
+/// under the incremento alone.
+///
+/// AAPL +900 on €1,800 of proceeds and MSFT −450 on €900: `G = 2,700`, but `I` is 900, not the 450
+/// net. The exemption takes the whole €900 gain and the loss survives untouched, so `gyp_net` is
+/// exactly −450 and that is what carries forward. Computing `I` from the net result would exempt
+/// 450, land `gyp_net` on 0, and destroy the carryforward silently.
+#[test]
+fn the_small_disposals_exemption_never_eats_a_loss() {
+    let navarra = run_pipeline("small_disposal_mixed", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2700));
+    assert_eq!(navarra.small_disposals_gains, dec!(900));
+    assert_eq!(navarra.small_disposals_exemption, dec!(900));
+
+    assert_eq!(navarra.total_capital_gains, dec!(450));
+    assert_eq!(navarra.gyp_net, dec!(-450));
+    assert_eq!(navarra.savings_base, dec!(0));
+    assert_eq!(navarra.savings_quota, dec!(0));
+    assert_eq!(navarra.gyp_ledger_next.balances()[&2026], dec!(450));
+
+    let comun = run_pipeline("small_disposal_mixed", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.small_disposals_exemption, dec!(0));
+    assert_eq!(comun.gyp_net, dec!(450));
+    assert_eq!(comun.savings_quota, dec!(85.50));
+
+    let gipuzkoa = run_pipeline("small_disposal_mixed", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.gyp_net, dec!(405));
+    assert_eq!(gipuzkoa.savings_quota, dec!(76.95));
+}
+
+/// Condition 2.º's 50% ceiling is measured on **every** transmission's proceeds, while the increment
+/// it caps counts only the gain-making ones. The two figures rest on different populations, which is
+/// a reading of "el importe global de la transmisión" rather than an identity: 1.º has already fixed
+/// "importe global" as the year's total transmissions, gain- and loss-making alike, and reading the
+/// same phrase two ways inside one letra would need an argument art. 39.5.d does not give.
+///
+/// AAPL +1,620 on €1,800 of proceeds and MSFT −270 on €450. Both readings agree `I = 1,620` and both
+/// pass 1.º (€2,250 and €1,800 are each under €3,000), so the whole difference is the denominator:
+/// all-transmissions exempts `min(1,620, 1,125) = 1,125` and leaves `gyp_net` at 225; gain-making
+/// only would exempt `min(1,620, 900) = 900` and leave 450. €225 of base — €45.00 of Navarra tax.
+///
+/// This is the round's one choice whose failure direction is **less** tax, which is why it is pinned
+/// here and recorded in register entry 13 rather than left to the code comment. See Appendix A §A.4.
+#[test]
+fn the_small_disposals_ceiling_is_measured_on_every_transmission() {
+    let navarra = run_pipeline("small_disposal_ceiling", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.capital_gains.len(), 2);
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2250));
+    assert_eq!(navarra.small_disposals_gains, dec!(1620));
+    assert_eq!(navarra.small_disposals_exemption, dec!(1125));
+
+    // The gain-making-transmissions-only reading the tool rejects: half of €1,800, not half of
+    // €2,250, so the loss-making sale's €450 would stop widening the shelter above the gain.
+    let gain_making_proceeds: Decimal = navarra
+        .capital_gains
+        .iter()
+        .filter(|entry| entry.integrable_amount > Decimal::ZERO)
+        .map(|entry| entry.proceeds_eur)
+        .sum();
+    assert_eq!(gain_making_proceeds, dec!(1800));
+    let gains_only_exemption = std::cmp::min(
+        navarra.small_disposals_gains,
+        gain_making_proceeds / dec!(2),
+    );
+    assert_eq!(gains_only_exemption, dec!(900));
+    assert_ne!(navarra.small_disposals_exemption, gains_only_exemption);
+
+    assert_eq!(navarra.total_capital_gains, dec!(1350));
+    assert_eq!(navarra.gyp_net, dec!(225));
+    assert_eq!(navarra.savings_base, dec!(225));
+    assert_eq!(navarra.savings_quota, dec!(45));
+    // The rejected reading would tax €450 instead — €45.00 more, so the implemented one is the
+    // generous side of the open question.
+    assert_eq!((dec!(1350) - gains_only_exemption) * dec!(0.20), dec!(90));
+
+    let comun = run_pipeline("small_disposal_ceiling", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.small_disposals_exemption, dec!(0));
+    assert_eq!(comun.gyp_net, dec!(1350));
+    assert_eq!(comun.savings_quota, dec!(256.50));
+
+    // Gipuzkoa actualizes both 2025 lots by 1.020: 180 → 183.60 and 720 → 734.40.
+    let gipuzkoa = run_pipeline("small_disposal_ceiling", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.gyp_net, dec!(1332));
+    assert_eq!(gipuzkoa.savings_quota, dec!(253.08));
+}
+
+/// "El importe global de las citadas transmisiones" is measured **net of the sell commission**, the
+/// same `proceeds_eur` the gain is measured from. Art. 41.2 takes the gastos satisfied by the
+/// transmitente out of the valor de transmisión, and the F-93's per-transmission column 651 is
+/// labelled *Valor de transmisión*; art. 41.3's "importe real … efectivamente percibido" reads
+/// gross, which is why the register keeps it OPEN.
+///
+/// The fixture makes the choice decide condition 1.º outright: one sale of 10 @ $340 with a $100
+/// commission is €3,060 gross and €2,970 net, so the gross reading fails the €3,000 gate and exempts
+/// nothing while the net reading exempts €1,485.
+#[test]
+fn the_small_disposals_amount_is_net_of_the_sell_commission() {
+    let navarra = run_pipeline("small_disposal_commission", 2026, SpanishTaxRegime::Navarra);
+
+    let sale = &navarra.capital_gains[0];
+    assert_eq!(sale.proceeds_eur, dec!(2970));
+    assert_eq!(sale.cost_eur, dec!(900));
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2970));
+    assert_eq!(navarra.small_disposals_gains, dec!(2070));
+    assert_eq!(navarra.small_disposals_exemption, dec!(1485));
+    assert_eq!(navarra.gyp_net, dec!(585));
+    assert_eq!(navarra.savings_quota, dec!(117));
+
+    // Gross of the €90 commission the year would be over the gate and nothing would be exempt.
+    assert!(sale.proceeds_eur + dec!(90) > dec!(3000));
+
+    let comun = run_pipeline("small_disposal_commission", 2026, SpanishTaxRegime::Comun);
+    assert_eq!(comun.gyp_net, dec!(2070));
+    assert_eq!(comun.savings_quota, dec!(393.30));
+
+    let gipuzkoa = run_pipeline("small_disposal_commission", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(gipuzkoa.gyp_net, dec!(2052));
+    assert_eq!(gipuzkoa.savings_quota, dec!(389.88));
+}
+
+/// One euro of proceeds over the threshold and the whole exemption is gone — the article's first
+/// condition is a hard gate, not a taper. The same buy sold whole at $350 makes €3,150.
+#[test]
+fn the_small_disposals_exemption_stops_above_the_threshold() {
+    let navarra = run_pipeline("small_disposal_boundary", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(3150));
+    assert_eq!(navarra.small_disposals_gains, dec!(2250));
+    assert_eq!(navarra.small_disposals_exemption, dec!(0));
+    assert!(navarra.small_disposals_message().is_none());
+
+    assert_eq!(navarra.gyp_net, dec!(2250));
+    assert_eq!(navarra.savings_base, dec!(2250));
+    assert_eq!(navarra.savings_quota, dec!(450));
+}
+
+/// A foreign-currency conversion is a transmission too, and the tool records its result but not the
+/// amount converted, so the year's global transmission amount cannot be measured. The exemption is
+/// withheld and the reason named rather than granted on an understated total.
+///
+/// The `small_disposal` fixture qualifies on its own (€2,070 of proceeds, €1,035 exempt); add a
+/// conversion to the same year and the relief is withheld, because the conversion's own importe
+/// could push the global amount over €3,000.
+#[test]
+fn the_small_disposals_exemption_is_withheld_when_a_conversion_hides_the_total() {
+    let statement = read_fixture("small_disposal_fx");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (navarra, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Navarra),
+    )
+    .unwrap();
+
+    assert!(navarra.small_disposals_unmeasurable);
+    assert_eq!(navarra.small_disposals_proceeds, dec!(2070));
+    assert_eq!(navarra.small_disposals_exemption, dec!(0));
+
+    let message = navarra.small_disposals_message().unwrap();
+    assert!(message.contains("NOT applied"), "{message}");
+    assert!(message.contains("foreign-currency conversions"), "{message}");
+    assert!(message.contains("€2070.00"), "{message}");
+}
+
+/// A year with conversions but **no securities disposals at all** has nothing the article could have
+/// relieved: the exemption is measured on securities proceeds and gains, both zero, so it would have
+/// been zero however the conversions were counted. Announcing that "€0.00 of transmissions" had its
+/// relief withheld reports a non-event and reads as a bug.
+///
+/// What the tool still does not do — apply art. 39.5.d to a conversion gain in its own right — is a
+/// scope limit recorded in the register, not something a per-year warning can fix.
+#[test]
+fn no_withholding_caveat_when_the_year_has_no_securities_transmissions() {
+    let statement = read_fixture("fx_gain");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (navarra, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Navarra),
+    )
+    .unwrap();
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(0));
+    assert_eq!(navarra.small_disposals_gains, dec!(0));
+    assert!(!navarra.small_disposals_unmeasurable);
+    assert!(navarra.small_disposals_message().is_none());
+
+    // The €1,000 conversion result is taxed in full either way.
+    assert_eq!(navarra.gyp_net, dec!(1000));
+    assert_eq!(navarra.savings_quota, dec!(200));
+}
+
+/// A year whose securities transmissions all made a **loss** has no incremento for art. 39.5.d to
+/// relieve, so the conversions hide nothing: whatever the unmeasurable global amount turns out to
+/// be, `min(I, 50% × G)` is zero because `I` is zero. The caveat's counterfactual is closed, so
+/// saying the relief was withheld states something false.
+///
+/// The fixture sells the whole 2025 lot at a loss during 2026 — €360 of proceeds, which is under the
+/// €3,000 gate, so condition 1.º is not what stops the relief — and converts $10,000 across the
+/// revaluation, which is what used to make the caveat fire through its FX-gain disjunct.
+#[test]
+fn no_withholding_caveat_when_the_year_has_no_transmission_gain() {
+    let statement = read_fixture("small_disposal_loss_fx");
+    let converter = revaluing_converter(Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1));
+    let (navarra, _has_income) = super::compute_tax_year(
+        &statement,
+        2026,
+        &converter,
+        &spain_config(SpanishTaxRegime::Navarra),
+    )
+    .unwrap();
+
+    // Under the €3,000 gate and with a real conversion in the year: the caveat's other two
+    // conditions both hold, and only the absent incremento keeps it quiet.
+    assert_eq!(navarra.small_disposals_proceeds, dec!(360));
+    assert_eq!(navarra.small_disposals_gains, dec!(0));
+    assert!(navarra.total_fx_gains > Decimal::ZERO);
+
+    assert!(!navarra.small_disposals_unmeasurable);
+    assert!(navarra.small_disposals_message().is_none());
+
+    // Message-only: the relief is zero on both sides of the predicate, so no euro moves. `gyp_net`
+    // is the year's own arithmetic with nothing exempted.
+    assert_eq!(navarra.small_disposals_exemption, dec!(0));
+    assert_eq!(navarra.total_capital_gains, dec!(-540));
+    assert_eq!(
+        navarra.gyp_net,
+        navarra.total_capital_gains + navarra.total_fx_result
+    );
+}
+
+/// Above the threshold the missing conversion amounts cannot rescue the year — they only add to the
+/// total — so there is nothing open to report and no warning is emitted.
+#[test]
+fn no_conversion_caveat_once_the_securities_alone_exceed_the_threshold() {
+    let navarra = run_pipeline("fifo", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(navarra.small_disposals_proceeds, dec!(49500));
+    assert!(!navarra.small_disposals_unmeasurable);
+    assert!(navarra.small_disposals_message().is_none());
+}
+
+/// TRLFIRPF DT 7.ª is an abatement regime the tool does not compute, so a lot old enough to reach it
+/// has to be named rather than silently priced without it.
+///
+/// The fixture buys 100 shares on 1993-06-15 and another 100 on 1994-12-31, then sells all 200 in
+/// 2026. Only the 1993 lot is inside DT 7.ª: the article reaches elements acquired *before* 31
+/// December 1994, so a purchase made **on** that day is outside it. The one-day boundary is the
+/// whole point of the test.
+#[test]
+fn a_lot_acquired_before_the_1994_cut_off_is_named() {
+    let navarra = run_pipeline("pre_1995_lot", 2026, SpanishTaxRegime::Navarra);
+
+    assert_eq!(
+        navarra.abatement_lots,
+        vec![(
+            "AAPL".to_string(),
+            Date::from_ymd_opt(1993, 6, 15).unwrap()
+        )]
+    );
+
+    let message = navarra.abatement_message().unwrap();
+    assert!(message.contains("AAPL acquired 1993-06-15"), "{message}");
+    assert!(!message.contains("1994-12-31"), "{message}");
+    assert!(message.contains("DT 7.ª"), "{message}");
+    assert!(message.contains("OVERSTATED"), "{message}");
+
+    // The other two regimes have abatement regimes of their own that this round did not research,
+    // so the tool says nothing about them rather than citing the wrong statute.
+    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+        let other = run_pipeline("pre_1995_lot", 2026, regime);
+        assert_eq!(other.abatement_lots.len(), 1, "{regime:?}");
+        assert!(other.abatement_message().is_none(), "{regime:?}");
+    }
+}
+
+/// A statement whose oldest lot postdates the cut-off says nothing at all — the warning must not
+/// become background noise on every Navarra return.
+#[test]
+fn a_modern_portfolio_raises_no_abatement_warning() {
+    let navarra = run_pipeline("fifo", 2026, SpanishTaxRegime::Navarra);
+
+    assert!(navarra.abatement_lots.is_empty());
+    assert!(navarra.abatement_message().is_none());
 }

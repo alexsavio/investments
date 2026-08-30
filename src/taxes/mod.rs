@@ -62,9 +62,9 @@ pub struct FundNav {
 #[derive(Clone, Debug)]
 pub struct SpanishTaxConfig {
     /// Which regime the filer is subject to. Deliberately has no default: the regimes differ in
-    /// the savings scale, in whether acquisition costs are actualized, in whether the two
-    /// savings-base groups may offset each other, and in whether custody fees are deductible, so a
-    /// guessed default would silently file under the wrong tax code.
+    /// the savings scale, in whether acquisition costs are actualized, in how the two savings-base
+    /// groups may offset each other, in whether custody fees are deductible, and in which gains are
+    /// exempt, so a guessed default would silently file under the wrong tax code.
     pub regime: spain::SpanishTaxRegime,
 
     /// Pending negative savings-base balances (saldos negativos pendientes de compensación)
@@ -103,10 +103,10 @@ impl<'de> Deserialize<'de> for SpanishTaxConfig {
         let shape = SpanishTaxConfigShape::deserialize(deserializer)?;
 
         let regime = shape.regime.ok_or_else(|| serde::de::Error::custom(
-            "taxes.spain.regime is not set: set it to `gipuzkoa` or `comun`. There is no default \
-             — the two regimes differ in the savings scale, in whether acquisition costs are \
-             actualized, in whether the savings-base groups may offset each other, and in whether \
-             custody fees are deductible"
+            "taxes.spain.regime is not set: set it to `gipuzkoa`, `comun` or `navarra`. There is \
+             no default — the regimes differ in the savings scale, in whether acquisition costs \
+             are actualized, in how the savings-base groups may offset each other, in whether \
+             custody fees are deductible, and in which gains are exempt"
         ))?;
 
         Ok(SpanishTaxConfig {
@@ -131,26 +131,39 @@ impl SpanishTaxConfig {
     ///
     /// Not a `serde` check: the shape is valid YAML either way, and the failure a bad coefficient
     /// produces is a plausible-looking number on a tax return rather than a parse error.
+    ///
+    /// Under Navarra the whole block is rejected: TRLFIRPF art. 41 never gained an actualization
+    /// rule, so there is no coefficient for the tool to apply. Accepting the block and ignoring it
+    /// would leave the filer believing acquisition costs were actualized when they were not.
     pub fn validate_coefficients(&self) -> EmptyResult {
+        if self.regime == spain::SpanishTaxRegime::Navarra && !self.coefficients.is_empty() {
+            return Err!(
+                "taxes.spain.coefficients is set but the regime is navarra, which has no \
+                 actualization: TRLFIRPF art. 41 computes the gain from the acquisition value as \
+                 paid. Remove the block, or switch the regime if you meant to file in Gipuzkoa"
+            );
+        }
         spain::coefficients::validate_overrides(&self.coefficients)
     }
 
     /// Whether a disposal in `year` can be priced at all.
     ///
-    /// Always true under Territorio Común, where the coefficient is 1 for every year.
+    /// Always true where the coefficient is 1 for every year, which is the two regimes that do not
+    /// actualize: Territorio Común and Navarra.
     pub fn has_actualization_table(&self, year: i32) -> bool {
         match self.regime {
             spain::SpanishTaxRegime::Gipuzkoa => {
                 spain::coefficients::has_table(year, &self.coefficients)
             }
-            spain::SpanishTaxRegime::Comun => true,
+            spain::SpanishTaxRegime::Comun | spain::SpanishTaxRegime::Navarra => true,
         }
     }
 
     /// The coefficient a FIFO lot's acquisition cost is actualized by before the gain is computed.
     ///
-    /// Always 1 under Territorio Común: Ley 26/2014 deleted LIRPF art. 35.2 with effect from 2015,
-    /// and even before that actualization applied only to real estate, never to securities.
+    /// Always 1 outside Gipuzkoa. Territorio Común lost actualization when Ley 26/2014 deleted
+    /// LIRPF art. 35.2 with effect from 2015, and even before that it applied only to real estate;
+    /// Navarra never had it at all — TRLFIRPF art. 41 has never carried an actualization rule.
     pub fn actualization_coefficient(
         &self,
         disposal_year: i32,
@@ -162,7 +175,7 @@ impl SpanishTaxConfig {
                 acquisition_date,
                 &self.coefficients,
             ),
-            spain::SpanishTaxRegime::Comun => Ok(Decimal::ONE),
+            spain::SpanishTaxRegime::Comun | spain::SpanishTaxRegime::Navarra => Ok(Decimal::ONE),
         }
     }
 
@@ -305,10 +318,10 @@ impl TaxConfig {
             Some(ref spain) => Ok(spain),
             None => Err!(
                 "`taxes.jurisdiction` is `spain` but there is no `taxes.spain` block. Add one and \
-                 set `regime` to `gipuzkoa` or `comun` — the two regimes differ in the savings \
-                 scale, in whether acquisition costs are actualized, in whether the savings-base \
-                 groups may offset each other, and in whether custody fees are deductible, so \
-                 there is no safe default"
+                 set `regime` to `gipuzkoa`, `comun` or `navarra` — the regimes differ in the \
+                 savings scale, in whether acquisition costs are actualized, in how the \
+                 savings-base groups may offset each other, in whether custody fees are \
+                 deductible, and in which gains are exempt, so there is no safe default"
             ),
         }
     }
@@ -640,7 +653,7 @@ mod tests {
     }
 
     /// The regime drives the scale, the coefficients, the cross-group offset and fee
-    /// deductibility, so omitting it must fail rather than default to either regime.
+    /// deductibility, so omitting it must fail rather than default to one of the three.
     #[test]
     fn spanish_config_requires_the_regime() {
         let error = match serde_yaml::from_str::<TaxConfig>("spain: {}\n") {
@@ -655,6 +668,47 @@ mod tests {
             serde_yaml::from_str::<TaxConfig>("spain:\n  regime: comun\n  coeficients: {}\n")
                 .is_err()
         );
+    }
+
+    /// Navarra is the third regime, keyed by the name a filer would write.
+    #[test]
+    fn spanish_config_accepts_navarra() {
+        let config: TaxConfig = serde_yaml::from_str("spain:\n  regime: navarra\n").unwrap();
+        assert_eq!(
+            config.spanish().unwrap().regime,
+            spain::SpanishTaxRegime::Navarra
+        );
+    }
+
+    /// Navarra has no actualization: TRLFIRPF art. 41 was never amended to introduce coefficients,
+    /// so a `coefficients` block under that regime is a config the tool cannot honour. Silently
+    /// ignoring it would leave the filer believing costs were actualized when they were not.
+    #[test]
+    fn spanish_coefficients_are_rejected_under_navarra() {
+        let config: TaxConfig = serde_yaml::from_str(
+            "spain:\n  regime: navarra\n  coefficients:\n    2026: {2021: '1.212'}\n",
+        )
+        .unwrap();
+
+        let error = config
+            .spanish()
+            .unwrap()
+            .validate_coefficients()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("taxes.spain.coefficients"), "{error}");
+        assert!(error.contains("navarra"), "{error}");
+        assert!(error.contains("art. 41"), "{error}");
+    }
+
+    /// The same block stays valid under Gipuzkoa, which is the regime the coefficients exist for.
+    #[test]
+    fn spanish_coefficients_stay_valid_under_gipuzkoa() {
+        let config: TaxConfig = serde_yaml::from_str(
+            "spain:\n  regime: gipuzkoa\n  coefficients:\n    2026: {2021: '1.212'}\n",
+        )
+        .unwrap();
+        config.spanish().unwrap().validate_coefficients().unwrap();
     }
 
     /// The accented spelling is what a Spanish filer would naturally write.

@@ -8,15 +8,17 @@ pub mod carryforward;
 pub mod coefficients;
 pub mod compensation;
 pub mod credit;
+pub mod exemption;
 pub mod scale;
 
 use serde::Deserialize;
 
 /// Which Spanish IRPF regime the filer is subject to.
 ///
-/// Not a cosmetic switch: the two regimes differ in the savings scale, in whether acquisition
-/// costs are actualized, in whether the two savings-base groups may offset each other, and in
-/// whether custody fees are deductible. Every one of those changes the tax due.
+/// Not a cosmetic switch: the regimes differ in the savings scale, in whether acquisition costs are
+/// actualized, in how and whether the two savings-base groups may offset each other, in whether
+/// custody fees are deductible and by how much, and in which gains are exempt. Every one of those
+/// changes the tax due.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpanishTaxRegime {
@@ -25,6 +27,8 @@ pub enum SpanishTaxRegime {
     /// Territorio Común — Ley 35/2006 (LIRPF).
     #[serde(alias = "común")]
     Comun,
+    /// Comunidad Foral de Navarra — Decreto Foral Legislativo 4/2008 (TRLFIRPF).
+    Navarra,
 }
 
 impl SpanishTaxRegime {
@@ -35,6 +39,7 @@ impl SpanishTaxRegime {
         match self {
             SpanishTaxRegime::Gipuzkoa => "Gipuzkoa (Norma Foral 3/2014)",
             SpanishTaxRegime::Comun => "Territorio Común (Ley 35/2006)",
+            SpanishTaxRegime::Navarra => "Navarra (Decreto Foral Legislativo 4/2008)",
         }
     }
 }

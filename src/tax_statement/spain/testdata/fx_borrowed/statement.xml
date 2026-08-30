@@ -1,0 +1,13 @@
+<FlexQueryResponse queryName="spanish-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000001" fromDate="20260101" toDate="20261231" period="LastYear" whenGenerated="20270115;120000">
+      <CashReport>
+        <CashReportCurrency currency="USD" startingCash="0" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <StmtFunds>
+        <StatementOfFundsLine currency="USD" date="20260210" activityCode="WITH" activityDescription="USD TO EUR CONVERSION" amount="-10000" levelOfDetail="Currency" balance="-10000"/>
+        <StatementOfFundsLine currency="USD" date="20260810" activityCode="DEP" activityDescription="EUR TO USD CONVERSION" amount="10000" levelOfDetail="Currency" balance="0"/>
+      </StmtFunds>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

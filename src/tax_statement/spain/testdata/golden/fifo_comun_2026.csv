@@ -1,0 +1,50 @@
+transaction_type,transaction_date,settle_date,symbol,isin,description,quantity,cost_eur,coefficient,actualized_cost_eur,proceeds_eur,gross_amount_eur,gain_loss_eur,deferred_loss_eur,integrable_amount_eur,foreign_tax_eur,treaty_capped_credit_eur,savings_group,notes
+Capital Gain,2026-04-15,2026-04-17,AAPL,US0378331005,AAPL,100.00,9000.00,,9000.00,22500.00,,13500.00,0.00,13500.00,,,GyP,
+Lot,2021-03-10,,AAPL,,FIFO lot acquired 2021-03-10,100.00,9000.00,1.000,9000.00,22500.00,,13500.00,,,,,GyP,9000.00 × 1.000 = 9000.00
+Capital Gain,2026-09-15,2026-09-17,AAPL,US0378331005,AAPL,100.00,18000.00,,18000.00,27000.00,,9000.00,0.00,9000.00,,,GyP,
+Lot,2024-06-10,,AAPL,,FIFO lot acquired 2024-06-10,100.00,18000.00,1.000,18000.00,27000.00,,9000.00,,,,,GyP,18000.00 × 1.000 = 18000.00
+
+# The cuota is computed once on the year's base after group compensation, NOT summed
+# from the rows: the savings scale is progressive, so per-row taxes would not add up.
+summary_key,label,value_eur
+SUMMARY_REGIME,Territorio Común (Ley 35/2006),2026
+SUMMARY_RCM_DIVIDENDS,Dividendos (rendimientos del capital mobiliario),0.00
+SUMMARY_RCM_DIVIDEND_EXEMPTION,Dividendos exentos — límite 1.500 € anuales (NF 3/2014 art. 9.24 — sólo Gipuzkoa),0.00
+SUMMARY_RCM_INTEREST,Intereses (rendimientos del capital mobiliario),0.00
+SUMMARY_RCM_INTEREST_PAID,Intereses pagados sobre saldo prestado (informativo — no deducibles),0.00
+SUMMARY_RCM_DEDUCTIBLE_FEES,Gastos deducibles de administración y depósito,0.00
+SUMMARY_RCM_NET,Rendimiento neto del capital mobiliario,0.00
+SUMMARY_GYP_CAPITAL_GAINS,Ganancias y pérdidas por transmisión de valores,22500.00
+SUMMARY_GYP_FX,Ganancias y pérdidas por conversión de divisa,0.00
+SUMMARY_GYP_DEFERRED,Pérdidas diferidas por valores homogéneos (no deducibles este año),0.00
+SUMMARY_GYP_REINTEGRATED,Pérdidas diferidas reintegradas al transmitirse los valores que las bloqueaban,0.00
+SUMMARY_GYP_NET,Saldo de ganancias y pérdidas patrimoniales,22500.00
+SUMMARY_RCM_LOSSES_APPLIED,Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — fase 2ª-1º,0.00
+SUMMARY_GYP_LOSSES_APPLIED,Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — fase 2ª-1º,0.00
+SUMMARY_CROSS_OFFSET_RCM_TO_GYP,Compensación cruzada RCM → ganancias — fase 1ª (25% — sólo Territorio Común),0.00
+SUMMARY_CROSS_OFFSET_GYP_TO_RCM,Compensación cruzada ganancias → RCM — fase 1ª (25% — sólo Territorio Común),0.00
+SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP,Compensación cruzada RCM → ganancias — fase 2ª-2º (saldos de ejercicios anteriores),0.00
+SUMMARY_PRIOR_CROSS_OFFSET_GYP_TO_RCM,Compensación cruzada ganancias → RCM — fase 2ª-2º (saldos de ejercicios anteriores),0.00
+SUMMARY_RCM_TAXABLE,RCM integrado en la base del ahorro,0.00
+SUMMARY_GYP_TAXABLE,Ganancias integradas en la base del ahorro,22500.00
+SUMMARY_SAVINGS_BASE,Base liquidable del ahorro,22500.00
+SUMMARY_SAVINGS_QUOTA,Cuota íntegra del ahorro,4605.00
+SUMMARY_AVERAGE_SAVINGS_RATE,Tipo medio de gravamen del ahorro (ratio — not EUR),0.2047
+SUMMARY_FOREIGN_WITHHOLDING,Retenciones practicadas en el extranjero,0.00
+SUMMARY_FOREIGN_TAXABLE_INCOME,Renta neta obtenida en el extranjero integrada en la base (límite del tipo medio),0.00
+SUMMARY_FOREIGN_TAX_CREDIT,Deducción por doble imposición internacional,0.00
+SUMMARY_NET_TAX_DUE,Cuota líquida del ahorro,4605.00
+SUMMARY_INFORMATIONAL_FEES,Comisiones informativas (no deducibles),0.00
+SUMMARY_FX_BORROWED_REVIEW,Resultados de divisa sobre saldo prestado (excluidos — revisión manual),0.00
+
+# MODELO 100 — declaración del IRPF (AEAT)
+# WARNING: these are the ejercicio-2025 box numbers, read from Anexo I of the
+# Orden HAC/277/2026 CONSULTATION DRAFT — the AEAT publishes a filing year's
+# form in the spring of the following one, so no enacted numbering exists yet.
+# Verify every casilla against your filing year's own form before entering it.
+MODELO_100_0027,Intereses de cuentas y depósitos (rendimientos del capital mobiliario),0.00
+MODELO_100_0029,Dividendos y participaciones en beneficios (excluida la renta exenta),0.00
+MODELO_100_0037,Gastos de administración y depósito (art. 26.1.a),0.00
+MODELO_100_0326_0340,Ganancias y pérdidas por transmisión de acciones cotizadas (casillas 0326-0340),22500.00
+MODELO_100_0460,Base liquidable del ahorro (tras compensación),22500.00
+MODELO_100_0588,Deducción por doble imposición internacional,0.00

@@ -9,6 +9,12 @@ mod statement;
 mod wash_sale;
 
 #[cfg(test)]
+mod continuity_tests;
+#[cfg(test)]
+mod golden_tests;
+#[cfg(test)]
+mod property_tests;
+#[cfg(test)]
 mod tests;
 
 pub use self::csv_formatter::CsvFormatter;

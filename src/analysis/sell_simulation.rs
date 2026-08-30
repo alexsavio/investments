@@ -507,6 +507,7 @@ impl SpanishTaxSimulation {
         let regime = match after.regime {
             crate::taxes::spain::SpanishTaxRegime::Gipuzkoa => "Gipuzkoa",
             crate::taxes::spain::SpanishTaxRegime::Comun => "Territorio Común",
+            crate::taxes::spain::SpanishTaxRegime::Navarra => "Navarra",
         };
         table.print(&format!(
             "Spanish tax year {} ({regime}) — the sale is priced at what it changes here, not at a \

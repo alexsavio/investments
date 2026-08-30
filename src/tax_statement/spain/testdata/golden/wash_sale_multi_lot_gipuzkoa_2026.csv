@@ -1,0 +1,71 @@
+transaction_type,transaction_date,settle_date,symbol,isin,description,quantity,cost_eur,coefficient,actualized_cost_eur,proceeds_eur,gross_amount_eur,gain_loss_eur,deferred_loss_eur,integrable_amount_eur,foreign_tax_eur,treaty_capped_credit_eur,savings_group,notes
+Capital Gain,2026-03-10,2026-03-12,AAPL,US0378331005,AAPL,100.00,9000.00,,9000.00,8100.00,,-900.00,360.00,-540.00,,,GyP,€360.00 of this loss is deferred: homogeneous securities were acquired within two months of the sale (NF 3/2014 art. 43.g / LIRPF art. 33.5.f / TRLFIRPF art. 39.6.f)
+Lot,2026-01-05,,AAPL,,FIFO lot acquired 2026-01-05,100.00,9000.00,1.000,9000.00,8100.00,,-900.00,,,,,GyP,9000.00 × 1.000 = 9000.00
+Capital Gain,2026-11-15,2026-11-17,AAPL,US0378331005,AAPL,30.00,2070.00,,2070.00,2700.00,,630.00,0.00,630.00,,,GyP,
+Lot,2026-04-20,,AAPL,,FIFO lot acquired 2026-04-20,25.00,1800.00,1.000,1800.00,2250.00,,450.00,,,,,GyP,1800.00 × 1.000 = 1800.00
+Lot,2026-05-05,,AAPL,,FIFO lot acquired 2026-05-05,5.00,270.00,1.000,270.00,450.00,,180.00,,,,,GyP,270.00 × 1.000 = 270.00
+Wash Sale Reintegration,2026-11-15,,AAPL,US0378331005,Deferred loss released by the disposal of shares acquired 2026-04-20,,,,,,,-225.00,,-225.00,,,GyP,Deferred by the sale of 2026-03-10 (NF 3/2014 art. 43 closing ¶ / LIRPF art. 33.5 closing ¶ / TRLFIRPF art. 39.6 closing ¶)
+Wash Sale Reintegration,2026-11-15,,AAPL,US0378331005,Deferred loss released by the disposal of shares acquired 2026-05-05,,,,,,,-45.00,,-45.00,,,GyP,Deferred by the sale of 2026-03-10 (NF 3/2014 art. 43 closing ¶ / LIRPF art. 33.5 closing ¶ / TRLFIRPF art. 39.6 closing ¶)
+
+# The cuota is computed once on the year's base after group compensation, NOT summed
+# from the rows: the savings scale is progressive, so per-row taxes would not add up.
+summary_key,label,value_eur
+SUMMARY_REGIME,Gipuzkoa (Norma Foral 3/2014),2026
+SUMMARY_RCM_DIVIDENDS,Dividendos (rendimientos del capital mobiliario),0.00
+SUMMARY_RCM_DIVIDEND_EXEMPTION,Dividendos exentos — límite 1.500 € anuales (NF 3/2014 art. 9.24 — sólo Gipuzkoa),0.00
+SUMMARY_RCM_INTEREST,Intereses (rendimientos del capital mobiliario),0.00
+SUMMARY_RCM_INTEREST_PAID,Intereses pagados sobre saldo prestado (informativo — no deducibles),0.00
+SUMMARY_RCM_DEDUCTIBLE_FEES,Gastos deducibles de administración y depósito,0.00
+SUMMARY_RCM_NET,Rendimiento neto del capital mobiliario,0.00
+SUMMARY_GYP_CAPITAL_GAINS,Ganancias y pérdidas por transmisión de valores,90.00
+SUMMARY_GYP_FX,Ganancias y pérdidas por conversión de divisa,0.00
+SUMMARY_GYP_DEFERRED,Pérdidas diferidas por valores homogéneos (no deducibles este año),360.00
+SUMMARY_GYP_REINTEGRATED,Pérdidas diferidas reintegradas al transmitirse los valores que las bloqueaban,270.00
+SUMMARY_GYP_NET,Saldo de ganancias y pérdidas patrimoniales,-180.00
+SUMMARY_RCM_LOSSES_APPLIED,Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — NF 3/2014 art. 66.1.a: los rendimientos se integran y compensan exclusivamente entre sí y en la cuantía máxima que permita cada ejercicio (art. 66.2) — sólo Gipuzkoa,0.00
+SUMMARY_GYP_LOSSES_APPLIED,Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — NF 3/2014 art. 66.1.b: las ganancias y pérdidas se integran y compensan exclusivamente entre sí y en la cuantía máxima que permita cada ejercicio (art. 66.2) — sólo Gipuzkoa,0.00
+SUMMARY_CROSS_OFFSET_RCM_TO_GYP,Compensación cruzada RCM → ganancias — fase 1ª (25% — sólo Territorio Común),0.00
+SUMMARY_CROSS_OFFSET_GYP_TO_RCM,Compensación cruzada ganancias → RCM — fase 1ª (25% — sólo Territorio Común),0.00
+SUMMARY_PRIOR_CROSS_OFFSET_RCM_TO_GYP,Compensación cruzada RCM → ganancias — fase 2ª-2º (saldos de ejercicios anteriores),0.00
+SUMMARY_PRIOR_CROSS_OFFSET_GYP_TO_RCM,Compensación cruzada ganancias → RCM — fase 2ª-2º (saldos de ejercicios anteriores),0.00
+SUMMARY_RCM_TAXABLE,RCM integrado en la base del ahorro,0.00
+SUMMARY_GYP_TAXABLE,Ganancias integradas en la base del ahorro,0.00
+SUMMARY_SAVINGS_BASE,Base liquidable del ahorro,0.00
+SUMMARY_SAVINGS_QUOTA,Cuota íntegra del ahorro,0.00
+SUMMARY_AVERAGE_SAVINGS_RATE,Tipo medio de gravamen del ahorro (ratio — not EUR),0
+SUMMARY_FOREIGN_WITHHOLDING,Retenciones practicadas en el extranjero,0.00
+SUMMARY_FOREIGN_TAXABLE_INCOME,Renta neta obtenida en el extranjero integrada en la base (límite del tipo medio),0.00
+SUMMARY_FOREIGN_TAX_CREDIT,Deducción por doble imposición internacional,0.00
+SUMMARY_NET_TAX_DUE,Cuota líquida del ahorro,0.00
+SUMMARY_INFORMATIONAL_FEES,Comisiones informativas (no deducibles),0.00
+SUMMARY_FX_BORROWED_REVIEW,Resultados de divisa sobre saldo prestado (excluidos — revisión manual),0.00
+
+# SALDOS NEGATIVOS PENDIENTES — put these in next year's taxes.spain.loss_carryforward,
+# keyed by the year each arose in. A balance may be offset only in the four following
+# years, so the origin year is part of the data.
+CARRYFORWARD_GYP_2026,Saldo negativo pendiente — GYP — origen 2026,180.00
+
+# PÉRDIDAS DIFERIDAS PENDIENTES — put these in next year's taxes.spain.deferred_losses.
+# Each is a loss still blocked by homogeneous securities bought inside the two-month
+# window and not yet disposed of; it becomes deductible as those shares are sold.
+DEFERRED_LOSS_0,AAPL (US0378331005) — 10 shares acquired 2026-05-05 blocking the loss of 2026-03-10,90.00
+
+# MODELO 109 — autoliquidación del IRPF de Gipuzkoa
+# The numbers below are read off the Hacienda Foral "Propuesta de autoliquidación"
+# specimen for ejercicio 2025 (gipuzkoa.eus/es/web/ogasuna/impuestos/modelo/109/,
+# retrieved 2026-08-11). Gipuzkoa publishes no blank numbered form — the return
+# is generated by Zergabidea — so check each casilla against your own proposal.
+# WARNING: no form is published for ejercicio 2026 yet — it is filed in 2027.
+# These are the ejercicio-2025 numbers, the last published layout.
+# WARNING: the rendimientos íntegros / gastos breakdown lives in Anexo 3,
+# whose internal numbering is confirmed only through ejercicio 2024 and was
+# renumbered by NF 1/2025. Only the Hoja de liquidación rows are emitted
+# here; take the breakdown from your own Anexo 3.
+MODELO_109_HOJA_28,Rendimiento neto del capital mobiliario (base del ahorro) (hoja, casilla 28),0.00
+MODELO_109_HOJA_29,Compensación de rendimientos negativos de ejercicios anteriores (hoja, casilla 29),0.00
+MODELO_109_HOJA_30,Ganancias y pérdidas patrimoniales por transmisiones (hoja, casilla 30),-180.00
+MODELO_109_HOJA_31,Compensación de pérdidas de ejercicios anteriores (hoja, casilla 31),0.00
+MODELO_109_HOJA_33,Base liquidable del ahorro (tras compensación) (hoja, casilla 33),0.00
+MODELO_109_HOJA_38,Cuota íntegra del ahorro (hoja, casilla 38),0.00
+MODELO_109_HOJA_70,Deducción por doble imposición internacional (hoja, casilla 70),0.00
+MODELO_109_HOJA_74,Cuota líquida del ahorro (hoja, casilla 74),0.00

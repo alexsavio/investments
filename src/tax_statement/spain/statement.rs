@@ -2,8 +2,9 @@
 
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::spain::carryforward::{LedgerApplication, LossLedger};
-use crate::taxes::spain::compensation::compensate_savings_base;
+use crate::taxes::spain::compensation::{CrossOffset, compensate_savings_base};
 use crate::taxes::spain::credit::{double_taxation_credit, treaty_capped_credit};
+use crate::taxes::spain::exemption::{GLOBAL_TRANSMISSION_LIMIT, small_disposals_exemption};
 use crate::taxes::DeferredLossConfig;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::types::{Date, Decimal};
@@ -165,9 +166,9 @@ pub struct InterestEntry {
     pub description: String,
     /// Positive for interest received, negative for interest paid on a borrowed balance.
     pub gross_eur: Decimal,
-    /// Whether this entry enters the RCM result. Interest **paid** does not: neither regime allows
-    /// an expense against securities income beyond LIRPF art. 26.1.a's administration and custody,
-    /// and NF 3/2014 art. 39 is narrower still.
+    /// Whether this entry enters the RCM result. Interest **paid** does not: no regime allows an
+    /// expense against securities income beyond the administration and custody of LIRPF art. 26.1.a
+    /// and TRLFIRPF art. 32.1.a, and NF 3/2014 art. 39 is narrower still.
     pub taxable: bool,
     pub notes: Option<String>,
 }
@@ -266,6 +267,11 @@ pub struct SpanishTaxStatement {
     /// only. Their treatment is not computed and needs manual review.
     pub short_positions: Vec<(String, Decimal)>,
 
+    /// FIFO lots acquired before 31 December 1994, by symbol and acquisition date. Those fall under
+    /// an abatement regime this tool does not compute; the entry is factual for every regime, and
+    /// only the ones with such a regime say anything about it.
+    pub abatement_lots: Vec<(String, Date)>,
+
     /// Disposal years up to and including the filing year that the statement contains but the tool
     /// ships no actualization table for. Sales in those years were replayed for the
     /// valores-homogéneos rule — they still consume lots and release earlier deferrals — but their
@@ -303,13 +309,27 @@ pub struct SpanishTaxStatement {
     /// Interest paid on a borrowed balance, as a positive magnitude. Reported only — it never
     /// reduces the RCM result.
     pub total_paid_interest: Decimal,
-    /// Fees that reduce the RCM result, as a positive magnitude.
+    /// Fees that reduce the RCM result, as a positive magnitude, after any regime cap.
     pub total_deductible_fees: Decimal,
-    /// Fees reported for information only, as a positive magnitude.
+    /// Fees reported for information only, as a positive magnitude. Excludes what the cap
+    /// disallowed, which is reported on its own so the two reasons are never conflated.
     pub total_informational_fees: Decimal,
+    /// Ceiling the regime puts on deductible custody and administration fees, and the part of them
+    /// it disallowed. `None` where the regime sets no ceiling.
+    pub custody_fee_cap: Option<Decimal>,
+    pub total_capped_fees: Decimal,
     pub total_foreign_withholding: Decimal,
     /// Integrable result of the year's disposals — what the ganancias group takes from them.
     pub total_capital_gains: Decimal,
+    /// The year's global importe of onerous securities transmissions, and the taxable increments
+    /// they produced: the two figures TRLFIRPF art. 39.5.d's conditions are measured on.
+    pub small_disposals_proceeds: Decimal,
+    pub small_disposals_gains: Decimal,
+    /// What art. 39.5.d exempted, as a positive magnitude. Zero outside Navarra.
+    pub small_disposals_exemption: Decimal,
+    /// Set when the year would have been tested against art. 39.5.d but a foreign-currency
+    /// conversion made the global transmission amount unmeasurable.
+    pub small_disposals_unmeasurable: bool,
     pub total_fx_gains: Decimal,
     pub total_fx_losses: Decimal,
     /// Net realized foreign-currency result on **held** balances: `total_fx_gains − total_fx_losses`.
@@ -332,12 +352,14 @@ pub struct SpanishTaxStatement {
     pub rcm_applied: LedgerApplication,
     pub gyp_applied: LedgerApplication,
 
-    /// Current-year negative of one group set against the other (Territorio Común only, Fase 1ª).
+    /// Current-year negative of one group set against the other. Zero under Gipuzkoa; the AEAT
+    /// Fase 1ª under Común, and TRLFIRPF art. 54.2's own cross under Navarra.
     pub cross_offset_rcm_to_gyp: Decimal,
     pub cross_offset_gyp_to_rcm: Decimal,
 
     /// Prior-year balance of one group its own group could not absorb, set against the other's
-    /// remainder (Territorio Común only, Fase 2ª-2º).
+    /// remainder. Zero under Gipuzkoa; the AEAT Fase 2ª-2º under Común, and under Navarra the part
+    /// of the cross that only the broad reading of art. 54.2 allows.
     pub prior_cross_offset_rcm_to_gyp: Decimal,
     pub prior_cross_offset_gyp_to_rcm: Decimal,
 
@@ -363,11 +385,15 @@ pub struct SpanishTaxStatement {
     /// Annual dividend exemption in force: €1,500 under Gipuzkoa (NF 3/2014 art. 9.24), 0 under
     /// Territorio Común.
     dividend_exemption_limit: Decimal,
-    /// Fraction of the other group's positive balance a negative one may offset: 0 under Gipuzkoa,
-    /// 0.25 under Territorio Común.
-    cross_offset_fraction: Decimal,
+    /// How far, and in what order, a negative balance in one savings-base group may reach the other.
+    cross_offset: CrossOffset,
     /// Treaty cap on the source state's withholding, used for the credit's first limb.
     treaty_rate: Decimal,
+    /// Fraction of the non-exempt gross securities income that caps deductible custody fees:
+    /// `Some(0.03)` under Navarra (TRLFIRPF art. 32.1.a), `None` where the regime has no ceiling.
+    custody_fee_cap_fraction: Option<Decimal>,
+    /// Whether the regime exempts a year of small onerous transmissions (TRLFIRPF art. 39.5.d).
+    small_disposals_exemption_applies: bool,
 }
 
 impl SpanishTaxStatement {
@@ -377,17 +403,27 @@ impl SpanishTaxStatement {
         scale: SavingsScale,
         rcm_ledger: LossLedger,
         gyp_ledger: LossLedger,
-        cross_offset_fraction: Decimal,
+        cross_offset: CrossOffset,
         treaty_rate: Decimal,
         dividend_exemption_limit: Decimal,
+        custody_fee_cap_fraction: Option<Decimal>,
+        small_disposals_exemption_applies: bool,
     ) -> SpanishTaxStatement {
         SpanishTaxStatement {
             year,
             regime,
             scale,
-            cross_offset_fraction,
+            cross_offset,
             treaty_rate,
             dividend_exemption_limit,
+            custody_fee_cap_fraction,
+            small_disposals_exemption_applies,
+            custody_fee_cap: None,
+            total_capped_fees: Decimal::ZERO,
+            small_disposals_proceeds: Decimal::ZERO,
+            small_disposals_gains: Decimal::ZERO,
+            small_disposals_exemption: Decimal::ZERO,
+            small_disposals_unmeasurable: false,
             rcm_ledger_prior: rcm_ledger.clone(),
             gyp_ledger_prior: gyp_ledger.clone(),
             rcm_ledger_next: rcm_ledger,
@@ -414,6 +450,7 @@ impl SpanishTaxStatement {
             stock_grants: Vec::new(),
             corporate_actions: Vec::new(),
             short_positions: Vec::new(),
+            abatement_lots: Vec::new(),
             wash_sale_unpriced_years: Vec::new(),
             wash_sale_reintegrations: Vec::new(),
             deferred_losses_next: Vec::new(),
@@ -492,6 +529,8 @@ impl SpanishTaxStatement {
             std::cmp::max(Decimal::ZERO, eligible_dividends),
         );
 
+        self.apply_custody_fee_cap();
+
         self.rcm_net = self.total_dividend_income + self.total_interest_income
             - self.total_deductible_fees
             - self.total_dividend_exemption;
@@ -532,9 +571,14 @@ impl SpanishTaxStatement {
             .map(|entry| entry.released_eur)
             .sum();
 
+        self.collect_abatement_lots();
+        self.apply_small_disposals_exemption();
+
         // A released deferral is a loss that was blocked when it arose and is deductible now, so it
         // enters the group as a negative amount in the year the blocking shares left the estate.
-        self.gyp_net = self.total_capital_gains + self.total_fx_result - self.total_reintegrated_loss;
+        self.gyp_net = self.total_capital_gains + self.total_fx_result
+            - self.total_reintegrated_loss
+            - self.small_disposals_exemption;
 
         let compensation = compensate_savings_base(
             self.year,
@@ -542,7 +586,7 @@ impl SpanishTaxStatement {
             self.gyp_net,
             self.rcm_ledger_prior.clone(),
             self.gyp_ledger_prior.clone(),
-            self.cross_offset_fraction,
+            self.cross_offset,
         );
 
         self.rcm_taxable = compensation.rcm_taxable;
@@ -579,11 +623,243 @@ impl SpanishTaxStatement {
         );
     }
 
-    /// Prior-year RCM balances this year applied **within their own group** — the Fase 2ª-1º
-    /// consumption alone.
+    /// Cut-off of the abatement regimes: TRLFIRPF DT 7.ª reaches "elementos patrimoniales adquiridos
+    /// **antes de** 31 de diciembre de 1994", so an acquisition on that day itself is outside it.
+    const ABATEMENT_CUTOFF: (i32, u32, u32) = (1994, 12, 31);
+
+    /// Note every FIFO lot old enough to fall under an abatement regime.
     ///
-    /// `rcm_applied.used_total` is the whole ledger consumption and already contains what Fase 2ª-2º
-    /// crossed into the ganancias group, which `prior_cross_offset_rcm_to_gyp` reports on its own.
+    /// One entry per (symbol, acquisition date): several sales can consume the same lot, and naming
+    /// the same 1993 purchase three times would only make the message harder to act on.
+    fn collect_abatement_lots(&mut self) {
+        let (year, month, day) = Self::ABATEMENT_CUTOFF;
+        let Some(cutoff) = Date::from_ymd_opt(year, month, day) else {
+            return;
+        };
+
+        let mut lots: Vec<(String, Date)> = self
+            .capital_gains
+            .iter()
+            .flat_map(|entry| {
+                entry
+                    .lots
+                    .iter()
+                    .filter(|lot| lot.acquisition_date < cutoff)
+                    .map(|lot| (entry.symbol.clone(), lot.acquisition_date))
+            })
+            .collect();
+
+        lots.sort();
+        lots.dedup();
+        self.abatement_lots = lots;
+    }
+
+    /// The sentence every surface reports an uncomputed abatement regime with. `None` where the
+    /// regime has none the tool leaves out, or where no lot is old enough to reach it.
+    ///
+    /// TRLFIRPF DT 7.ª reduces, and above a holding period exempts outright, the part of a gain
+    /// generated before 31 December 2006 on an element acquired before 31 December 1994. Navarra put
+    /// no €400,000 lifetime cap on it, unlike the state regime. It is not computed here because DT
+    /// 7.ª.3 measures the pre-2006 part against the element's 2006 Impuesto sobre el Patrimonio
+    /// value, which no broker statement carries.
+    pub fn abatement_message(&self) -> Option<String> {
+        if self.regime != SpanishTaxRegime::Navarra || self.abatement_lots.is_empty() {
+            return None;
+        }
+
+        let lots = self
+            .abatement_lots
+            .iter()
+            .map(|(symbol, date)| format!("{symbol} acquired {date}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        Some(format!(
+            "The year's disposals consumed FIFO lots acquired before 31 December 1994 ({lots}). \
+             TRLFIRPF DT 7.ª reduces the part of such a gain that was generated before 31 December \
+             2006, and exempts it entirely above a holding period — with no €400,000 lifetime cap, \
+             unlike the state regime. The tool does NOT compute it: DT 7.ª.3 measures that part \
+             against the element's 2006 Impuesto sobre el Patrimonio value, which a broker statement \
+             does not carry. The gains above are therefore OVERSTATED. See the \
+             open-interpretations register in docs/spain-taxes.md."
+        ))
+    }
+
+    /// Exempt a year of small onerous transmissions (TRLFIRPF art. 39.5.d).
+    ///
+    /// The two figures the article's conditions are measured on are the year's global transmission
+    /// amount and the taxable increments those transmissions produced. Proceeds are counted for
+    /// every disposal, gain- or loss-making, because 1.º measures the transmissions; only positive
+    /// integrable results feed the increment, because a loss is a *disminución*. A wash-sale
+    /// deferral therefore leaves the proceeds alone and keeps the blocked amount out of both.
+    ///
+    /// The two populations differ, and that is deliberate: 2.º's 50% ceiling is measured on the same
+    /// all-transmissions global amount, so a loss-making sale widens the shelter available to the
+    /// year's gains. 2.º says "el importe global de la transmisión" and 1.º has already fixed
+    /// "importe global" as the year total; reading one phrase two ways inside one letra would need
+    /// an argument the article does not give. This is the round's one choice whose failure direction
+    /// is **less** tax, so it is recorded as OPEN in the register rather than left implicit.
+    ///
+    /// The proceeds are taken **net of the sell commission**, because `proceeds_eur` is the same
+    /// figure the gain is measured from. Art. 41.2 takes the "gastos y tributos … satisfechos por el
+    /// transmitente" out of the valor de transmisión, and the F-93's per-transmission column 651 is
+    /// labelled *Valor de transmisión*; art. 39.5.d's own words are "el importe global de las citadas
+    /// transmisiones", and art. 41.3 defines the *importe real* as "el efectivamente percibido",
+    /// which reads gross. The choice only matters when a commission straddles a threshold and it is
+    /// not uniformly conservative — a net figure passes 1.º more easily but lowers 2.º's ceiling — so
+    /// it is recorded as OPEN in the register rather than presented as settled.
+    ///
+    /// Foreign-currency conversions are transmissions too (art. 54.1.b), but the shared FX FIFO
+    /// records only the realized result, never the amount converted. Counting the securities alone
+    /// would understate the global amount and could hand the exemption to a year that does not
+    /// qualify, so the exemption is withheld and the reason reported. It is withheld only where it
+    /// could have applied: once the securities' own proceeds exceed €3,000 the condition has
+    /// definitively failed, since the missing conversions can only add to the total.
+    fn apply_small_disposals_exemption(&mut self) {
+        if !self.small_disposals_exemption_applies {
+            return;
+        }
+
+        self.small_disposals_proceeds = self
+            .capital_gains
+            .iter()
+            .map(|entry| entry.proceeds_eur)
+            .sum();
+        self.small_disposals_gains = self
+            .capital_gains
+            .iter()
+            .map(|entry| std::cmp::max(Decimal::ZERO, entry.integrable_amount))
+            .sum();
+
+        if self.small_disposals_proceeds > GLOBAL_TRANSMISSION_LIMIT {
+            return;
+        }
+
+        // Nothing is withheld from a year with no *incremento* to relieve. The exemption is
+        // `min(I, 50% × G)`, so a year whose transmissions produced no gain — none at all, or only
+        // disminuciones — would have been relieved of exactly zero however the conversions were
+        // counted, whatever they did to `G`. Saying the relief was withheld there reports a
+        // counterfactual that is closed — closed *under this tool's scope limit*, which feeds only
+        // securities results into `I` and never a conversion gain in its own right. Art. 54.1.b
+        // makes the conversion a transmisión, so whether its own increment belongs in `I` is an
+        // open legal question, not a settled one; register §13 carries it, and the FX section note
+        // states it to the filer on every run rather than a banner stating it in some years only.
+        if !self.fx_gains.is_empty() && self.small_disposals_gains > Decimal::ZERO {
+            self.small_disposals_unmeasurable = true;
+            return;
+        }
+
+        self.small_disposals_exemption =
+            small_disposals_exemption(self.small_disposals_proceeds, self.small_disposals_gains);
+    }
+
+    /// The sentence every surface reports art. 39.5.d with, so the console, the log and the CSV
+    /// cannot drift apart. `None` when the article changed nothing this year.
+    pub fn small_disposals_message(&self) -> Option<String> {
+        if self.small_disposals_unmeasurable {
+            return Some(format!(
+                "The year's securities transmissions came to €{}, under the €3,000 that TRLFIRPF \
+                 art. 39.5.d exempts, but the exemption was NOT applied: the year also contains \
+                 foreign-currency conversions, which are transmissions too, and the tool records \
+                 only their result, not the amount converted. The global transmission amount is \
+                 therefore unknown and may well exceed €3,000. Not applying it overstates the tax \
+                 rather than understating it — add the converted amounts by hand to check. See the \
+                 open-interpretations register in docs/spain-taxes.md.",
+                super::format_eur(self.small_disposals_proceeds)
+            ));
+        }
+
+        if self.small_disposals_exemption <= Decimal::ZERO {
+            return None;
+        }
+
+        Some(format!(
+            "€{} of transmission gains was exempted under TRLFIRPF art. 39.5.d: the year's onerous \
+             transmissions came to €{}, at or under the €3,000 the article allows, so the gain is \
+             exempt up to half that global amount and only the excess is taxed. The year's taxable \
+             increments were €{}. See the open-interpretations register in docs/spain-taxes.md.",
+            super::format_eur(self.small_disposals_exemption),
+            super::format_eur(self.small_disposals_proceeds),
+            super::format_eur(self.small_disposals_gains)
+        ))
+    }
+
+    /// Clamp deductible custody and administration fees to the regime's ceiling.
+    ///
+    /// TRLFIRPF art. 32.1.a allows them "con el límite del 3 por 100 de los ingresos íntegros, que
+    /// no hayan resultado exentos, procedentes de dichos valores". Two readings are pinned here:
+    ///
+    /// - the ceiling is measured on the **securities'** income, which in a broker statement means
+    ///   dividends. Interest credited on a cash balance is a cesión de capitales propios under art.
+    ///   29, not income from a valor negociable, so it does not raise the ceiling;
+    /// - "que no hayan resultado exentos" removes any exempt slice from that base. Navarra has no
+    ///   dividend exemption, so the subtraction is a no-op there and exists for the rule's sake.
+    ///
+    /// A regime with no ceiling leaves everything untouched. What the ceiling disallows is reported
+    /// as its own figure rather than folded into the informational fees, which are a different
+    /// thing: those were never deductible, this was, up to a limit.
+    fn apply_custody_fee_cap(&mut self) {
+        let Some(fraction) = self.custody_fee_cap_fraction else {
+            return;
+        };
+
+        let base = std::cmp::max(
+            Decimal::ZERO,
+            self.total_dividend_income - self.total_dividend_exemption,
+        );
+        let cap = base * fraction;
+
+        self.custody_fee_cap = Some(cap);
+        if self.total_deductible_fees > cap {
+            self.total_capped_fees = self.total_deductible_fees - cap;
+            self.total_deductible_fees = cap;
+        }
+    }
+
+    /// The sentence every surface reports a binding fee ceiling with, so the console, the log and
+    /// the CSV cannot drift apart. `None` when the ceiling did not bite.
+    pub fn custody_fee_cap_message(&self) -> Option<String> {
+        if self.total_capped_fees <= Decimal::ZERO {
+            return None;
+        }
+
+        Some(format!(
+            "€{} of otherwise deductible custody and administration fees was NOT deducted: \
+             TRLFIRPF art. 32.1.a caps them at 3% of the non-exempt gross income from the \
+             securities, which is €{} here, and the year's qualifying fees came to €{}. The \
+             ceiling is measured on dividend income; interest credited on a cash balance is not \
+             income from a valor negociable and does not raise it. See the open-interpretations \
+             register in docs/spain-taxes.md.",
+            super::format_eur(self.total_capped_fees),
+            super::format_eur(self.custody_fee_cap.unwrap_or_default()),
+            super::format_eur(self.total_deductible_fees + self.total_capped_fees)
+        ))
+    }
+
+    /// The sentence every surface reports non-deductible margin interest with, so the console, the
+    /// log and the CSV cannot drift apart. `None` when the year paid none.
+    ///
+    /// All three articles are closed lists that reach administration and custody of negotiable
+    /// securities at most, so a financing cost is deductible under none of them.
+    pub fn margin_interest_message(&self) -> Option<String> {
+        if self.total_paid_interest <= Decimal::ZERO {
+            return None;
+        }
+
+        Some(format!(
+            "€{} of broker interest paid on a borrowed (margin) balance is reported but NOT \
+             deducted from the savings base: none of LIRPF art. 26.1.a, TRLFIRPF art. 32.1.a and NF \
+             3/2014 art. 39 allows a financing cost against rendimientos del capital mobiliario.",
+            super::format_eur(self.total_paid_interest)
+        ))
+    }
+
+    /// Prior-year RCM balances this year applied **within their own group** — Fase 2ª-1º under the
+    /// state order, TRLFIRPF art. 54.2.a's own-group absorption under Navarra.
+    ///
+    /// `rcm_applied.used_total` is the whole ledger consumption and already contains what crossed
+    /// into the ganancias group (Fase 2ª-2º under the state order, art. 54.2's "en el mismo orden"
+    /// under Navarra), which `prior_cross_offset_rcm_to_gyp` reports on its own.
     /// Reporting both in full prints the crossed amount twice, and a filer transcribing the two
     /// rows claims it twice. The rows are therefore disjoint, and their sum is the consumption.
     pub fn rcm_own_group_losses_applied(&self) -> Decimal {
@@ -593,6 +869,44 @@ impl SpanishTaxStatement {
     /// The ganancias mirror of [`Self::rcm_own_group_losses_applied`].
     pub fn gyp_own_group_losses_applied(&self) -> Decimal {
         self.gyp_applied.used_total - self.prior_cross_offset_gyp_to_rcm
+    }
+
+    /// Prior-year saldos this year crossed into the other savings-base group.
+    pub fn prior_cross_offset(&self) -> Decimal {
+        self.prior_cross_offset_rcm_to_gyp + self.prior_cross_offset_gyp_to_rcm
+    }
+
+    /// The sentence every surface reports the Navarra carried-saldo cross with, so the console, the
+    /// log and the CSV cannot drift apart. `None` when nothing turned on the open reading.
+    ///
+    /// TRLFIRPF art. 54.2 opens its 25% cross-offset for a negative *current-year* result. The
+    /// carry sentence sends what is left into the following four years "en el mismo orden
+    /// establecido en los párrafos anteriores", which the tool reads as repeating that cross for a
+    /// carried saldo too. Nothing published by the Hacienda Foral de Navarra settles the point, and
+    /// the amount below is exactly what the reading is responsible for: on the narrow one it would
+    /// stay pending and the savings base would be that much higher.
+    pub fn carried_cross_offset_message(&self) -> Option<String> {
+        if self.cross_offset != CrossOffset::NavarraOrdered {
+            return None;
+        }
+
+        let crossed = self.prior_cross_offset();
+        if crossed <= Decimal::ZERO {
+            return None;
+        }
+
+        Some(format!(
+            "€{} of prior-year negative savings-base saldos was set against the other group under \
+             TRLFIRPF art. 54.2. The article opens that 25% cross-offset for a negative \
+             current-year result; the tool reads the four-year carry rule's \"en el mismo orden \
+             establecido en los párrafos anteriores\" as repeating it for a saldo carried in from an \
+             earlier year, which is what allowed this amount. No Hacienda Foral de Navarra manual or \
+             consulta settles the point. On the narrower reading the amount would stay pending and \
+             the savings base would be €{} higher. See the open-interpretations register in \
+             docs/spain-taxes.md.",
+            super::format_eur(crossed),
+            super::format_eur(crossed)
+        ))
     }
 
     /// The credit's first limb, summed payment by payment.
@@ -697,9 +1011,11 @@ mod tests {
             SavingsScale::for_year(regime, 2026).unwrap(),
             LossLedger::default(),
             LossLedger::default(),
-            Decimal::ZERO,
+            CrossOffset::None,
             dec!(0.15),
             Decimal::ZERO,
+            None,
+            false,
         )
     }
 
@@ -814,9 +1130,11 @@ mod tests {
             SavingsScale::for_year(regime, 2026).unwrap(),
             prior_rcm,
             LossLedger::default(),
-            dec!(0.25),
+            CrossOffset::AeatTwoPhase,
             dec!(0.15),
             Decimal::ZERO,
+            None,
+            false,
         );
 
         spain.dividends.push(DividendEntry {
@@ -848,9 +1166,11 @@ mod tests {
         assert_eq!(spain.net_tax_due, dec!(1455));
     }
 
-    /// Interest paid on a margin loan is reported but never netted off the interest received:
-    /// neither statute allows an expense against securities income beyond LIRPF art. 26.1.a's
-    /// administration and custody, so the RCM result is the credit interest alone.
+    /// Interest paid on a margin loan is reported but never netted off the interest received: none
+    /// of the three statutes allows an expense against securities income beyond the administration
+    /// and custody of LIRPF art. 26.1.a, TRLFIRPF art. 32.1.a and NF 3/2014 art. 39, so the RCM
+    /// result is the credit interest alone. The console, the log and the CSV all report it through
+    /// [`SpanishTaxStatement::margin_interest_message`], so none of them can name fewer.
     #[test]
     fn paid_interest_is_reported_outside_the_rcm_result() {
         let mut spain = statement();
@@ -873,6 +1193,28 @@ mod tests {
         assert_eq!(spain.total_interest_income, dec!(90));
         assert_eq!(spain.total_paid_interest, dec!(225));
         assert_eq!(spain.rcm_net, dec!(90));
+
+        let message = spain.margin_interest_message().unwrap();
+        assert!(message.contains("€225.00"), "{message}");
+        for article in ["LIRPF art. 26.1.a", "TRLFIRPF art. 32.1.a", "NF 3/2014 art. 39"] {
+            assert!(message.contains(article), "{message}");
+        }
+    }
+
+    /// A year that paid no margin interest says nothing about it on any surface.
+    #[test]
+    fn a_year_without_margin_interest_reports_nothing() {
+        let mut spain = statement();
+        spain.interest.push(InterestEntry {
+            date: Date::from_ymd_opt(2026, 6, 30).unwrap(),
+            description: "Broker interest".to_string(),
+            gross_eur: dec!(90),
+            taxable: true,
+            notes: None,
+        });
+        spain.calculate_totals();
+
+        assert!(spain.margin_interest_message().is_none());
     }
 
     /// A reversed dividend can leave the exemption-eligible pool net-negative. An exemption is
@@ -887,9 +1229,11 @@ mod tests {
             SavingsScale::for_year(regime, 2026).unwrap(),
             LossLedger::default(),
             LossLedger::default(),
-            Decimal::ZERO,
+            CrossOffset::None,
             dec!(0.15),
             dec!(1500),
+            None,
+            false,
         );
 
         spain.dividends.push(dividend(dec!(300), dec!(45), true));

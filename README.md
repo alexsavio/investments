@@ -11,7 +11,7 @@ Helps you with managing your investments:
 * **Automatic tax statement generation:** reads broker statements and generates tax reports:
   * **Russia:** Alters *.deX file (created by Russian tax program named Декларация) by adding all required information about income from stock selling, paid dividends and idle cash interest.
   * **Germany:** Generates CSV tax reports with Abgeltungssteuer, Solidaritätszuschlag, Kirchensteuer calculations, Teilfreistellung for ETFs, and foreign tax credits. See [Germany tax documentation](docs/germany-taxes.md).
-  * **Spain:** Generates CSV tax reports for the IRPF savings base under the Gipuzkoa foral regime (Norma Foral 3/2014) or Territorio Común (LIRPF), with per-lot actualization coefficients, the valores-homogéneos deferral rule, four-year loss compensation, and the double-taxation credit. See [Spain tax documentation](docs/spain-taxes.md).
+  * **Spain:** Generates CSV tax reports for the IRPF savings base under the Gipuzkoa foral regime (Norma Foral 3/2014), Territorio Común (LIRPF) or Navarra (Decreto Foral Legislativo 4/2008), with per-lot actualization coefficients, the valores-homogéneos deferral rule, four-year loss compensation, the double-taxation credit, and Navarra's own compensation order, 3% fee ceiling and €3,000 small-disposals exemption. See [Spain tax documentation](docs/spain-taxes.md).
 * **Bank deposits control:** view opened bank deposits all in one place and get notified about upcoming deposit closures.
 * **Metrics:** exports analysis results in Prometheus format.
 

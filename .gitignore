@@ -3,3 +3,5 @@
 /config.yaml
 # Generated German tax statement CSVs contain real personal trading data.
 /german-tax-*.csv
+# Git worktrees created by coding agents; never part of the tree itself.
+.claude/worktrees/

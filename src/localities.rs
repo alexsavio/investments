@@ -372,6 +372,8 @@ mod tests {
 
         assert_eq!(tax(SpanishTaxRegime::Gipuzkoa), dec!(1925));
         assert_eq!(tax(SpanishTaxRegime::Comun), dec!(1980));
+        // TRLFIRPF art. 60: 6,000×20% + 4,000×22%, the statute's own cuota at €10,000.
+        assert_eq!(tax(SpanishTaxRegime::Navarra), dec!(2080));
         // No `taxes.spain` block: the analysis views still get a rate (Gipuzkoa default) rather
         // than failing. The filing path errors instead of guessing.
         assert_eq!(

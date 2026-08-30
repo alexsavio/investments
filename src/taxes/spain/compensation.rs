@@ -1,10 +1,35 @@
-//! Integration and compensation of the savings base (NF 3/2014 / LIRPF art. 49).
+//! Integration and compensation of the savings base (NF 3/2014 / LIRPF art. 49 / TRLFIRPF art. 54).
 
 use log::warn;
 
 use crate::types::Decimal;
 
 use super::carryforward::{CARRYFORWARD_YEARS, LedgerApplication, LossLedger};
+
+/// How far, and in what order, a negative savings-base balance may reach the other group.
+///
+/// A mode rather than a fraction: Navarra also stops at 25%, but measures it on a different figure
+/// and applies it at a different point in the order, so the two cannot share one number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrossOffset {
+    /// Gipuzkoa: the groups integrate "exclusivamente entre sí" and never touch (Manual de Renta
+    /// cap. 9).
+    None,
+    /// Territorio Común: LIRPF art. 49.1, in the AEAT Manual Práctico de Renta cap. 12 order.
+    AeatTwoPhase,
+    /// Navarra: TRLFIRPF art. 54.2, own-group carryforwards first, then 25% of what that leaves.
+    NavarraOrdered,
+}
+
+impl CrossOffset {
+    /// Fraction of the other group's positive balance a negative one may offset.
+    fn fraction(self) -> Decimal {
+        match self {
+            CrossOffset::None => Decimal::ZERO,
+            CrossOffset::AeatTwoPhase | CrossOffset::NavarraOrdered => dec!(0.25),
+        }
+    }
+}
 
 /// What compensation did to a year's two savings-base groups.
 #[derive(Clone, Debug)]
@@ -18,12 +43,14 @@ pub struct CompensationResult {
     pub rcm_applied: LedgerApplication,
     pub gyp_applied: LedgerApplication,
 
-    /// Fase 1ª: current-year negative of one group set against the other's positive (Común only).
+    /// Current-year negative of one group set against the other's positive. Zero under Gipuzkoa;
+    /// the AEAT Fase 1ª under Común, and art. 54.2's own cross under Navarra.
     pub cross_offset_rcm_to_gyp: Decimal,
     pub cross_offset_gyp_to_rcm: Decimal,
 
-    /// Fase 2ª-2º: prior-year balance of one group its own group could not absorb, set against the
-    /// other's remaining positive (Común only).
+    /// Prior-year balance of one group its own group could not absorb, set against the other's
+    /// remaining positive. Zero under Gipuzkoa; the AEAT Fase 2ª-2º under Común, and under Navarra
+    /// the part of the cross that only the broad reading of art. 54.2 allows.
     pub prior_cross_offset_rcm_to_gyp: Decimal,
     pub prior_cross_offset_gyp_to_rcm: Decimal,
 
@@ -38,10 +65,32 @@ pub struct CompensationResult {
 
 /// Compensate one year's savings-base groups against each other and against prior-year balances.
 ///
-/// `cross_offset_fraction` is 0 under Gipuzkoa, where the groups are integrated "exclusivamente
-/// entre sí" and never touch (Gipuzkoa Manual de Renta cap. 9), and 0.25 under Territorio Común.
-///
-/// The Común order follows the AEAT Manual Práctico de Renta cap. 12 (LIRPF art. 49):
+/// Two orderings, because the statutes disagree about more than the size of the cross: see
+/// [`aeat_order`] and [`navarra_order`]. Under [`CrossOffset::None`] the groups never touch, so the
+/// AEAT arm degenerates to the own-group steps alone.
+pub fn compensate_savings_base(
+    filing_year: i32,
+    rcm_net: Decimal,
+    gyp_net: Decimal,
+    rcm_ledger: LossLedger,
+    gyp_ledger: LossLedger,
+    cross_offset: CrossOffset,
+) -> CompensationResult {
+    let arm = match cross_offset {
+        CrossOffset::None | CrossOffset::AeatTwoPhase => aeat_order,
+        CrossOffset::NavarraOrdered => navarra_order,
+    };
+    arm(
+        filing_year,
+        rcm_net,
+        gyp_net,
+        rcm_ledger,
+        gyp_ledger,
+        cross_offset.fraction(),
+    )
+}
+
+/// Gipuzkoa and Territorio Común: the AEAT Manual Práctico de Renta cap. 12 order (LIRPF art. 49).
 ///
 /// 1. **Fase 1ª** — the year's own results meet each other: a current-year negative reduces the
 ///    other group's current-year positive.
@@ -52,8 +101,18 @@ pub struct CompensationResult {
 ///
 /// The 25% limit is one allowance per group, measured on that group's **original** current-year
 /// positive and consumed across steps 1 and 3 together. That is what makes the manual's own example
-/// come out at a base of 200 rather than 0 or 300.
-pub fn compensate_savings_base(
+/// come out at a base of 200 rather than 0 or 300. A `fraction` of zero is Gipuzkoa, where the
+/// groups integrate "exclusivamente entre sí" and steps 1 and 3 do nothing.
+/// The magnitude of a negative result, or zero.
+///
+/// Spelled out rather than `max(zero, -net)`: negating a zero yields `rust_decimal`'s signed
+/// negative zero, which compares equal to zero, so `max` hands it back and it survives every later
+/// `min` into the emitted summary row, where the filer reads `-0.00` on their own return.
+fn negative_part(net: Decimal) -> Decimal {
+    if net < Decimal::ZERO { -net } else { Decimal::ZERO }
+}
+
+fn aeat_order(
     filing_year: i32,
     rcm_net: Decimal,
     gyp_net: Decimal,
@@ -65,8 +124,8 @@ pub fn compensate_savings_base(
 
     let rcm_positive = std::cmp::max(zero, rcm_net);
     let gyp_positive = std::cmp::max(zero, gyp_net);
-    let mut rcm_negative = std::cmp::max(zero, -rcm_net);
-    let mut gyp_negative = std::cmp::max(zero, -gyp_net);
+    let mut rcm_negative = negative_part(rcm_net);
+    let mut gyp_negative = negative_part(gyp_net);
 
     // One allowance per group, on the original positive.
     let mut rcm_allowance = rcm_positive * cross_offset_fraction;
@@ -114,29 +173,11 @@ pub fn compensate_savings_base(
         gyp_applied.merge(crossed);
     }
 
-    // Whatever negative remains is this year's pending balance, labelled with this year so
-    // its own four-year window starts now.
-    rcm_ledger.add(filing_year, rcm_negative);
-    gyp_ledger.add(filing_year, gyp_negative);
-
-    // A balance whose fourth year this was can never be used again. Dropping it silently would
-    // leave the user carrying a figure the tax office will not accept.
-    let rcm_expired = rcm_ledger.expiring_after(filing_year);
-    let gyp_expired = gyp_ledger.expiring_after(filing_year);
-    let expired_origin = filing_year - CARRYFORWARD_YEARS;
-
-    for (group, expired) in [("RCM", rcm_expired), ("ganancias", gyp_expired)] {
-        if expired > zero {
-            warn!(
-                "€{expired} of pending {group} losses from {expired_origin} expired unused: a \
-                 negative savings-base balance may be offset only in the {CARRYFORWARD_YEARS} \
-                 following years, and {filing_year} was the last."
-            );
-        }
-    }
-
-    rcm_ledger.drop_expired(filing_year);
-    gyp_ledger.drop_expired(filing_year);
+    let (rcm_expired, gyp_expired) = carry_forward_and_expire(
+        filing_year,
+        (&mut rcm_ledger, rcm_negative),
+        (&mut gyp_ledger, gyp_negative),
+    );
 
     CompensationResult {
         rcm_taxable,
@@ -155,6 +196,134 @@ pub fn compensate_savings_base(
     }
 }
 
+/// Navarra: TRLFIRPF art. 54.2, which runs the same three moves in a different order and measures
+/// the 25% on a different figure.
+///
+/// Per letter, independently first: sum the year's own items; **only if that result is positive**,
+/// absorb the group's own prior-year saldos oldest first, floored at zero ("sin que en ningún caso
+/// el resultado de esta compensación pueda ser negativo"). A group whose result is negative leaves
+/// its own saldos untouched — the statute opens the absorption branch for a positive result only.
+///
+/// Then the cross: "si el resultado fuese negativo, su importe se compensará con el saldo positivo
+/// resultante de la letra b) de este apartado, con el límite del 25 por 100 de dicho saldo
+/// positivo". The figure the quarter is measured on is the other letter's **result**, i.e. what it
+/// arrived at after absorbing its own carryforwards — not its raw positive, which is what the AEAT
+/// order uses.
+///
+/// What is left carries four years "en el mismo orden establecido en los párrafos anteriores". The
+/// cross branch is worded for a negative *result*, so on the narrow reading only a current-year
+/// negative ever crosses; "el mismo orden" is read here as repeating the whole order for a carried
+/// saldo, which may therefore cross too. No Hacienda Foral de Navarra manual or consulta settles
+/// the point, so the current year's own negative is served first and whatever a carried saldo takes
+/// of the remaining allowance is reported separately, which is what the warning is built from.
+fn navarra_order(
+    filing_year: i32,
+    rcm_net: Decimal,
+    gyp_net: Decimal,
+    mut rcm_ledger: LossLedger,
+    mut gyp_ledger: LossLedger,
+    cross_offset_fraction: Decimal,
+) -> CompensationResult {
+    let zero = Decimal::ZERO;
+
+    let mut rcm_taxable = std::cmp::max(zero, rcm_net);
+    let mut gyp_taxable = std::cmp::max(zero, gyp_net);
+    let mut rcm_negative = negative_part(rcm_net);
+    let mut gyp_negative = negative_part(gyp_net);
+
+    // Own-group absorption. A negative result offers a budget of zero, so `apply` leaves that
+    // group's saldos alone without needing a sign test of its own.
+    let mut rcm_applied = rcm_ledger.apply(rcm_taxable, None);
+    let mut gyp_applied = gyp_ledger.apply(gyp_taxable, None);
+    rcm_taxable -= rcm_applied.used_total;
+    gyp_taxable -= gyp_applied.used_total;
+
+    // One allowance per group, measured on what the other letter arrived at.
+    let mut rcm_allowance = rcm_taxable * cross_offset_fraction;
+    let mut gyp_allowance = gyp_taxable * cross_offset_fraction;
+
+    // Only one direction can apply: a group is either positive or negative, never both.
+    let cross_offset_rcm_to_gyp = rcm_negative.min(gyp_taxable).min(gyp_allowance);
+    gyp_taxable -= cross_offset_rcm_to_gyp;
+    gyp_allowance -= cross_offset_rcm_to_gyp;
+    rcm_negative -= cross_offset_rcm_to_gyp;
+
+    let cross_offset_gyp_to_rcm = gyp_negative.min(rcm_taxable).min(rcm_allowance);
+    rcm_taxable -= cross_offset_gyp_to_rcm;
+    rcm_allowance -= cross_offset_gyp_to_rcm;
+    gyp_negative -= cross_offset_gyp_to_rcm;
+
+    // The carried saldos take what the current year left of the same allowance.
+    let crossed = rcm_ledger.apply(gyp_taxable, Some(gyp_allowance));
+    let prior_cross_offset_rcm_to_gyp = crossed.used_total;
+    gyp_taxable -= crossed.used_total;
+    rcm_applied.merge(crossed);
+
+    let crossed = gyp_ledger.apply(rcm_taxable, Some(rcm_allowance));
+    let prior_cross_offset_gyp_to_rcm = crossed.used_total;
+    rcm_taxable -= crossed.used_total;
+    gyp_applied.merge(crossed);
+
+    let (rcm_expired, gyp_expired) = carry_forward_and_expire(
+        filing_year,
+        (&mut rcm_ledger, rcm_negative),
+        (&mut gyp_ledger, gyp_negative),
+    );
+
+    CompensationResult {
+        rcm_taxable,
+        gyp_taxable,
+        savings_base: rcm_taxable + gyp_taxable,
+        rcm_applied,
+        gyp_applied,
+        cross_offset_rcm_to_gyp,
+        cross_offset_gyp_to_rcm,
+        prior_cross_offset_rcm_to_gyp,
+        prior_cross_offset_gyp_to_rcm,
+        rcm_ledger_next: rcm_ledger,
+        gyp_ledger_next: gyp_ledger,
+        rcm_expired,
+        gyp_expired,
+    }
+}
+
+/// Book each group's unabsorbed negative as a pending balance of this year, then report and drop
+/// whatever reached the end of its four-year window.
+///
+/// A balance whose fourth year this was can never be used again. Dropping it silently would leave
+/// the user carrying a figure the tax office will not accept.
+fn carry_forward_and_expire(
+    filing_year: i32,
+    rcm: (&mut LossLedger, Decimal),
+    gyp: (&mut LossLedger, Decimal),
+) -> (Decimal, Decimal) {
+    let (rcm_ledger, rcm_negative) = rcm;
+    let (gyp_ledger, gyp_negative) = gyp;
+
+    // Labelled with this year so its own four-year window starts now.
+    rcm_ledger.add(filing_year, rcm_negative);
+    gyp_ledger.add(filing_year, gyp_negative);
+
+    let rcm_expired = rcm_ledger.expiring_after(filing_year);
+    let gyp_expired = gyp_ledger.expiring_after(filing_year);
+    let expired_origin = filing_year - CARRYFORWARD_YEARS;
+
+    for (group, expired) in [("RCM", rcm_expired), ("ganancias", gyp_expired)] {
+        if expired > Decimal::ZERO {
+            warn!(
+                "€{expired} of pending {group} losses from {expired_origin} expired unused: a \
+                 negative savings-base balance may be offset only in the {CARRYFORWARD_YEARS} \
+                 following years, and {filing_year} was the last."
+            );
+        }
+    }
+
+    rcm_ledger.drop_expired(filing_year);
+    gyp_ledger.drop_expired(filing_year);
+
+    (rcm_expired, gyp_expired)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -163,11 +332,9 @@ mod tests {
 
     use super::*;
 
-    const GIPUZKOA: Decimal = Decimal::ZERO;
-
-    fn comun() -> Decimal {
-        dec!(0.25)
-    }
+    const GIPUZKOA: CrossOffset = CrossOffset::None;
+    const COMUN: CrossOffset = CrossOffset::AeatTwoPhase;
+    const NAVARRA: CrossOffset = CrossOffset::NavarraOrdered;
 
     fn ledger(entries: &[(i32, &str)], filing_year: i32) -> LossLedger {
         let map: BTreeMap<i32, Decimal> = entries
@@ -273,7 +440,7 @@ mod tests {
             dec!(4000),
             ledger(&[(2024, "500")], 2026),
             ledger(&[(2024, "2800")], 2026),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_rcm_to_gyp, dec!(800));
@@ -306,7 +473,7 @@ mod tests {
             dec!(6000),
             LossLedger::default(),
             ledger(&[(2024, "4000")], 2026),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_rcm_to_gyp, dec!(1500));
@@ -328,7 +495,7 @@ mod tests {
             gyp,
             LossLedger::default(),
             LossLedger::default(),
-            comun(),
+            COMUN,
         );
 
         assert!(
@@ -377,7 +544,7 @@ mod tests {
             dec!(6000),
             LossLedger::default(),
             LossLedger::default(),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_rcm_to_gyp, dec!(1500));
@@ -395,7 +562,7 @@ mod tests {
             dec!(-2000),
             LossLedger::default(),
             LossLedger::default(),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_gyp_to_rcm, dec!(1500));
@@ -412,7 +579,7 @@ mod tests {
             dec!(6000),
             LossLedger::default(),
             LossLedger::default(),
-            comun(),
+            COMUN,
         );
 
         assert_eq!(result.cross_offset_rcm_to_gyp, dec!(100));
@@ -454,5 +621,180 @@ mod tests {
 
         assert_eq!(result.gyp_expired, dec!(0));
         assert_eq!(result.gyp_ledger_next.balances()[&2023], dec!(5000));
+    }
+
+    /// The acceptance test for the third ordering: one set of inputs, three different answers.
+    ///
+    /// Current RCM −800, current ganancias +4,000, prior-year RCM saldo 500, prior-year ganancias
+    /// saldo 2,800 — the AEAT manual's own numbers, so the Común answer is already pinned.
+    ///
+    /// Under TRLFIRPF art. 54.2 the letters run independently first: the RCM result is negative, so
+    /// its own 500 is untouched, while the ganancias +4,000 absorbs its own 2,800 and arrives at
+    /// 1,200. Only then does the RCM negative cross, and "el saldo positivo resultante de la letra
+    /// b)" it is capped at a quarter of is that 1,200, not the original 4,000 — so 300 crosses and
+    /// the base is 900.
+    #[test]
+    fn navarra_runs_own_group_carryforwards_before_the_cross() {
+        let result = compensate_savings_base(
+            2026,
+            dec!(-800),
+            dec!(4000),
+            ledger(&[(2024, "500")], 2026),
+            ledger(&[(2024, "2800")], 2026),
+            NAVARRA,
+        );
+
+        assert_eq!(result.gyp_applied.used_total, dec!(2800));
+        assert_eq!(result.cross_offset_rcm_to_gyp, dec!(300));
+        assert_eq!(result.prior_cross_offset_rcm_to_gyp, dec!(0));
+        // The prior RCM saldo was never touched: its own group's result was negative.
+        assert_eq!(result.rcm_applied.used_total, dec!(0));
+
+        assert_eq!(result.rcm_taxable, dec!(0));
+        assert_eq!(result.gyp_taxable, dec!(900));
+        assert_eq!(result.savings_base, dec!(900));
+
+        // The 2024 vintage survives intact alongside this year's unabsorbed 500.
+        assert_eq!(result.rcm_ledger_next.balances()[&2024], dec!(500));
+        assert_eq!(result.rcm_ledger_next.balances()[&2026], dec!(500));
+        assert!(result.gyp_ledger_next.is_empty());
+    }
+
+    /// The same inputs under the other two regimes, so the three answers are asserted side by side
+    /// rather than each in isolation: Gipuzkoa 1,200, Común 200, Navarra 900.
+    #[test]
+    fn the_three_orderings_disagree_on_one_set_of_inputs() {
+        let base = |mode| {
+            compensate_savings_base(
+                2026,
+                dec!(-800),
+                dec!(4000),
+                ledger(&[(2024, "500")], 2026),
+                ledger(&[(2024, "2800")], 2026),
+                mode,
+            )
+            .savings_base
+        };
+
+        assert_eq!(base(GIPUZKOA), dec!(1200));
+        assert_eq!(base(COMUN), dec!(200));
+        assert_eq!(base(NAVARRA), dec!(900));
+    }
+
+    /// A carried saldo crosses when the current year's own negative did not use up the allowance.
+    ///
+    /// Current RCM +500 absorbs 500 of its own 2,000 prior-year saldo and arrives at 0, leaving
+    /// 1,500 pending; ganancias +4,000 has nothing of its own to absorb. Nothing crosses under the
+    /// narrow reading of art. 54.2 — the cross branch opens for a negative *result*, and this
+    /// year's RCM result was positive — but the carry sentence repeats "el mismo orden" for the
+    /// pending saldo, which the tool follows: 25% × 4,000 = 1,000 crosses and the base is 3,000
+    /// rather than 4,000.
+    #[test]
+    fn navarra_lets_a_carried_saldo_cross_within_the_remaining_allowance() {
+        let result = compensate_savings_base(
+            2026,
+            dec!(500),
+            dec!(4000),
+            ledger(&[(2024, "2000")], 2026),
+            LossLedger::default(),
+            NAVARRA,
+        );
+
+        assert_eq!(result.cross_offset_rcm_to_gyp, dec!(0));
+        assert_eq!(result.prior_cross_offset_rcm_to_gyp, dec!(1000));
+        // 500 against its own group plus the 1,000 that crossed.
+        assert_eq!(result.rcm_applied.used_total, dec!(1500));
+        assert_eq!(result.savings_base, dec!(3000));
+        assert_eq!(result.rcm_ledger_next.balances()[&2024], dec!(500));
+    }
+
+    /// The current year's own negative has first call on the allowance, so a carried saldo only
+    /// ever crosses with what is left of it. That is what keeps the reported figure — and the
+    /// warning built from it — equal to the amount the broad reading is actually responsible for.
+    #[test]
+    fn the_current_year_negative_has_first_call_on_the_navarra_allowance() {
+        let result = compensate_savings_base(
+            2026,
+            dec!(-2000),
+            dec!(4000),
+            ledger(&[(2024, "5000")], 2026),
+            LossLedger::default(),
+            NAVARRA,
+        );
+
+        // 25% × 4,000 = 1,000, all of it taken by this year's own −2,000.
+        assert_eq!(result.cross_offset_rcm_to_gyp, dec!(1000));
+        assert_eq!(result.prior_cross_offset_rcm_to_gyp, dec!(0));
+        assert_eq!(result.savings_base, dec!(3000));
+        assert_eq!(result.rcm_ledger_next.balances()[&2024], dec!(5000));
+        assert_eq!(result.rcm_ledger_next.balances()[&2026], dec!(1000));
+    }
+
+    /// With no prior-year balances the two orderings have nothing to disagree about: step 2 does
+    /// nothing, so Navarra and Común must produce the same base to the cent. Asserting this stops
+    /// "Navarra differs" from being claimed where it must not.
+    #[rstest]
+    #[case(dec!(-2000), dec!(6000))]
+    #[case(dec!(6000), dec!(-2000))]
+    #[case(dec!(7200), dec!(-9000))]
+    #[case(dec!(-3600), dec!(9000))]
+    fn navarra_matches_comun_when_there_are_no_carryforwards(
+        #[case] rcm: Decimal,
+        #[case] gyp: Decimal,
+    ) {
+        let run = |mode| {
+            compensate_savings_base(2026, rcm, gyp, LossLedger::default(), LossLedger::default(), mode)
+        };
+
+        let navarra = run(NAVARRA);
+        let comun = run(COMUN);
+
+        assert_eq!(navarra.savings_base, comun.savings_base);
+        assert_eq!(navarra.rcm_taxable, comun.rcm_taxable);
+        assert_eq!(navarra.gyp_taxable, comun.gyp_taxable);
+        assert_eq!(navarra.cross_offset_rcm_to_gyp, comun.cross_offset_rcm_to_gyp);
+        assert_eq!(navarra.cross_offset_gyp_to_rcm, comun.cross_offset_gyp_to_rcm);
+    }
+
+    /// The ganancias → RCM direction of the Navarra order, so the arm is not written once and
+    /// mirrored by accident.
+    #[test]
+    fn the_navarra_cross_works_from_ganancias_to_rcm_too() {
+        let result = compensate_savings_base(
+            2026,
+            dec!(4000),
+            dec!(-800),
+            ledger(&[(2024, "2800")], 2026),
+            ledger(&[(2024, "500")], 2026),
+            NAVARRA,
+        );
+
+        assert_eq!(result.rcm_applied.used_total, dec!(2800));
+        assert_eq!(result.cross_offset_gyp_to_rcm, dec!(300));
+        assert_eq!(result.savings_base, dec!(900));
+        assert_eq!(result.gyp_ledger_next.balances()[&2024], dec!(500));
+        assert_eq!(result.gyp_ledger_next.balances()[&2026], dec!(500));
+    }
+
+    /// A group that nets to exactly zero must not print its cross-offset as a negative zero: the
+    /// row reaches a return the filer hands to the tax office, where "-0.00" reads as an error.
+    #[rstest]
+    #[case::comun(COMUN)]
+    #[case::navarra(NAVARRA)]
+    #[case::gipuzkoa(CrossOffset::None)]
+    fn a_zero_group_crosses_a_positive_zero(#[case] cross_offset: CrossOffset) {
+        let result = compensate_savings_base(
+            2026,
+            Decimal::ZERO,
+            dec!(1000),
+            LossLedger::default(),
+            LossLedger::default(),
+            cross_offset,
+        );
+
+        for crossed in [result.cross_offset_rcm_to_gyp, result.cross_offset_gyp_to_rcm] {
+            assert_eq!(crossed, Decimal::ZERO);
+            assert!(!crossed.is_sign_negative(), "negative zero reached a filer-facing row");
+        }
     }
 }

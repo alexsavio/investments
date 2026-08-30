@@ -210,6 +210,19 @@ fn generate_spanish_tax_statement(
         "Net ganancias y pérdidas: €{}",
         eur::format_eur(statement.gyp_net)
     );
+    if statement.small_disposals_exemption > Decimal::ZERO {
+        println!(
+            "Exención de transmisiones hasta 3.000 € (art. 39.5.d): €{}",
+            eur::format_eur(statement.small_disposals_exemption)
+        );
+    }
+    if statement.total_capped_fees > Decimal::ZERO {
+        println!(
+            "Gastos de administración y depósito: €{} deducidos, €{} excluidos por el límite del 3%",
+            eur::format_eur(statement.total_deductible_fees),
+            eur::format_eur(statement.total_capped_fees)
+        );
+    }
     println!(
         "Base liquidable del ahorro: €{}",
         eur::format_eur(statement.savings_base)
@@ -320,6 +333,22 @@ fn generate_spanish_tax_statement(
         println!("{}", Color::Yellow.paint(format!("WARNING: {}", review.message())));
     }
 
+    if let Some(message) = statement.abatement_message() {
+        println!("{}", Color::Yellow.paint(format!("WARNING: {message}")));
+    }
+
+    if let Some(message) = statement.small_disposals_message() {
+        println!("{}", Color::Yellow.paint(format!("WARNING: {message}")));
+    }
+
+    if let Some(message) = statement.custody_fee_cap_message() {
+        println!("{}", Color::Yellow.paint(format!("WARNING: {message}")));
+    }
+
+    if let Some(message) = statement.carried_cross_offset_message() {
+        println!("{}", Color::Yellow.paint(format!("WARNING: {message}")));
+    }
+
     for review in &statement.wash_sale_venue_reviews {
         println!(
             "{}",
@@ -327,7 +356,8 @@ fn generate_spanish_tax_statement(
                 "WARNING: the {} loss of {} is deducted in full, but that turns on which \
                  valores-homogéneos window {} takes: homogeneous securities were bought back inside \
                  the year and outside the two months, so the one-year limb (NF 3/2014 art. 43.h / \
-                 LIRPF art. 33.5.g) would defer €{} of it. DGT V0778-25 and V0951-25 settle the \
+                 LIRPF art. 33.5.g / TRLFIRPF art. 39.6.g) would defer €{} of it. DGT V0778-25 and \
+                 V0951-25 settle the \
                  two-month limb only for venues covered by an in-force MiFID II equivalence \
                  decision. See the open-interpretations register in docs/spain-taxes.md.",
                 review.symbol,
@@ -392,16 +422,8 @@ fn generate_spanish_tax_statement(
         );
     }
 
-    if statement.total_paid_interest > Decimal::ZERO {
-        println!(
-            "{}",
-            Color::Yellow.paint(format!(
-                "€{} of broker interest paid on a borrowed (margin) balance is reported but NOT \
-                 deducted: neither LIRPF art. 26.1.a nor NF 3/2014 art. 39 allows a financing cost \
-                 against rendimientos del capital mobiliario.",
-                eur::format_eur(statement.total_paid_interest)
-            ))
-        );
+    if let Some(message) = statement.margin_interest_message() {
+        println!("{}", Color::Yellow.paint(message));
     }
 
     for fee in &statement.fees {
