@@ -66,7 +66,6 @@ pub use self::trades::{ForexTrade, StockBuy, StockSource, StockSell, StockSellTy
 pub struct BrokerStatement {
     pub broker: BrokerInfo,
     pub period: Period,
-    // Broker account id when the statements carry one (informational, used in reports)
     pub account_id: Option<String>,
 
     pub assets: NetAssets,

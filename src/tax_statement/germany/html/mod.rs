@@ -33,9 +33,7 @@ pub struct ReportMeta {
     pub broker_name: String,
     /// Portfolio name from the config, shown as the Depot.
     pub portfolio_name: String,
-    /// Broker account id when the statement carries one.
     pub account_id: Option<String>,
-    /// Period the broker statement covers.
     pub period: Period,
     pub generated_at: DateTime,
 }
@@ -131,7 +129,6 @@ const SECTIONS: &[Section] = &[
     },
 ];
 
-/// Render the whole document.
 pub(super) fn render(statement: &GermanTaxStatement, meta: &ReportMeta) -> String {
     let mut body = String::new();
     let mut toc = Vec::new();
