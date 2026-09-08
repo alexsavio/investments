@@ -12,7 +12,6 @@
 
 use std::path::{Path, PathBuf};
 
-/// A directory of golden files, plus the command that rewrites them.
 pub(crate) struct GoldenCorpus {
     dir: PathBuf,
     regenerate: &'static str,

@@ -23,7 +23,6 @@ pub struct ReportMeta {
     pub year: i32,
     /// Broker display name (e.g. "Interactive Brokers LLC").
     pub broker_name: String,
-    /// Portfolio name from the config.
     pub portfolio_name: String,
     pub account_id: Option<String>,
     pub period: Period,

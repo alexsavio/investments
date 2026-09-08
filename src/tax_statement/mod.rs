@@ -648,7 +648,6 @@ fn generate_german_tax_statement(
     Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker))
 }
 
-/// Output format of a written tax statement, selected by the path's extension.
 #[derive(Clone, Copy)]
 enum OutputFormat {
     Csv,
@@ -754,8 +753,8 @@ mod tests {
         assert!(leftovers.is_empty(), "temporary files survived: {leftovers:?}");
     }
 
-    /// A tax statement holds real trading data, so a mode the user tightened by hand must survive
-    /// the next run; the rename would otherwise hand the target the temp file's fresh 0644.
+    /// A mode the user tightened by hand must survive the next run; the rename would otherwise
+    /// hand the target the temp file's fresh 0644.
     #[cfg(unix)]
     #[test]
     fn write_atomically_keeps_the_permissions_of_an_existing_file() {
