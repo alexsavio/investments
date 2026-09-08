@@ -13,7 +13,10 @@ use crate::broker_statement::{
 use crate::core::GenericResult;
 use crate::currency::Cash;
 use crate::currency::converter::CurrencyConverter;
-use crate::tax_statement::fx_fifo::compute_fx_fifo;
+use crate::tax_statement::fx_fifo::{FxLedgerKind, compute_fx_fifo};
+use crate::tax_statement::report::collect::{
+    collect_buys, collect_fx_rows, collect_open_lots, collect_securities,
+};
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::spain::compensation::CrossOffset;
 use crate::taxes::spain::credit;
@@ -22,6 +25,10 @@ use crate::taxes::{DeferredLossConfig, SpanishTaxConfig, TaxConfig};
 use crate::time::DateOptTime;
 use crate::types::{Date, Decimal};
 
+use super::report::{
+    BookingKind, BookingRow, FxTreatment, LotSource, SaleLotRow, SaleWorksheet, TradeRow,
+    TradeSide, WithholdingRow, classify, ecb_rate, isin_country, security_identity,
+};
 use super::wash_sale;
 use super::statement::{
     CapitalGainEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry,
@@ -33,6 +40,9 @@ use super::statement::{
 /// once so no processor re-matches the regime enum and risks the two disagreeing.
 struct SpanishTaxParams<'a> {
     config: &'a SpanishTaxConfig,
+    /// The whole tax config, for the report's asset classification: it reads
+    /// `taxes.etf_classification`, which is not a Spanish key.
+    tax_config: &'a TaxConfig,
     regime: SpanishTaxRegime,
     year: i32,
     scale: SavingsScale,
@@ -69,6 +79,7 @@ impl<'a> SpanishTaxParams<'a> {
         config.validate_coefficients()?;
         Ok(SpanishTaxParams {
             config,
+            tax_config,
             regime: config.regime,
             year,
             scale: config.savings_scale(year)?,
@@ -197,6 +208,58 @@ fn process_broker_statement(
 
     let has_grants = process_stock_grants(statement, broker_statement, params, converter)?;
     let has_corporate_actions = process_corporate_actions(statement, broker_statement, params);
+
+    // Report-only detail (no tax effect): the raw buys, the lots still open and the security
+    // overview. Sells and their FIFO lots were recorded by process_trades from the very values
+    // that fed the entries.
+    let class_of = |isin: &str| classify(params.tax_config, isin);
+    collect_buys(&mut statement.report, broker_statement, params.year, converter)?;
+    statement.report.trades.sort_by(|a, b| {
+        (&a.symbol, a.date, a.settle_date).cmp(&(&b.symbol, b.date, b.settle_date))
+    });
+    collect_open_lots(
+        &mut statement.report,
+        broker_statement,
+        params.year,
+        converter,
+        &class_of,
+        &|original_symbol, vest_date, quantity| {
+            grant_lot_cost_basis_eur(
+                broker_statement,
+                original_symbol,
+                vest_date,
+                quantity,
+                converter,
+            )
+        },
+    )?;
+
+    // A vest, a released deferral and a lot still blocked at year end all name an instrument that
+    // need not have traded or paid out in the year, so the security overview would otherwise miss
+    // it.
+    let extra_symbols: Vec<&str> = statement
+        .stock_grants
+        .iter()
+        .map(|row| row.symbol.as_str())
+        .chain(
+            statement
+                .wash_sale_reintegrations
+                .iter()
+                .map(|row| row.symbol.as_str()),
+        )
+        .chain(
+            statement
+                .deferred_losses_next
+                .iter()
+                .map(|row| row.symbol.as_str()),
+        )
+        .collect();
+    collect_securities(
+        &mut statement.report,
+        broker_statement,
+        &extra_symbols,
+        &class_of,
+    );
 
     // Short positions get no automatic treatment; surface them for manual review.
     statement.short_positions = broker_statement
@@ -376,6 +439,9 @@ struct PricedSale {
     /// `quantity` in those same normalized units.
     normalized_quantity: Decimal,
     deferred_loss: Decimal,
+    /// The raw sell and its FIFO worksheet for the report. `None` outside the filing year: the
+    /// replay prices every disposal in the statement, and the report shows the year being filed.
+    report: Option<(TradeRow, SaleWorksheet)>,
 }
 
 /// Reference point every quantity the valores-homogéneos replay sees is expressed against.
@@ -464,7 +530,7 @@ fn process_trades(
 
     let mut has_income = false;
 
-    for sale in sales {
+    for mut sale in sales {
         if sale.sale_date.year() != params.year {
             continue;
         }
@@ -494,6 +560,15 @@ fn process_trades(
                 .filter(|review| review.symbol == sale.symbol && review.sale_date == sale.sale_date)
                 .map(|review| review.message()),
         );
+        let notes = (!notes.is_empty()).then(|| notes.join(" · "));
+
+        // Pushed under the same filter and in the same order as the entry, so `report.sales[i]`
+        // is the worksheet of `capital_gains[i]` and their lots line up index for index.
+        if let Some((trade_row, mut worksheet)) = sale.report.take() {
+            worksheet.notes = notes.clone();
+            statement.report.trades.push(trade_row);
+            statement.report.sales.push(worksheet);
+        }
 
         statement.capital_gains.push(CapitalGainEntry {
             symbol: sale.symbol,
@@ -509,7 +584,7 @@ fn process_trades(
             deferred_loss: sale.deferred_loss,
             integrable_amount: fiscal_gain_loss + sale.deferred_loss,
             lots: sale.lots,
-            notes: (!notes.is_empty()).then(|| notes.join(" · ")),
+            notes,
         });
     }
 
@@ -584,6 +659,7 @@ fn price_sale(
     let reference = split_reference(broker_statement);
 
     let mut lots = Vec::with_capacity(details.fifo.len());
+    let mut lot_rows = Vec::with_capacity(details.fifo.len());
     let mut consumed = Vec::with_capacity(details.fifo.len());
     let mut cost_eur = Decimal::ZERO;
     let mut actualized_cost_eur = Decimal::ZERO;
@@ -635,6 +711,25 @@ fn price_sale(
             proceeds_eur: lot_proceeds,
             gain_eur: lot_proceeds - lot_actualized_cost,
         });
+
+        // One report lot per entry lot, pushed from the same values, so the worksheet a filer reads
+        // and the figure they file cannot disagree.
+        let (source, lot_price) = match lot.source {
+            StockSourceDetails::Trade { price, .. } => (LotSource::Trade, Some(price.amount)),
+            StockSourceDetails::Grant => (LotSource::Grant, None),
+            StockSourceDetails::CorporateAction => (LotSource::CorporateAction, None),
+        };
+        lot_rows.push(SaleLotRow {
+            open_date: lot.conclusion_time.date,
+            open_trade_id: lot.trade_id.clone(),
+            source,
+            quantity: lot_quantity,
+            price: lot_price,
+            cost_eur: lot_cost_eur,
+            proceeds_eur: lot_proceeds,
+            gain_loss_eur: lot_proceeds - lot_actualized_cost,
+            holding_days: (trade.conclusion_time.date - lot.conclusion_time.date).num_days(),
+        });
     }
 
     // Summed from the lots rather than recomputed, so the entry total and the audit lines that
@@ -647,6 +742,63 @@ fn price_sale(
         .and_then(|info| info.isin.iter().next())
         .map(|isin| isin.to_string())
         .unwrap_or_default();
+
+    let report = match sale_year == params.year {
+        // `process_trades` only ever prices a `Trade` sell, so the other arm cannot be reached; a
+        // corporate action carries no price, volume or commission to report.
+        true => {
+            let StockSellType::Trade {
+                price,
+                volume,
+                commission,
+            } = trade.type_
+            else {
+                unreachable!("only trades are priced")
+            };
+            let (_, name) = security_identity(broker_statement, &trade.symbol);
+            let eur_per_unit = ecb_rate(converter, trade.execution_date, price.currency)?;
+
+            let trade_row = TradeRow {
+                date: trade.conclusion_time.date,
+                settle_date: trade.execution_date,
+                trade_id: trade.trade_id.clone(),
+                symbol: trade.symbol.clone(),
+                isin: isin.clone(),
+                name: name.clone(),
+                side: TradeSide::Sell,
+                quantity: trade.quantity,
+                currency: price.currency.to_string(),
+                price: price.amount,
+                gross: volume.amount,
+                commission: -commission.amount,
+                net: volume.amount - commission.amount,
+                eur_per_unit,
+                amount_eur: net_proceeds_eur,
+            };
+            let worksheet = SaleWorksheet {
+                symbol: trade.symbol.clone(),
+                isin: isin.clone(),
+                name,
+                category: classify(params.tax_config, &isin),
+                sale_date: trade.conclusion_time.date,
+                settle_date: trade.execution_date,
+                trade_id: trade.trade_id.clone(),
+                quantity: total_quantity,
+                currency: price.currency.to_string(),
+                price: price.amount,
+                gross: volume.amount,
+                commission: commission.amount,
+                eur_per_unit,
+                proceeds_eur: net_proceeds_eur,
+                cost_basis_eur: cost_eur,
+                gain_loss_eur: fiscal_gain_loss,
+                notes: None,
+                lots: lot_rows,
+            };
+            Some((trade_row, worksheet))
+        }
+        false => None,
+    };
 
     Ok(PricedSale {
         key: wash_sale::instrument_key(&broker_statement.instrument_info, &trade.symbol),
@@ -664,6 +816,7 @@ fn price_sale(
         normalized_quantity: consumed.iter().map(|&(_, quantity)| quantity).sum(),
         consumed,
         deferred_loss: Decimal::ZERO,
+        report,
     })
 }
 
@@ -903,46 +1056,53 @@ fn lot_cost_basis_eur(
     match lot.source {
         // Vested shares carry no trade cost in `SellDetails`. Their acquisition value is the
         // vest-date FMV, which was already taxed as employment income in the general base.
-        StockSourceDetails::Grant => grant_lot_cost_basis_eur(broker_statement, lot, converter),
+        StockSourceDetails::Grant => grant_lot_cost_basis_eur(
+            broker_statement,
+            &lot.original_symbol,
+            lot.conclusion_time.date,
+            lot.quantity,
+            converter,
+        ),
         _ => Ok(lot.total_cost("EUR", converter)?.amount),
     }
 }
 
+/// Acquisition value of `quantity` shares of a vested grant, in EUR.
+///
+/// `quantity` is counted in original (un-split) shares, the same unit the statement's per-share FMV
+/// is quoted in.
 fn grant_lot_cost_basis_eur(
     broker_statement: &BrokerStatement,
-    lot: &FifoDetails,
+    original_symbol: &str,
+    vest_date: Date,
+    quantity: Decimal,
     converter: &CurrencyConverter,
 ) -> GenericResult<Decimal> {
-    let vest_date = lot.conclusion_time.date;
-
     let Some(grant) = broker_statement
         .stock_grants
         .iter()
-        .find(|grant| grant.symbol == lot.original_symbol && grant.date == vest_date)
+        .find(|grant| grant.symbol == original_symbol && grant.date == vest_date)
     else {
         warn!(
-            "Stock grant lot for {} vested {} has no matching grant record; using €0 acquisition \
-             value.",
-            lot.original_symbol, vest_date
+            "Stock grant lot for {original_symbol} vested {vest_date} has no matching grant \
+             record; using €0 acquisition value."
         );
         return Ok(Decimal::ZERO);
     };
 
     let Some(fmv) = grant.fmv_per_share else {
         warn!(
-            "Stock grant {} vested {}: vest-date FMV unavailable; using €0 acquisition value \
-             (overstates the gain).",
-            lot.original_symbol, vest_date
+            "Stock grant {original_symbol} vested {vest_date}: vest-date FMV unavailable; using €0 \
+             acquisition value (overstates the gain)."
         );
         return Ok(Decimal::ZERO);
     };
 
-    // fmv is per original (un-split) share; lot.quantity is likewise the pre-multiplier count.
-    let cost = Cash::new(fmv.currency, fmv.amount * lot.quantity);
+    let cost = Cash::new(fmv.currency, fmv.amount * quantity);
     Ok(converter
         .convert_to_cash_rounding(vest_date, cost, "EUR")
         .map_err(|e| {
-            format!("Converting vest-date FMV for stock grant {} on {vest_date}: {e}", lot.original_symbol)
+            format!("Converting vest-date FMV for stock grant {original_symbol} on {vest_date}: {e}")
         })?
         .amount)
 }
@@ -1011,6 +1171,56 @@ fn process_dividends(
 
         if exemption_eligible {
             exempted.push(dividend.issuer.clone());
+        }
+
+        let (_, name) = security_identity(broker_statement, &dividend.issuer);
+        let category = classify(params.tax_config, &isin);
+        statement.report.bookings.push(BookingRow {
+            kind: BookingKind::Dividend,
+            date: dividend.date,
+            symbol: dividend.issuer.clone(),
+            isin: isin.clone(),
+            name: name.clone(),
+            category: Some(category),
+            description: dividend.description(),
+            currency: dividend.amount.currency.to_string(),
+            amount: dividend.amount.amount,
+            eur_per_unit: ecb_rate(converter, dividend.date, dividend.amount.currency)?,
+            amount_eur: gross_eur,
+        });
+        if !dividend.tax_withheld.is_zero() {
+            statement.report.bookings.push(BookingRow {
+                kind: BookingKind::WithholdingTax,
+                date: dividend.date,
+                symbol: dividend.issuer.clone(),
+                isin: isin.clone(),
+                name: name.clone(),
+                category: Some(category),
+                description: format!("Retención en origen: {}", dividend.description()),
+                currency: dividend.tax_withheld.currency.to_string(),
+                amount: -dividend.tax_withheld.amount,
+                eur_per_unit: ecb_rate(converter, dividend.date, dividend.tax_withheld.currency)?,
+                amount_eur: -withheld_eur,
+            });
+            statement.report.withholding.push(WithholdingRow {
+                date: dividend.date,
+                symbol: dividend.issuer.clone(),
+                country_code: isin_country(&isin),
+                isin: isin.clone(),
+                name,
+                category,
+                currency: dividend.amount.currency.to_string(),
+                gross: dividend.amount.amount,
+                gross_eur,
+                withheld: dividend.tax_withheld.amount,
+                withheld_eur,
+                withholding_rate: if gross_eur.is_zero() {
+                    Decimal::ZERO
+                } else {
+                    withheld_eur / gross_eur
+                },
+                creditable_eur: reclaim_floor,
+            });
         }
 
         statement.dividends.push(DividendEntry {
@@ -1119,15 +1329,31 @@ fn process_interest(
             // Formats that carry no label leave only the sign to go on.
             None => gross_eur >= Decimal::ZERO,
         };
+        let description = if !taxable {
+            "Broker interest paid (borrowed balance)".to_string()
+        } else if gross_eur < Decimal::ZERO {
+            "Broker interest received (reversal)".to_string()
+        } else {
+            "Broker interest received".to_string()
+        };
+
+        statement.report.bookings.push(BookingRow {
+            kind: BookingKind::Interest,
+            date: interest.date,
+            symbol: String::new(),
+            isin: String::new(),
+            name: String::new(),
+            category: None,
+            description: description.clone(),
+            currency: interest.amount.currency.to_string(),
+            amount: interest.amount.amount,
+            eur_per_unit: ecb_rate(converter, interest.date, interest.amount.currency)?,
+            amount_eur: gross_eur,
+        });
+
         statement.interest.push(InterestEntry {
             date: interest.date,
-            description: if !taxable {
-                "Broker interest paid (borrowed balance)".to_string()
-            } else if gross_eur < Decimal::ZERO {
-                "Broker interest received (reversal)".to_string()
-            } else {
-                "Broker interest received".to_string()
-            },
+            description,
             gross_eur,
             taxable,
             notes: (!taxable).then(|| {
@@ -1317,7 +1543,8 @@ fn process_fees(
         has_fees = true;
 
         let context = format!("Processing broker fee on {}", fee.date);
-        let amount_eur = convert_to_eur(converter, fee.date, fee.amount.withholding(), &context)?;
+        let fee_cash = fee.amount.withholding();
+        let amount_eur = convert_to_eur(converter, fee.date, fee_cash, &context)?;
 
         let description = fee
             .description
@@ -1363,6 +1590,22 @@ fn process_fees(
         if let Some(review) = &review {
             warn!("{review}");
         }
+
+        // A charge is a cash outflow, so the booking's sign is the account's, the mirror of the
+        // positive magnitude the entry carries.
+        statement.report.bookings.push(BookingRow {
+            kind: BookingKind::Fee,
+            date: fee.date,
+            symbol: String::new(),
+            isin: String::new(),
+            name: String::new(),
+            category: None,
+            description: description.clone(),
+            currency: fee_cash.currency.to_string(),
+            amount: -fee_cash.amount,
+            eur_per_unit: ecb_rate(converter, fee.date, fee_cash.currency)?,
+            amount_eur: -amount_eur,
+        });
 
         statement.fees.push(FeeEntry {
             date: fee.date,
@@ -1440,6 +1683,16 @@ fn process_fx_gains(
             });
         }
     }
+
+    // The whole ledger of the year, labelled by the balance each realization came off, at the same
+    // full precision the entries carry.
+    collect_fx_rows(&mut statement.report, &results, params.year, &|row| {
+        match row.kind {
+            FxLedgerKind::Acquisition => None,
+            FxLedgerKind::Disposal { amount, .. } => Some((FxTreatment::HeldBalance, amount)),
+            FxLedgerKind::Repayment { amount, .. } => Some((FxTreatment::BorrowedBalance, amount)),
+        }
+    });
 
     if !statement.fx_borrowed_review.is_empty() {
         let total: Decimal = statement

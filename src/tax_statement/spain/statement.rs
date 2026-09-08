@@ -9,6 +9,7 @@ use crate::taxes::DeferredLossConfig;
 use crate::taxes::spain::scale::SavingsScale;
 use crate::types::{Date, Decimal};
 
+use super::report::ReportDetails;
 use super::wash_sale::BoundaryKind;
 
 /// One FIFO lot consumed by a sale, with its actualization arithmetic laid out step by step.
@@ -394,6 +395,11 @@ pub struct SpanishTaxStatement {
     custody_fee_cap_fraction: Option<Decimal>,
     /// Whether the regime exempts a year of small onerous transmissions (TRLFIRPF art. 39.5.d).
     small_disposals_exemption_applies: bool,
+
+    /// Broker-level detail the printable report shows beside the entries. No tax figure is derived
+    /// from it: every row is pushed from the value that already fed an entry, or gathered from the
+    /// broker statement alone.
+    pub report: ReportDetails,
 }
 
 impl SpanishTaxStatement {
@@ -477,6 +483,7 @@ impl SpanishTaxStatement {
             savings_quota: Decimal::ZERO,
             average_savings_rate: Decimal::ZERO,
             net_tax_due: Decimal::ZERO,
+            report: ReportDetails::default(),
         }
     }
 
@@ -878,6 +885,32 @@ impl SpanishTaxStatement {
     /// (íntegros − gastos + ganancias would not reach the base liquidable).
     pub fn declarable_rcm_income(&self) -> Decimal {
         self.total_dividend_income + self.total_interest_income - self.total_dividend_exemption
+    }
+
+    /// Treaty cap on the source state's withholding, named on the report's withholding table.
+    pub(super) fn treaty_rate(&self) -> Decimal {
+        self.treaty_rate
+    }
+
+    /// How far a negative balance in one savings-base group may reach the other. The report hides
+    /// the cross rows entirely where the regime has no cross at all.
+    pub(super) fn cross_offset(&self) -> CrossOffset {
+        self.cross_offset
+    }
+
+    /// Annual dividend exemption in force; zero where the regime has none.
+    pub(super) fn dividend_exemption_limit(&self) -> Decimal {
+        self.dividend_exemption_limit
+    }
+
+    /// Fraction of the non-exempt gross securities income that caps deductible custody fees.
+    pub(super) fn custody_fee_cap_fraction(&self) -> Option<Decimal> {
+        self.custody_fee_cap_fraction
+    }
+
+    /// Whether the regime exempts a year of small onerous transmissions.
+    pub(super) fn small_disposals_exemption_applies(&self) -> bool {
+        self.small_disposals_exemption_applies
     }
 
     /// Prior-year saldos this year crossed into the other savings-base group.

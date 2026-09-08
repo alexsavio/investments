@@ -6,6 +6,7 @@
 mod csv_formatter;
 mod forms;
 mod processor;
+mod report;
 mod statement;
 mod wash_sale;
 
