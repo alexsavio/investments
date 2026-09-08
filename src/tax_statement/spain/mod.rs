@@ -4,6 +4,7 @@
 //! both the Gipuzkoa foral regime (Norma Foral 3/2014) and Territorio Común (Ley 35/2006).
 
 mod csv_formatter;
+mod forms;
 mod processor;
 mod statement;
 mod wash_sale;

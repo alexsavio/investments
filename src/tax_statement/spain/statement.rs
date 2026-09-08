@@ -871,6 +871,15 @@ impl SpanishTaxStatement {
         self.gyp_applied.used_total - self.prior_cross_offset_gyp_to_rcm
     }
 
+    /// Gross RCM income as the form declares it: exempt income is not declared at all.
+    ///
+    /// An exención is not a deduction — the €1,500 of dividends NF 3/2014 art. 9.24 relieves never
+    /// becomes rendimiento íntegro, so leaving it in this box would break the form's own arithmetic
+    /// (íntegros − gastos + ganancias would not reach the base liquidable).
+    pub fn declarable_rcm_income(&self) -> Decimal {
+        self.total_dividend_income + self.total_interest_income - self.total_dividend_exemption
+    }
+
     /// Prior-year saldos this year crossed into the other savings-base group.
     pub fn prior_cross_offset(&self) -> Decimal {
         self.prior_cross_offset_rcm_to_gyp + self.prior_cross_offset_gyp_to_rcm
