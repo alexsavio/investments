@@ -24,6 +24,8 @@ pub type PartialBrokerStatementRc = Rc<RefCell<PartialBrokerStatement>>;
 
 pub struct PartialBrokerStatement {
     pub period: Option<Period>,
+    // Broker account id when the statement carries one (informational, used in reports)
+    pub account_id: Option<String>,
 
     pub has_starting_assets: Option<bool>,
     pub deposits_and_withdrawals: Vec<CashAssets>,
@@ -65,6 +67,7 @@ impl PartialBrokerStatement {
     pub fn new(exchanges: &[Exchange], zero_cash_assets: bool) -> PartialBrokerStatement {
         PartialBrokerStatement {
             period: None,
+            account_id: None,
 
             has_starting_assets: None,
             deposits_and_withdrawals: Vec::new(),

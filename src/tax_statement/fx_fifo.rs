@@ -29,6 +29,8 @@ pub struct CurrencyFxResult {
     /// Results realized against a borrowed (negative) balance, dated so the caller can year-filter
     /// them exactly as it does the held-balance ones.
     pub non_taxable: Vec<FxRealization>,
+    /// Every movement portion in ledger order (report worksheet; not used by the tax path).
+    pub ledger: Vec<FxLedgerRow>,
 }
 
 /// A single realized FX gain/loss in EUR (full precision; positive = gain, negative = loss).
@@ -40,6 +42,43 @@ pub struct FxRealization {
     pub acquisition_date: Date,
     pub amount: Decimal,
     pub activity_code: String,
+}
+
+/// One FIFO portion of a foreign-currency movement, in ledger order. Every movement appears here —
+/// acquisitions as well as disposals — so a report can show the full currency worksheet; the tax
+/// path reads only `CurrencyFxResult::taxable` / `non_taxable`.
+#[derive(Debug, Clone)]
+pub struct FxLedgerRow {
+    pub date: Date,
+    /// Broker transaction id of the movement (empty when the statement has none).
+    pub transaction_id: String,
+    pub activity_code: String,
+    /// Signed units of this portion: positive = inflow, negative = outflow.
+    pub units: Decimal,
+    /// EUR value of one unit for this movement (execution rate for a real exchange, else ECB).
+    pub rate: Decimal,
+    pub kind: FxLedgerKind,
+    /// Currency balance after this portion.
+    pub balance_after: Decimal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FxLedgerKind {
+    /// Opened or extended a lot (held when `units > 0`, borrowed when `units < 0`); no result.
+    Acquisition,
+    /// Disposed held currency: a §20 gain/loss `amount` (EUR, full precision) against a lot opened
+    /// on `acquisition_date` at `acquisition_rate`.
+    Disposal {
+        acquisition_date: Date,
+        acquisition_rate: Decimal,
+        amount: Decimal,
+    },
+    /// Repaid borrowed currency: the non-taxable result `amount` against the borrowing lot.
+    Repayment {
+        acquisition_date: Date,
+        acquisition_rate: Decimal,
+        amount: Decimal,
+    },
 }
 
 /// A pre-history foreign-currency lot declared in config, seeding the FIFO for a statement that does
@@ -102,6 +141,19 @@ where
             rate: lot.eur_per_unit,
             date: lot.date,
         });
+        results
+            .get_mut(&lot.currency)
+            .unwrap()
+            .ledger
+            .push(FxLedgerRow {
+                date: lot.date,
+                transaction_id: String::new(),
+                activity_code: "OPENING".to_string(),
+                units: lot.quantity,
+                rate: lot.eur_per_unit,
+                kind: FxLedgerKind::Acquisition,
+                balance_after: lot.quantity,
+            });
     }
 
     for flow in flows {
@@ -168,31 +220,63 @@ where
                     rate,
                     date: flow.date,
                 });
+                result.ledger.push(FxLedgerRow {
+                    date: flow.date,
+                    transaction_id: flow.transaction_id.clone(),
+                    activity_code: flow.activity_code.clone(),
+                    units: remaining,
+                    rate,
+                    kind: FxLedgerKind::Acquisition,
+                    balance_after: flow.balance,
+                });
                 remaining = dec!(0);
                 continue;
             }
 
             let front = lots.front_mut().unwrap();
             let units = front.qty.abs().min(remaining.abs());
-            if front.qty.is_sign_positive() {
+            let kind = if front.qty.is_sign_positive() {
                 // Disposing held currency → §20 taxable gain/loss.
+                let amount = units * (rate - front.rate);
                 result.taxable.push(FxRealization {
                     date: flow.date,
                     acquisition_date: front.date,
-                    amount: units * (rate - front.rate),
+                    amount,
                     activity_code: flow.activity_code.clone(),
                 });
+                FxLedgerKind::Disposal {
+                    acquisition_date: front.date,
+                    acquisition_rate: front.rate,
+                    amount,
+                }
             } else {
                 // Repaying borrowed currency → non-taxable (Tilgung Fremdwährungskredit).
+                let amount = units * (front.rate - rate);
                 result.non_taxable.push(FxRealization {
                     date: flow.date,
                     acquisition_date: front.date,
-                    amount: units * (front.rate - rate),
+                    amount,
                     activity_code: flow.activity_code.clone(),
                 });
-            }
+                FxLedgerKind::Repayment {
+                    acquisition_date: front.date,
+                    acquisition_rate: front.rate,
+                    amount,
+                }
+            };
             front.qty -= sign(front.qty) * units;
             remaining -= sign(remaining) * units;
+            // The statement balance is reported per movement; this portion's balance is the
+            // statement balance minus whatever of the movement is still unprocessed.
+            result.ledger.push(FxLedgerRow {
+                date: flow.date,
+                transaction_id: flow.transaction_id.clone(),
+                activity_code: flow.activity_code.clone(),
+                units: sign(flow.amount) * units,
+                rate,
+                kind,
+                balance_after: flow.balance - remaining,
+            });
             if front.qty == dec!(0) {
                 lots.pop_front();
             }
@@ -223,6 +307,7 @@ fn register_currency(
             currency: currency.to_string(),
             taxable: Vec::new(),
             non_taxable: Vec::new(),
+            ledger: Vec::new(),
         },
     );
 }
@@ -287,6 +372,26 @@ mod tests {
         // Repaid 1000 USD borrowed at 0.90 with USD costing 0.91 → 1000*(0.90-0.91) = -10.
         assert_eq!(results[0].non_taxable.len(), 1);
         assert_eq!(results[0].non_taxable[0].amount, dec!(-10));
+
+        // The ledger shows both portions: the borrowing (acquisition of a negative lot) and the
+        // repayment against it.
+        let ledger = &results[0].ledger;
+        assert_eq!(ledger.len(), 2);
+        assert_eq!(ledger[0].units, dec!(-1000));
+        assert_eq!(ledger[0].rate, dec!(0.90));
+        assert_eq!(ledger[0].kind, FxLedgerKind::Acquisition);
+        assert_eq!(ledger[0].balance_after, dec!(-1000));
+        assert_eq!(ledger[1].units, dec!(1000));
+        assert_eq!(ledger[1].rate, dec!(0.91));
+        assert_eq!(
+            ledger[1].kind,
+            FxLedgerKind::Repayment {
+                acquisition_date: Date::from_ymd_opt(2025, 11, 4).unwrap(),
+                acquisition_rate: dec!(0.90),
+                amount: dec!(-10),
+            }
+        );
+        assert_eq!(ledger[1].balance_after, dec!(0));
     }
 
     /// A forex conversion that runs before the purchase leaves a positive USD balance; the later
@@ -305,6 +410,23 @@ mod tests {
         assert_eq!(results[0].taxable.len(), 1);
         // 1000*(0.8607-0.8588) = 1.90.
         assert_eq!(results[0].taxable[0].amount, dec!(1.90));
+
+        let ledger = &results[0].ledger;
+        assert_eq!(ledger.len(), 2);
+        assert_eq!(ledger[0].kind, FxLedgerKind::Acquisition);
+        assert_eq!(ledger[0].units, dec!(1000));
+        assert_eq!(ledger[0].rate, dec!(0.8588));
+        assert_eq!(ledger[1].units, dec!(-1000));
+        assert_eq!(ledger[1].rate, dec!(0.8607));
+        assert_eq!(
+            ledger[1].kind,
+            FxLedgerKind::Disposal {
+                acquisition_date: Date::from_ymd_opt(2025, 11, 13).unwrap(),
+                acquisition_rate: dec!(0.8588),
+                amount: dec!(1.90),
+            }
+        );
+        assert_eq!(ledger[1].balance_after, dec!(0));
     }
 
     /// A dividend received in USD and held across days, then converted back to EUR at a lower rate,

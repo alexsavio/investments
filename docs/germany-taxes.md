@@ -55,14 +55,17 @@ portfolios:
 Generate a German tax statement with:
 
 ```bash
-investments tax-statement <portfolio_name> <year> <output.csv>
+investments tax-statement <portfolio_name> <year> <output.csv|output.html>
 ```
 
 Example:
 
 ```bash
-investments tax-statement ib 2024 german-tax-2024.csv
+investments tax-statement ib 2024 german-tax-2024.csv    # machine-readable statement
+investments tax-statement ib 2024 german-tax-2024.html   # printable A4 report
 ```
+
+The output path's extension selects the format (see [HTML Report](#html-report-printable-a4-landscape)).
 
 The command will:
 
@@ -70,7 +73,7 @@ The command will:
 2. Calculate capital gains using FIFO method
 3. Apply German tax rates (Abgeltungssteuer + Solidaritätszuschlag + Kirchensteuer)
 4. Account for foreign tax credits
-5. Generate a detailed CSV report
+5. Write the CSV statement, or the printable HTML report when the path ends in `.html`
 
 ## German Tax Rates
 
@@ -366,6 +369,63 @@ The final rows provide totals:
 - Total foreign tax credit
 - Net tax due
 - Loss carryforward (if applicable)
+
+## HTML Report (printable, A4 landscape)
+
+Passing an `.html` output path instead of `.csv` writes a self-contained, printable report
+modelled on commercial German "Steuerbericht" PDFs:
+
+```bash
+investments tax-statement ib 2024 german-tax-2024.html
+```
+
+The report contains, in order (sections without data are omitted):
+
+1. Title page with disclaimer, broker, portfolio and statement period
+2. **Übersicht für die Steuerformulare** – Anlage KAP lines 19/20/22/23/41, Anlage KAP-INV lines, Anlage SO (§23), Anlage N and §22 grants, non-taxable margin FX, next year's Vorabpauschale
+3. **Steuerberechnung** – loss pots, Sparer-Pauschbetrag, Abgeltungsteuer, Solidaritätszuschlag, church tax, foreign tax credit, estimated net tax
+4. **Übersicht nach Aktivität und Assetkategorie** and **Gewinne und Verluste nach Wertpapier** – gross gains and losses per activity, asset class and security, with the form line each one feeds
+5. **Barwirksame Buchungen** – dividends, withholding, interest, fees and cash grants in original currency with the ECB rate
+6. **Quellensteuer-Übersicht** – withholding per country with the creditable amount
+7. **Gewinne und Verluste aus Wertpapiergeschäften** – one FIFO worksheet per sale with the consumed purchase lots, holding period and lot-level result
+8. **Wertpapiertransaktionen** – every buy and sell of the year in original currency, with IBKR trade ids when the Flex export carries them
+9. **Fremdwährungsgewinne/-verluste** – the per-currency FIFO ledger with every movement, its treatment (§20, non-taxable loan repayment, §23) and running balance
+10. **Offene Positionen zum Jahresende** – unsold purchase lots with their EUR cost
+11. **Vorabpauschale** – per-fund computation for the following year's return
+12. **Wertpapierübersicht** – symbol, ISIN, name, country, currency, asset class, Teilfreistellung
+13. **Hinweise und Warnungen** – short positions, missing NAVs, per-position notes, corporate actions, grants, methodology limits
+
+All EUR amounts are the same figures as in the CSV and on the console (same rounding), shown in
+German notation (`1.234,56`).
+
+### Converting to PDF
+
+The page carries print CSS for A4 landscape (`@page`, repeated table headers, no row splits), so
+any Chromium-based tool renders it:
+
+```bash
+# Chrome / Chromium headless
+chromium --headless --print-to-pdf=german-tax-2024.pdf --no-pdf-header-footer german-tax-2024.html
+
+# Playwright (Node): page.pdf({ path, format: 'A4', landscape: true, preferCSSPageSize: true })
+
+# Gotenberg (the file must be named index.html)
+curl --request POST http://localhost:3000/forms/chromium/convert/html \
+  --form files=@index.html --form landscape=true --form preferCssPageSize=true \
+  -o german-tax-2024.pdf
+```
+
+### Caveats
+
+- The report is informational and does not replace the broker's official statements.
+- Foreign withholding is shown as creditable up to a flat 15 % of the gross amount (§32d Abs. 5
+  EStG); there is no per-country treaty table.
+- Open lots reflect the FIFO engine's view at the statement's last date; a statement extending
+  past 31 December already has later sales deducted (the report says so).
+- Security names in the report come from `instrument_names` in the portfolio config when set,
+  otherwise from the Flex export's `description`. The CSV keeps using the configured name or the
+  bare symbol.
+- Derivatives are skipped, as for the CSV.
 
 ## Example Output
 

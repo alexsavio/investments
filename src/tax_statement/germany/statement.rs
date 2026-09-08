@@ -9,6 +9,8 @@ use crate::taxes::germany::{
 };
 use crate::types::{Date, Decimal};
 
+use super::report_details::ReportDetails;
+
 /// Entry for a capital gain/loss transaction.
 #[derive(Debug, Clone)]
 pub struct CapitalGainEntry {
@@ -313,6 +315,10 @@ pub struct GermanTaxStatement {
     /// §23 EStG results for a non-interest-bearing foreign-currency account (Anlage SO). Empty for
     /// the default §20 treatment.
     pub section23: Section23,
+
+    /// Broker-level detail behind the entries, for the printable HTML report only. The CSV and the
+    /// console ignore it.
+    pub report: ReportDetails,
 }
 
 /// Gross (pre-Teilfreistellung) Anlage KAP-INV figures for one fund-type group.
@@ -436,6 +442,8 @@ impl GermanTaxStatement {
             kap_inv_other: KapInvGroup::default(),
 
             section23: Section23::default(),
+
+            report: ReportDetails::default(),
         })
     }
 

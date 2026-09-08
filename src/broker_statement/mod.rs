@@ -66,6 +66,8 @@ pub use self::trades::{ForexTrade, StockBuy, StockSource, StockSell, StockSellTy
 pub struct BrokerStatement {
     pub broker: BrokerInfo,
     pub period: Period,
+    // Broker account id when the statements carry one (informational, used in reports)
+    pub account_id: Option<String>,
 
     pub assets: NetAssets,
     pub historical_assets: BTreeMap<Date, NetAssets>,
@@ -315,6 +317,7 @@ impl BrokerStatement {
 
         Ok(BrokerStatement {
             broker, period,
+            account_id: statement.account_id.clone(),
 
             assets: NetAssets::default(),
             historical_assets: BTreeMap::new(),
@@ -570,6 +573,10 @@ impl BrokerStatement {
             let period = statement.get_period()?;
             self.broker.statements_merging_strategy.validate(self.period, period, last_date)?;
             self.period = Period::new(self.period.first_date(), period.last_date()).unwrap();
+        }
+
+        if self.account_id.is_none() {
+            self.account_id = statement.account_id.clone();
         }
 
         if let partial::NetAssets{cash: Some(cash), other} = statement.assets {

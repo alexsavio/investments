@@ -138,6 +138,10 @@ pub struct StatementOfFundsLine {
     #[serde(rename = "@activityDescription", default)]
     pub activity_description: String,
 
+    // Instrument name; present in real exports, absent from older fixtures.
+    #[serde(rename = "@description", default)]
+    pub description: String,
+
     #[serde(rename = "@symbol", default)]
     pub symbol: String,
 
@@ -238,6 +242,10 @@ pub struct Trade {
 
     #[serde(rename = "@origTradeID", default)]
     pub orig_trade_id: String,
+
+    // Statement-wide id shared with the Statement of Funds rows of the same trade
+    #[serde(rename = "@transactionID", default)]
+    pub transaction_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -484,6 +492,7 @@ impl FlexStatement {
         let from_date = parse_flex_date(&self.from_date)?;
         let to_date = parse_flex_date(&self.to_date)?;
         statement.set_period(Period::new(from_date, to_date)?)?;
+        statement.account_id = non_empty_id(&self.account_id);
 
         // Set starting assets flag - for XML we assume no starting assets
         // unless we can detect them from CashReport
@@ -759,19 +768,23 @@ fn parse_statement_of_funds_trade(
     let commission = Cash::new(&line.currency, line.trade_commission.abs());
     let conclusion_time: DateOptTime = date.into();
 
-    register_instrument_isin(statement, symbol, &line.isin);
+    register_instrument(statement, symbol, &line.isin, &line.description);
     register_listing_venue(statement, symbol, &line.listing_exchange);
 
     match line.buy_sell.as_str() {
         "BUY" => {
-            statement.stock_buys.push(StockBuy::new_trade(
+            let mut buy = StockBuy::new_trade(
                 symbol, quantity, price, volume, commission, conclusion_time, settle_date,
-            ));
+            );
+            buy.trade_id = non_empty_id(&line.transaction_id);
+            statement.stock_buys.push(buy);
         }
         "SELL" => {
-            statement.stock_sells.push(StockSell::new_trade(
+            let mut sell = StockSell::new_trade(
                 symbol, quantity, price, volume, commission, conclusion_time, settle_date, false,
-            ));
+            );
+            sell.trade_id = non_empty_id(&line.transaction_id);
+            statement.stock_sells.push(sell);
         }
         _ => {}
     }
@@ -922,19 +935,27 @@ fn parse_trade(
     let commission = Cash::new(&trade.currency, trade.commission.abs());
     let conclusion_time: DateOptTime = date.into();
 
-    register_instrument_isin(statement, symbol, &trade.isin);
+    register_instrument(statement, symbol, &trade.isin, &trade.description);
     register_listing_venue(statement, symbol, &trade.listing_exchange);
+
+    // The transactionID is the id the Statement of Funds (and the FX ledger built from it) uses for
+    // the same trade; older exports carry only the tradeID.
+    let trade_id = non_empty_id(&trade.transaction_id).or_else(|| non_empty_id(&trade.trade_id));
 
     match trade.buy_sell.as_str() {
         "BUY" => {
-            statement.stock_buys.push(StockBuy::new_trade(
+            let mut buy = StockBuy::new_trade(
                 symbol, quantity, price, volume, commission, conclusion_time, settle_date,
-            ));
+            );
+            buy.trade_id = trade_id;
+            statement.stock_buys.push(buy);
         }
         "SELL" => {
-            statement.stock_sells.push(StockSell::new_trade(
+            let mut sell = StockSell::new_trade(
                 symbol, quantity, price, volume, commission, conclusion_time, settle_date, false,
-            ));
+            );
+            sell.trade_id = trade_id;
+            statement.stock_sells.push(sell);
         }
         other => {
             return Err!("Unknown trade direction: {}", other);
@@ -949,16 +970,27 @@ fn is_cancelled_trade(buy_sell: &str) -> bool {
     buy_sell.contains("(Ca.)")
 }
 
-/// Register `symbol` and link its ISIN (parsed with the strict ISIN type). Unlike keying an
-/// instrument by its raw ISIN string, this keeps the symbol as the primary key and attaches the
-/// ISIN, matching the CSV path. Invalid ISINs are warned about, not fatal.
-fn register_instrument_isin(statement: &mut PartialBrokerStatement, symbol: &str, isin: &str) {
+/// Register `symbol`, attach its ISIN (parsed with the strict ISIN type) and keep the Flex
+/// `description` as the instrument's broker description. Unlike keying an instrument by its raw
+/// ISIN string, this keeps the symbol as the primary key and attaches the ISIN, matching the CSV
+/// path. Invalid ISINs are warned about, not fatal. The description never becomes the instrument
+/// name (which `get_name()` and the CSV outputs print); only reports that ask for it read it.
+fn register_instrument(
+    statement: &mut PartialBrokerStatement, symbol: &str, isin: &str, description: &str,
+) {
+    let instrument = statement.instrument_info.get_or_add(symbol);
+
+    let description = description.trim();
+    if !description.is_empty() && instrument.description().is_none() {
+        instrument.set_description(description);
+    }
+
     if isin.is_empty() {
         return;
     }
     match parse_isin(isin) {
         Ok(isin) => {
-            statement.instrument_info.get_or_add(symbol).add_isin(isin);
+            instrument.add_isin(isin);
         }
         Err(e) => {
             log::warn!("Ignoring invalid ISIN {isin:?} for {symbol}: {e}");
@@ -973,6 +1005,12 @@ fn register_listing_venue(statement: &mut PartialBrokerStatement, symbol: &str, 
         return;
     }
     statement.instrument_info.get_or_add(symbol).add_listing_venue(venue);
+}
+
+/// Broker ids are optional attributes in Flex exports; an empty string means "none".
+fn non_empty_id(id: &str) -> Option<String> {
+    let id = id.trim();
+    (!id.is_empty()).then(|| id.to_owned())
 }
 
 /// Which income types the CashTransactions section carries. Used to dedup against the StmtFunds
@@ -1317,6 +1355,7 @@ mod tests {
             open_close_indicator: "O".to_string(),
             trade_id: String::new(),
             orig_trade_id: String::new(),
+            transaction_id: String::new(),
         }
     }
 

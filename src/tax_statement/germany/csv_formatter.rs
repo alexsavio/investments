@@ -9,32 +9,11 @@ use crate::formatting;
 use crate::taxes::germany::TeilfreistellungRate;
 use crate::types::Decimal;
 
+use super::kap_inv_zeilen;
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry,
     GermanTaxStatement, InterestEntry, Section23, StockGrantEntry,
 };
-
-/// Anlage KAP-INV line numbers for one fund type: (distributions, Vorabpauschale, sale gains/losses).
-///
-/// The tool classifies funds as equity / mixed / bond; on the form those map to Aktienfonds,
-/// Mischfonds, and sonstige Investmentfonds.
-///
-/// Pinned to the official forms of the Bundesfinanzverwaltung (Formular-Management-System,
-/// formulare-bfinv.de): "Anlage KAP-INV 2024" (print id 2024AnlKAP-INV361NET, September 2024) and
-/// "Anlage KAP-INV 2025" (2025AnlKAP-INV361NET, September 2025). PDFs retrieved 2026-08-11 from
-/// <https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2024/Anlage_KAP_INV_Steuern.de_01.pdf>
-/// and <https://www.steuern.de/fileadmin/user_upload/Steuerformulare_2025/Anlage_KAP_INV_2025_steuern-de.pdf>.
-/// Both years are identical: "Ausschüttungen nach § 2 Abs. 11 InvStG" on Zeilen 4 / 5 / 8,
-/// "Vorabpauschalen nach § 18 InvStG" on Zeilen 9 / 10 / 13, and "Gewinne und Verluste aus der
-/// Veräußerung von Investmentanteilen" on Zeilen 14 / 17 / 26 (Aktien- / Misch- / sonstige Fonds).
-fn kap_inv_zeilen(rate: TeilfreistellungRate) -> Option<(u32, u32, u32)> {
-    match rate {
-        TeilfreistellungRate::Equity => Some((4, 9, 14)),
-        TeilfreistellungRate::Mixed => Some((5, 10, 17)),
-        TeilfreistellungRate::Bond => Some((8, 13, 26)),
-        TeilfreistellungRate::None => None,
-    }
-}
 
 /// CSV formatter for German tax statements.
 pub struct CsvFormatter;
@@ -756,9 +735,18 @@ mod tests {
     /// sends the filer's figures to the wrong box, so the mapping is asserted, not just documented.
     #[test]
     fn kap_inv_zeilen_match_the_official_form() {
-        assert_eq!(kap_inv_zeilen(TeilfreistellungRate::Equity), Some((4, 9, 14)));
-        assert_eq!(kap_inv_zeilen(TeilfreistellungRate::Mixed), Some((5, 10, 17)));
-        assert_eq!(kap_inv_zeilen(TeilfreistellungRate::Bond), Some((8, 13, 26)));
+        assert_eq!(
+            kap_inv_zeilen(TeilfreistellungRate::Equity),
+            Some((4, 9, 14))
+        );
+        assert_eq!(
+            kap_inv_zeilen(TeilfreistellungRate::Mixed),
+            Some((5, 10, 17))
+        );
+        assert_eq!(
+            kap_inv_zeilen(TeilfreistellungRate::Bond),
+            Some((8, 13, 26))
+        );
         assert_eq!(kap_inv_zeilen(TeilfreistellungRate::None), None);
     }
 
