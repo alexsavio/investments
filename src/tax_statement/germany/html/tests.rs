@@ -113,6 +113,23 @@ fn markup_in_names_is_escaped() {
     assert!(!html.contains("A<B&C"));
 }
 
+/// The Altbestand flag is derived in the renderer from the lot's own acquisition date, not carried
+/// on the row, and no fixture holds a pre-2009 lot — so this is the only thing pinning the cutoff.
+#[test]
+fn lots_acquired_before_2009_are_marked_altbestand() {
+    let mut statement = run_pipeline("fifo", 2024);
+    assert!(!render(&statement).contains("Altbestand (vor 2009)"));
+
+    let lot = &mut statement.report.sales[0].lots[0];
+    lot.open_date = Date::from_ymd_opt(2008, 12, 31).unwrap();
+    assert!(render(&statement).contains("Altbestand (vor 2009)"));
+
+    // The cutoff is exclusive: 1 January 2009 is already new stock.
+    let lot = &mut statement.report.sales[0].lots[0];
+    lot.open_date = Date::from_ymd_opt(2009, 1, 1).unwrap();
+    assert!(!render(&statement).contains("Altbestand (vor 2009)"));
+}
+
 #[test]
 fn empty_statement_renders_title_and_form_table_only() {
     let mut statement = GermanTaxStatement::new(2024, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
@@ -351,6 +368,8 @@ fn equity_fund() -> TaxConfig {
 /// - `dividend_withholding` — the cash bookings, the withholding section and an open lot.
 /// - `fx_ledger` — the foreign-currency ledger with a §20 taxable disposal.
 /// - `vorabpauschale` — the fund sections: Vorabpauschale, Teilfreistellung and the open lots.
+/// - `derivative` — instruments the tool declines to tax, and the notes that say so.
+/// - `short_position` — a position with no automatic treatment, surfaced for manual review.
 #[rstest]
 #[case::fifo("fifo_2024", "fifo", 2024, no_classification)]
 #[case::dividend_withholding(
@@ -361,6 +380,8 @@ fn equity_fund() -> TaxConfig {
 )]
 #[case::fx_ledger("fx_ledger_2024", "fx_ledger", 2024, no_classification)]
 #[case::vorabpauschale("vorabpauschale_2024", "vorabpauschale", 2024, equity_fund)]
+#[case::derivative("derivative_2024", "derivative", 2024, no_classification)]
+#[case::short_position("short_position_2024", "short_position", 2024, no_classification)]
 fn rendered_report_matches_its_golden(
     #[case] golden: &str,
     #[case] fixture: &str,
@@ -388,9 +409,11 @@ fn every_golden_file_belongs_to_a_case() {
 
 /// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than
 /// derived from it: `rstest` does not expose its cases to another test.
-const CORPUS: [&str; 4] = [
+const CORPUS: [&str; 6] = [
     "fifo_2024",
     "dividend_withholding_2024",
     "fx_ledger_2024",
     "vorabpauschale_2024",
+    "derivative_2024",
+    "short_position_2024",
 ];

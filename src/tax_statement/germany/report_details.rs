@@ -73,3 +73,22 @@ pub(super) fn classify(tax_config: &TaxConfig, isin: &str) -> TeilfreistellungRa
             .to_teilfreistellung_rate()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The renderer reads the Teilfreistellung rate back out of the category the row carries, so a
+    /// category that mapped back to a different rate would silently mislabel a fund.
+    #[test]
+    fn asset_category_and_teilfreistellung_rate_round_trip() {
+        for rate in [
+            TeilfreistellungRate::None,
+            TeilfreistellungRate::Equity,
+            TeilfreistellungRate::Mixed,
+            TeilfreistellungRate::Bond,
+        ] {
+            assert_eq!(TeilfreistellungRate::from(AssetCategory::from(rate)), rate);
+        }
+    }
+}

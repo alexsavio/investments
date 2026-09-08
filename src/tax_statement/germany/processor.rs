@@ -195,14 +195,12 @@ pub fn process_broker_statement(
 
     // The Vorabpauschale and the stock grants name funds and shares that need not have traded or
     // paid out in the year, so the security overview would otherwise miss them.
-    let mut extra_symbols: Vec<&str> = statement
+    let extra_symbols: Vec<&str> = statement
         .vorabpauschale
         .iter()
         .map(|row| row.symbol.as_str())
         .chain(statement.stock_grants.iter().map(|row| row.symbol.as_str()))
         .collect();
-    extra_symbols.sort_unstable();
-    extra_symbols.dedup();
     collect_securities(
         &mut statement.report,
         broker_statement,

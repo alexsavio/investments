@@ -55,7 +55,10 @@ impl GoldenCorpus {
             return;
         }
 
-        panic!("{}", self.describe_difference(&path, &expected, emitted));
+        panic!(
+            "{}",
+            self.describe_difference(name, &path, &expected, emitted)
+        );
     }
 
     /// A golden that no case claims is a golden nobody checks. Catches a renamed case leaving its
@@ -63,11 +66,13 @@ impl GoldenCorpus {
     pub fn assert_no_orphans(&self, claimed: &[PathBuf], extensions: &[&str]) {
         let mut orphans = Vec::new();
         for entry in std::fs::read_dir(&self.dir).expect("the golden corpus directory must exist") {
-            let path = entry.unwrap().path();
-            let known = path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extensions.contains(&extension));
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let known = entry.file_type().is_ok_and(|file_type| file_type.is_file())
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extensions.contains(&extension));
             if known && !claimed.contains(&path) {
                 orphans.push(path.display().to_string());
             }
@@ -84,7 +89,13 @@ impl GoldenCorpus {
 
     /// The first differing line, in context. A whole-file dump of two long artefacts tells a reader
     /// nothing they can act on; the line number and its neighbours do.
-    fn describe_difference(&self, path: &Path, expected: &str, emitted: &str) -> String {
+    fn describe_difference(
+        &self,
+        name: &str,
+        path: &Path,
+        expected: &str,
+        emitted: &str,
+    ) -> String {
         const CONTEXT: usize = 3;
 
         let expected_lines: Vec<&str> = expected.lines().collect();
@@ -97,7 +108,7 @@ impl GoldenCorpus {
             .unwrap_or_else(|| expected_lines.len().min(emitted_lines.len()));
 
         let mut report = format!(
-            "the golden no longer matches the emitted artefact.\n  \
+            "golden `{name}` no longer matches the emitted artefact.\n  \
              file: {}\n  \
              first difference at line {} (golden has {} lines, the artefact has {})\n\n",
             path.display(),

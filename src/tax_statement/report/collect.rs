@@ -221,10 +221,7 @@ pub(crate) fn collect_fx_rows<C, T>(
                     ..
                 } => Some((acquisition_date, acquisition_rate)),
             };
-            let (treatment, gain_loss_eur) = match treatment_of(row) {
-                Some((treatment, amount)) => (Some(treatment), Some(amount)),
-                None => (None, None),
-            };
+            let (treatment, gain_loss_eur) = treatment_of(row).unzip();
 
             report.fx_rows.push(FxRow {
                 currency: result.currency.clone(),
@@ -243,5 +240,42 @@ pub(crate) fn collect_fx_rows<C, T>(
                 treatment,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::broker_statement::{BrokerStatement, ReadingStrictness};
+    use crate::config::{Config, PortfolioConfig};
+
+    use super::super::details::ReportDetails;
+    use super::collect_securities;
+
+    /// A fund that neither traded nor paid out in the year reaches the security overview only
+    /// through `extra_symbols`; no German fixture carries one, so nothing else pins this argument.
+    #[test]
+    fn extra_symbols_reach_the_security_overview() {
+        let mut portfolio: PortfolioConfig =
+            serde_yaml::from_str("name: test\nbroker: interactive-brokers\n").unwrap();
+        portfolio.statements = Some(std::path::PathBuf::from(
+            "src/tax_statement/germany/testdata/vorabpauschale",
+        ));
+        let broker_statement =
+            BrokerStatement::load(&Config::mock(), &portfolio, ReadingStrictness::all()).unwrap();
+
+        let mut report: ReportDetails<&str, ()> = ReportDetails::default();
+        collect_securities(&mut report, &broker_statement, &["EUNL"], &|_isin| "fund");
+
+        assert_eq!(report.securities.len(), 1);
+        let security = &report.securities[0];
+        assert_eq!(security.symbol, "EUNL");
+        assert_eq!(security.isin, "IE00B4L5Y983");
+        assert_eq!(security.country_code, "IE");
+        assert_eq!(security.category, "fund");
+
+        // Without it the overview is empty: the report holds no trade, booking or lot.
+        let mut report: ReportDetails<&str, ()> = ReportDetails::default();
+        collect_securities(&mut report, &broker_statement, &[], &|_isin| "fund");
+        assert!(report.securities.is_empty());
     }
 }
