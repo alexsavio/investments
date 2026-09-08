@@ -4,7 +4,7 @@
 //! accent-bar section headings and key-figure cards on the title page. Backgrounds are forced to
 //! print (`print-color-adjust`) so the PDF matches the screen.
 
-pub(super) const CSS: &str = r#"
+pub(crate) const CSS: &str = r#"
 @page { size: A4 landscape; margin: 12mm; }
 
 :root {

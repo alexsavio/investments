@@ -1,0 +1,4 @@
+# Golden corpora are compared byte for byte. Without this, a checkout under
+# core.autocrlf=true rewrites every line ending and fails the whole corpus.
+src/tax_statement/*/testdata/golden/*.csv -text
+src/tax_statement/*/testdata/golden/*.html -text

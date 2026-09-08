@@ -9,11 +9,11 @@ use crate::types::Decimal;
 use super::super::kap_inv_zeilen;
 use super::super::report_details::AssetCategory;
 use super::super::statement::{GermanTaxStatement, KapInvGroup, Section23};
+use super::ReportMeta;
 use super::builder::{
     Align, Cell, Row, b, col, escape, h3, note, p, section_end, section_start, table, ul,
 };
 use super::format::{self, category_label, eur, pct, qty};
-use super::{ReportMeta, security_names};
 
 fn line(label: String, value: Decimal) -> Row {
     Row::data(vec![Cell::raw(label), Cell::num(eur(value))])
@@ -667,7 +667,7 @@ pub(super) fn by_security(
     if statement.capital_gains.is_empty() && statement.dividends.is_empty() {
         return false;
     }
-    let names = security_names(statement);
+    let names = statement.report.security_names();
 
     let mut groups: BTreeMap<AssetCategory, BTreeMap<(String, String, String), SecurityResult>> =
         BTreeMap::new();

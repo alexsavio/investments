@@ -4,6 +4,8 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use crate::taxes::germany::TeilfreistellungRate;
+use crate::time::Date;
 use crate::types::Decimal;
 
 use super::super::report_details::{
@@ -243,8 +245,11 @@ pub(super) fn withholding(
 }
 
 fn lot_notes(lot: &SaleLotRow) -> String {
+    let altbestand_cutoff =
+        Date::from_ymd_opt(2009, 1, 1).expect("1 January 2009 is always a valid date");
+
     let mut parts: Vec<&str> = Vec::new();
-    if lot.pre_2009 {
+    if lot.open_date < altbestand_cutoff {
         parts.push("Altbestand (vor 2009): Ergebnis steuerfrei");
     }
     match lot.source {
@@ -931,7 +936,9 @@ pub(super) fn securities(
                 }),
                 Cell::text(&security.currency),
                 Cell::text(category_label(security.category)),
-                Cell::text(teilfreistellung_label(security.teilfreistellung_rate)),
+                Cell::text(teilfreistellung_label(TeilfreistellungRate::from(
+                    security.category,
+                ))),
             ])
         })
         .collect();

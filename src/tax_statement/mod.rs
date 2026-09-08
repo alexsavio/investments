@@ -2,7 +2,11 @@ mod dividends;
 mod eur;
 mod fx_fifo;
 pub mod germany;
+#[cfg(test)]
+mod golden;
+mod html;
 mod interest;
+mod report;
 pub mod spain;
 mod statement;
 mod tax_agent;
@@ -187,16 +191,23 @@ fn generate_spanish_tax_statement(
         return Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker));
     }
 
+    // Output the statement. The extension selects the format: `.html` is the printable A4 report,
+    // anything else the CSV.
     if let Some(path) = output_path {
-        let file = File::create(path)
-            .map_err(|e| format!("Failed to create output file {path:?}: {e}"))?;
-        let mut writer = BufWriter::new(file);
+        // Rejected before anything is opened, so the user reads the reason rather than a failure
+        // to write a temporary file they never asked for.
+        let format = OutputFormat::from_path(path);
+        if matches!(format, OutputFormat::Html) {
+            return Err!(
+                "The printable HTML report is not available for the Spanish tax statement yet. \
+                 Write the statement to a .csv path instead");
+        }
 
-        spain::CsvFormatter::write(&statement, &mut writer)?;
+        write_atomically(path, |writer| spain::CsvFormatter::write(&statement, writer))?;
 
         println!(
             "{}",
-            Color::Green.paint(format!("Spanish tax statement written to {path:?}"))
+            Color::Green.paint(format!("Spanish tax {} written to {path:?}", format.description()))
         );
     }
 
@@ -497,10 +508,10 @@ fn generate_german_tax_statement(
     // Output the statement. The extension selects the format: `.html` is the printable A4 report,
     // anything else the CSV.
     if let Some(path) = output_path {
-        let format = GermanOutputFormat::from_path(path);
+        let format = OutputFormat::from_path(path);
         write_atomically(path, |writer| match format {
-            GermanOutputFormat::Csv => germany::CsvFormatter::write(&statement, writer),
-            GermanOutputFormat::Html => {
+            OutputFormat::Csv => germany::CsvFormatter::write(&statement, writer),
+            OutputFormat::Html => {
                 let meta = germany::ReportMeta {
                     year,
                     broker_name: broker_statement.broker.name.to_owned(),
@@ -638,26 +649,26 @@ fn generate_german_tax_statement(
 }
 
 #[derive(Clone, Copy)]
-enum GermanOutputFormat {
+enum OutputFormat {
     Csv,
     Html,
 }
 
-impl GermanOutputFormat {
-    fn from_path(path: &Path) -> GermanOutputFormat {
+impl OutputFormat {
+    fn from_path(path: &Path) -> OutputFormat {
         let extension = path.extension()
             .and_then(|extension| extension.to_str())
             .map(|extension| extension.to_ascii_lowercase());
         match extension.as_deref() {
-            Some("html") | Some("htm") => GermanOutputFormat::Html,
-            _ => GermanOutputFormat::Csv,
+            Some("html") | Some("htm") => OutputFormat::Html,
+            _ => OutputFormat::Csv,
         }
     }
 
     fn description(self) -> &'static str {
         match self {
-            GermanOutputFormat::Csv => "statement (CSV)",
-            GermanOutputFormat::Html => "report (HTML)",
+            OutputFormat::Csv => "statement (CSV)",
+            OutputFormat::Html => "report (HTML)",
         }
     }
 }
@@ -667,6 +678,12 @@ impl GermanOutputFormat {
 fn write_atomically<F>(path: &Path, write: F) -> EmptyResult
     where F: FnOnce(&mut BufWriter<File>) -> EmptyResult
 {
+    // A rename replaces a symlink instead of following it, which would leave the file the user
+    // actually tracks stale while the run reports success. Resolve the link first so the replace
+    // lands on its target. A path that does not exist yet has nothing to resolve.
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = resolved.as_path();
+
     let mut temp_path = path.as_os_str().to_os_string();
     temp_path.push(format!(".{}.tmp", std::process::id()));
     let temp_path = std::path::PathBuf::from(temp_path);
@@ -681,10 +698,115 @@ fn write_atomically<F>(path: &Path, write: F) -> EmptyResult
         format!("Failed to write {temp_path:?}: {e}")
     })?;
 
+    carry_permissions(path, &temp_path).map_err(|e| {
+        let _ = fs::remove_file(&temp_path);
+        format!("Failed to carry the permissions of {path:?} over to {temp_path:?}: {e}")
+    })?;
+
     fs::rename(&temp_path, path).map_err(|e| {
         let _ = fs::remove_file(&temp_path);
         format!("Failed to rename {temp_path:?} to {path:?}: {e}")
     })?;
 
     Ok(())
+}
+
+// A tax statement holds real trading data and the user may well have restricted it, but the rename
+// carries the temporary file's mode, not the target's, so an existing 0600 file would come back
+// 0644 unless its mode is copied over first.
+#[cfg(unix)]
+fn carry_permissions(target: &Path, temp_path: &Path) -> EmptyResult {
+    if let Ok(metadata) = fs::metadata(target) {
+        fs::set_permissions(temp_path, metadata.permissions())?;
+    }
+    Ok(())
+}
+
+// Windows Permissions carry only the read-only flag, which cannot help here (a read-only target
+// already refuses the rename) and can hurt: a read-only temporary file also refuses the cleanup
+// that follows a failed rename, leaving it behind.
+#[cfg(not(unix))]
+fn carry_permissions(_target: &Path, _temp_path: &Path) -> EmptyResult {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn output_format_follows_the_extension() {
+        for path in ["a.html", "a.htm", "a.HTML", "a.Htm"] {
+            assert!(matches!(OutputFormat::from_path(Path::new(path)), OutputFormat::Html),
+                    "{path} should select the HTML report");
+        }
+        for path in ["a.csv", "a.CSV", "a.txt", "a", "a.html.csv"] {
+            assert!(matches!(OutputFormat::from_path(Path::new(path)), OutputFormat::Csv),
+                    "{path} should select the CSV statement");
+        }
+    }
+
+    #[test]
+    fn write_atomically_leaves_no_temporary_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("statement.csv");
+
+        write_atomically(&path, |writer| Ok(writer.write_all(b"first")?)).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+
+        // A failing write leaves the previous contents in place and cleans up after itself.
+        let error = write_atomically(&path, |writer| {
+            writer.write_all(b"partial")?;
+            Err!("the formatter gave up")
+        }).unwrap_err().to_string();
+        assert!(error.contains("the formatter gave up"), "{error}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+
+        let leftovers: Vec<String> = fs::read_dir(dir.path()).unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "statement.csv")
+            .collect();
+        assert!(leftovers.is_empty(), "temporary files survived: {leftovers:?}");
+    }
+
+    /// A symlinked output path must reach the file it points at. A bare rename would replace the
+    /// link with a regular file and leave that target holding stale figures, while the run still
+    /// reported success.
+    #[cfg(unix)]
+    #[test]
+    fn write_atomically_follows_a_symlinked_output_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("statement.csv");
+        let link = dir.path().join("latest.csv");
+
+        write_atomically(&target, |writer| Ok(writer.write_all(b"first")?)).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        write_atomically(&link, |writer| Ok(writer.write_all(b"second")?)).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "second");
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+                "the link was replaced instead of followed");
+    }
+
+    /// A mode the user tightened by hand must survive the next run; the rename would otherwise
+    /// hand the target the temp file's fresh 0644.
+    #[cfg(unix)]
+    #[test]
+    fn write_atomically_keeps_the_permissions_of_an_existing_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("statement.csv");
+
+        write_atomically(&path, |writer| Ok(writer.write_all(b"first")?)).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_atomically(&path, |writer| Ok(writer.write_all(b"second")?)).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the statement became readable by others");
+    }
 }

@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Informativer Steuerbericht 2024</title>
+<style>
+@page { size: A4 landscape; margin: 12mm; }
+
+:root {
+  --ink: #0f172a;
+  --ink-2: #334155;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --line-2: #cbd5e1;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --primary: #14305c;
+  --accent: #0f766e;
+  --accent-soft: #e6f4f2;
+  --neg: #c2410c;
+  --danger-line: #dc2626;
+  --danger-bg: #fef2f2;
+  --warn-line: #f59e0b;
+  --warn-bg: #fffbeb;
+  --info-line: #0ea5e9;
+  --info-bg: #f0f9ff;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--surface);
+  font: 9.5pt/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-feature-settings: "tnum" 1, "cv11" 1;
+}
+
+@media screen {
+  body { max-width: 277mm; margin: 0 auto; padding: 14mm 12mm; }
+  section { border-top: 1px solid var(--line); margin-top: 14mm; padding-top: 8mm; }
+}
+
+h1 {
+  color: var(--primary);
+  font-size: 26pt;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 8pt;
+}
+h2 {
+  color: var(--primary);
+  font-size: 16pt;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin: 0 0 8pt;
+  padding-left: 10pt;
+  border-left: 4px solid var(--accent);
+}
+h3 { color: var(--ink); font-size: 11.5pt; font-weight: 650; margin: 14pt 0 4pt; }
+h4 { color: var(--ink); font-size: 10.5pt; font-weight: 600; margin: 12pt 0 2pt; }
+p { margin: 0 0 6pt; color: var(--ink-2); }
+ul, ol { margin: 0 0 6pt; padding-left: 18pt; color: var(--ink-2); }
+li { margin: 0 0 2pt; }
+li::marker { color: var(--accent); }
+b { color: var(--ink); }
+code { font-size: 0.9em; background: var(--surface-3); padding: 0 3pt; border-radius: 3px; }
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 8.5pt;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0 0 4pt;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6pt; list-style: none; margin: 0 0 12pt; padding: 0; }
+.chip {
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 8.5pt;
+  padding: 2pt 9pt;
+  margin: 0;
+}
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8pt; margin: 0 0 12pt; }
+.kpi {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9pt 11pt;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+}
+.kpi .label {
+  color: var(--muted);
+  font-size: 7.5pt;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 3pt;
+}
+.kpi .value { color: var(--primary); font-size: 15pt; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi .value.neg { color: var(--neg); }
+.kpi .hint { color: var(--muted); font-size: 7.5pt; margin-top: 2pt; }
+.meta { color: var(--muted); font-size: 8.5pt; }
+.security-id { color: var(--muted); font-size: 8.5pt; margin: 0 0 4pt; }
+.fine { color: var(--muted); font-size: 8pt; }
+
+.disclaimer {
+  border-left: 4px solid var(--danger-line);
+  background: var(--danger-bg);
+  border-radius: 0 8px 8px 0;
+  padding: 8pt 12pt;
+  margin: 8pt 0 10pt;
+}
+.disclaimer h3 { color: #991b1b; font-size: 10.5pt; margin: 0 0 4pt; }
+.disclaimer p { font-size: 8.5pt; }
+
+.note { border: 1px solid var(--line); border-left-width: 4px; border-radius: 0 8px 8px 0; padding: 7pt 10pt; margin: 6pt 0; color: var(--ink-2); }
+.note.info { background: var(--info-bg); border-color: #bae6fd; border-left-color: var(--info-line); }
+.note.warn { background: var(--warn-bg); border-color: #fde68a; border-left-color: var(--warn-line); }
+
+nav .toc { columns: 2; column-gap: 24pt; padding-left: 20pt; }
+nav .toc li { break-inside: avoid; margin: 0 0 3pt; }
+nav .toc li::marker { color: var(--accent); font-weight: 700; }
+nav .toc a { color: var(--ink); text-decoration: none; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8pt;
+  margin: 4pt 0 12pt;
+}
+thead { display: table-header-group; }
+thead th {
+  background: var(--surface-3);
+  color: var(--ink-2);
+  font-size: 7.25pt;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 4pt 5pt;
+  vertical-align: bottom;
+  border-bottom: 1.5px solid var(--primary);
+}
+tbody td { padding: 3pt 5pt; vertical-align: top; border-bottom: 1px solid var(--line); color: var(--ink); }
+tbody tr.data:nth-child(even) td { background: #fbfcfe; }
+tbody tr.lot td { color: var(--muted); font-size: 7.5pt; }
+tbody tr.subtotal td { font-weight: 600; background: var(--surface-2); border-top: 1px solid var(--line-2); }
+tbody tr.total td { font-weight: 700; background: var(--accent-soft); border-top: 2px solid var(--primary); border-bottom: none; }
+.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.neg { color: var(--neg); }
+
+section { break-before: page; page-break-before: always; }
+tr, .note, .disclaimer, .kpi { break-inside: avoid; page-break-inside: avoid; }
+h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
+table { orphans: 3; widows: 3; }
+
+@media print {
+  a { color: inherit; }
+  .no-print { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="hero">
+<p class="eyebrow">Steuerjahr 2024 · Einkünfte aus Kapitalvermögen</p>
+<h1>Informativer Steuerbericht für 2024</h1>
+<ul class="chips">
+<li class="chip">Interactive Brokers LLC</li>
+<li class="chip">Depot: ib</li>
+<li class="chip">Konto-ID: U1234567</li>
+<li class="chip">Zeitraum: 01.01.2024 – 31.12.2024</li>
+</ul>
+<div class="kpis">
+<div class="kpi"><div class="label">Anlage KAP Zeile 19</div><div class="value">0,00 €</div><div class="hint">Ausländische Kapitalerträge</div></div>
+<div class="kpi"><div class="label">Steuerpflichtig</div><div class="value">0,00 €</div><div class="hint">nach Verlustverrechnung und Sparer-Pauschbetrag</div></div>
+<div class="kpi"><div class="label">Voraussichtliche Steuer</div><div class="value">0,00 €</div><div class="hint">Abgeltungsteuer inkl. Zuschläge, nach Anrechnung</div></div>
+<div class="kpi"><div class="label">Anrechenbare Quellensteuer</div><div class="value">0,00 €</div><div class="hint">Anlage KAP Zeile 41</div></div>
+</div>
+<div class="disclaimer">
+<h3>⚠️ Hinweis &amp; Haftungsausschluss</h3>
+<p>Dieser Bericht wurde nach <b>bestem Wissen und mit großer Sorgfalt</b> aus den Kontoauszügen Ihres Brokers erstellt. Bitte beachten Sie, dass es sich um eine <b>automatisierte Auswertung</b> handelt und Sie die Angaben vor Verwendung in Ihrer Steuererklärung prüfen sollten.</p>
+<p>Der Bericht stellt <b>keine steuerliche Beratung</b> dar, sondern unterstützt Privatanleger bei der eigenständigen Erstellung ihrer Steuererklärung – ähnlich den Jahresübersichten, die von Banken oder Brokern bereitgestellt werden. Verbindlich sind ausschließlich Ihre eigene Steuererklärung sowie die Beurteilung durch Ihr Finanzamt. Es wird empfohlen, beim Finanzamt zusätzlich die <b>offiziellen Kontoauszüge</b> als Nachweis einzureichen.</p>
+<p>Für die Vollständigkeit und Richtigkeit der dargestellten Informationen kann <b>keine Haftung</b> übernommen werden.</p>
+</div>
+<p>Dieser Bericht wurde auf Basis der von <b>Interactive Brokers LLC</b> exportierten Kontoauszüge erstellt. Er dient als technische Aufbereitung und Zusammenfassung sämtlicher im Steuerjahr angefallenen Transaktionen, Erträge und Verluste. Die Daten wurden automatisiert verarbeitet, nach den Vorgaben des <b>deutschen Steuerrechts</b> analysiert und den entsprechenden Zeilen der Steuerformulare (insbesondere <b>Anlage KAP</b>, <b>Anlage KAP-INV</b> und <b>Anlage SO</b>) zugeordnet. Veräußerungsgewinne werden nach dem FIFO-Prinzip ermittelt.</p>
+<p>Alle Beträge werden mit dem <b>EZB-Referenzkurs</b> des Buchungstags in EUR umgerechnet (bei echten Devisengeschäften mit dem tatsächlichen Ausführungskurs).</p>
+<p class="meta">Erstellt am 15.01.2026 12:00 mit <code>investments</code> (Steuerjahr 2024).</p>
+</header>
+<nav id="inhalt">
+<h2 class="first">Inhalt</h2>
+<ol class="toc">
+<li><a href="#steuerformulare">Übersicht für die Steuerformulare</a></li>
+<li><a href="#steuerberechnung">Steuerberechnung (Abgeltungsteuer)</a></li>
+<li><a href="#wertpapiertransaktionen">Wertpapiertransaktionen</a></li>
+<li><a href="#offene-positionen">Offene Positionen zum Jahresende</a></li>
+<li><a href="#vorabpauschale">Vorabpauschale (§18 InvStG)</a></li>
+<li><a href="#wertpapieruebersicht">Wertpapierübersicht</a></li>
+<li><a href="#hinweise">Hinweise und Warnungen</a></li>
+</ol>
+</nav>
+<section id="steuerformulare">
+<h2>Übersicht für die Steuerformulare</h2>
+<p>Diese Tabelle zeigt eine <b>Jahresübersicht aller steuerlich relevanten Beträge</b>, aufgeschlüsselt nach den <b>Zeilen der deutschen Steuerformulare</b> (Anlage KAP, Anlage KAP-INV und Anlage SO). Die Werte sind das Ergebnis der Auswertung Ihrer Transaktionsdaten. Sie berücksichtigen u. a.:</p>
+<ul>
+<li><b>Kapitaleinkünfte</b> wie Dividenden, Zinsen und Gewinne aus Aktienveräußerungen,</li>
+<li><b>Verluste</b>, getrennt nach Aktienverkäufen und sonstigen Kapitalanlagen (§20 Abs. 6 EStG),</li>
+<li><b>Anrechenbare ausländische Quellensteuer</b> (§32d Abs. 5 EStG, pauschal bis 15 % des Bruttoertrags),</li>
+<li><b>Investmentfonds-Erträge</b> (Ausschüttungen, Veräußerungsgewinne, Vorabpauschale) nach InvStG,</li>
+<li><b>Sonstige Einkünfte nach §23 EStG</b>, z. B. Fremdwährungsgewinne eines unverzinslichen Kontos.</li>
+</ul>
+<table>
+<thead><tr><th class="col">Steuerformular</th><th class="col num">Betrag (EUR)</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">Anlage KAP Zeile 19 – Ausländische Kapitalerträge (ohne Beträge aus den Zeilen 26a und 52)</td><td class="cell num">0,00</td></tr>
+</tbody>
+</table>
+</section>
+<section id="steuerberechnung">
+<h2>Steuerberechnung (Abgeltungsteuer)</h2>
+<p>Schätzung der Abgeltungsteuer nach §32d EStG auf die in diesem Bericht ermittelten Kapitalerträge: Verlustverrechnung nach Töpfen (§20 Abs. 6 EStG), Sparer-Pauschbetrag, Anrechnung ausländischer Quellensteuer (§32d Abs. 5 EStG). <b>Maßgeblich ist allein die Festsetzung durch das Finanzamt.</b></p>
+<table>
+<thead><tr><th class="col">Position</th><th class="col num">Betrag (EUR)</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">Veräußerungsgewinne</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Veräußerungsverluste</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Dividenden und Ausschüttungen</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Zinsen</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Fremdwährungsgewinne (§20 EStG)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Fremdwährungsverluste (§20 EStG)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Sparer-Pauschbetrag (§20 Abs. 9 EStG)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">davon in Anspruch genommen</td><td class="cell num">0,00</td></tr>
+<tr class="subtotal"><td class="cell">Steuerpflichtige Kapitalerträge (nach Verlustverrechnung und Sparer-Pauschbetrag)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Abgeltungsteuer (25 %)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Solidaritätszuschlag (5,5 % der Abgeltungsteuer)</td><td class="cell num">0,00</td></tr>
+<tr class="subtotal"><td class="cell">Deutsche Steuer gesamt</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Gezahlte ausländische Quellensteuer</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">davon anrechenbar (§32d Abs. 5 EStG; bereits in der Steuer berücksichtigt)</td><td class="cell num">0,00</td></tr>
+<tr class="total"><td class="cell">Voraussichtliche Steuerschuld (nach Anrechnung)</td><td class="cell num">0,00</td></tr>
+</tbody>
+</table>
+</section>
+<section id="wertpapiertransaktionen">
+<h2>Wertpapiertransaktionen</h2>
+<p>Diese Tabelle zeigt alle <b>einzelnen Wertpapiertransaktionen</b> aus Ihrem Konto im chronologischen Detail. Sie dient als vollständige Dokumentation aller Kauf- und Verkaufsorders im Steuerjahr.</p>
+<h4>Was enthält diese Übersicht?</h4>
+<ul>
+<li><b>Handelsinformationen:</b> Datum, Valuta, Symbol, ISIN, Wertpapiername</li>
+<li><b>Order-Details:</b> Kauf/Verkauf, Anzahl der Anteile, Preis pro Anteil</li>
+<li><b>Kosten &amp; Gebühren:</b> Kommissionen</li>
+<li><b>Währungen:</b> Originalwährung und umgerechnete Beträge in EUR (EZB-Kurs des Valutatags)</li>
+<li><b>Transaktions-IDs:</b> Eindeutige Identifikationsnummern des Brokers, soweit im Kontoauszug enthalten</li>
+</ul>
+<p><b>Hinweis:</b> Diese Tabelle zeigt die Rohdaten aller Trades. Die steuerlich relevanten Berechnungen (FIFO-Gewinne und -Verluste) finden Sie in der Tabelle „Gewinne und Verluste aus Wertpapiergeschäften“. Vorzeichen aus Sicht des Kontos: Käufe negativ, Verkäufe positiv.</p>
+<h4>ISHARES CORE MSCI WORLD</h4>
+<p class="security-id">ISIN: <b>IE00B4L5Y983</b> | Symbol: <b>EUNL</b></p>
+<table>
+<thead><tr><th class="col">Währung</th><th class="col num">EZB-Kurs</th><th class="col">Datum</th><th class="col">Valuta</th><th class="col">ID</th><th class="col">Art</th><th class="col num">Menge</th><th class="col num">Kurs</th><th class="col num">Erlös</th><th class="col num">Gebühren</th><th class="col num">Netto</th><th class="col num">Betrag EUR</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">EUR</td><td class="cell num">1,0000</td><td class="cell">02.01.2024</td><td class="cell">04.01.2024</td><td class="cell"></td><td class="cell">Kauf</td><td class="cell num">100</td><td class="cell num">80,00</td><td class="cell num neg">-8.000,00</td><td class="cell num">0,00</td><td class="cell num neg">-8.000,00</td><td class="cell num neg">-8.000,00</td></tr>
+<tr class="total"><td class="cell">Gesamt</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">100</td><td class="cell"></td><td class="cell num neg">-8.000,00</td><td class="cell num">0,00</td><td class="cell num neg">-8.000,00</td><td class="cell num neg">-8.000,00</td></tr>
+</tbody>
+</table>
+</section>
+<section id="offene-positionen">
+<h2>Offene Positionen zum Jahresende – verbleibende Bestände zum 31.12.2024</h2>
+<p>Diese Tabelle zeigt alle Wertpapierpositionen, die am Ende des Steuerjahres noch im Depot gehalten wurden. Sie dokumentiert, welche Bestände in das Folgejahr übertragen werden – inklusive ihrer ursprünglichen steuerlichen Anschaffungskosten. Jede Zeile entspricht einer noch offenen Kauf-Tranche im Wertpapier-FIFO-Stack (<b>§20 Abs. 4 Satz 7 EStG</b>).</p>
+<h4>Spalten</h4>
+<ul>
+<li><b>Anschaffungsdatum:</b> Ursprüngliches Anschaffungsdatum der Tranche.</li>
+<li><b>ID:</b> Transaktionsnummer der ursprünglichen Anschaffung, soweit bekannt.</li>
+<li><b>Transaktionstyp:</b> Kauf, Zuteilung (RSU) oder Kapitalmaßnahme.</li>
+<li><b>Menge:</b> Anzahl der Stücke, die zum Stichtag noch im Bestand sind.</li>
+<li><b>Betrag EUR:</b> Steuerlich relevante Anschaffungskosten dieser Tranche in Euro (inkl. Kaufgebühren, EZB-Referenzkurs des Anschaffungstags).</li>
+</ul>
+<h4>Hinweis zur Vorabpauschale</h4>
+<p>Für Investmentfonds (ETFs) nach dem InvStG bilden diese Jahresendbestände die Grundlage für die Berechnung der Vorabpauschale gemäß <b>§18 InvStG</b> im Folgejahr.</p>
+<h3>Aktienfonds</h3>
+<table>
+<thead><tr><th class="col">Name</th><th class="col">ISIN</th><th class="col">Anschaffungsdatum</th><th class="col">ID</th><th class="col">Transaktionstyp</th><th class="col num">Menge</th><th class="col num">Kurs</th><th class="col num">Betrag EUR</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">ISHARES CORE MSCI WORLD</td><td class="cell">IE00B4L5Y983</td><td class="cell">02.01.2024</td><td class="cell"></td><td class="cell">Kauf</td><td class="cell num">100</td><td class="cell num">80,00 EUR</td><td class="cell num">8.000,00</td></tr>
+<tr class="subtotal"><td class="cell">Gesamt – ISHARES CORE MSCI WORLD</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">100</td><td class="cell"></td><td class="cell num">8.000,00</td></tr>
+<tr class="total"><td class="cell">Gesamt</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">8.000,00</td></tr>
+</tbody>
+</table>
+</section>
+<section id="vorabpauschale">
+<h2>Vorabpauschale (§18 InvStG)</h2>
+<p>Für Investmentfonds, die am 31.12.2024 gehalten wurden, gilt eine fiktive Mindestbesteuerung: die <b>Vorabpauschale</b>. Sie ergibt sich aus dem Wert zu Jahresbeginn, dem Basiszins und den Ausschüttungen des Jahres, ist auf den Wertzuwachs begrenzt und gilt am ersten Werktag des Folgejahres als zugeflossen. Sie ist daher <b>Einkunft des Jahres 2025</b> und <b>nicht in den Steuerformular-Werten</b> in diesem Bericht enthalten. Bei einem späteren Verkauf mindert die kumulierte Vorabpauschale den Veräußerungsgewinn (§19 InvStG).</p>
+<div class="note warn">Für folgende zum Jahresende gehaltene Fonds konnte keine Vorabpauschale berechnet werden, weil die Rücknahmepreise zum 01.01. und 31.12. nicht konfiguriert sind (<code>taxes.fund_nav</code>): IE00B4L5Y983</div>
+</section>
+<section id="wertpapieruebersicht">
+<h2>Wertpapierübersicht</h2>
+<p>Diese Tabelle zeigt eine <b>vollständige Übersicht aller Wertpapiere</b>, die im Steuerjahr gehandelt oder gehalten wurden. Für jedes Wertpapier werden die wichtigsten Identifikationsmerkmale und die steuerliche Klassifizierung dargestellt.</p>
+<h4>⚠️ Hinweise zur Kategorisierung</h4>
+<ul>
+<li>Die <b>Asset-Kategorisierung</b> (Aktie vs. Fondsart) folgt der Konfiguration je ISIN (<code>taxes.etf_classification</code>); nicht klassifizierte Wertpapiere gelten als Aktien.</li>
+<li>Bei <b>komplexen Finanzprodukten</b> (z. B. strukturierte Produkte, Royalty Trusts, Limited Partnerships oder MLP) kann eine manuelle Überprüfung der steuerlichen Einordnung erforderlich sein.</li>
+<li>Das <b>Land</b> wird aus dem ISIN-Präfix abgeleitet und entspricht nicht immer dem Sitz des Emittenten (z. B. irische ETF-Vehikel).</li>
+</ul>
+<table>
+<thead><tr><th class="col">Symbol</th><th class="col">ISIN</th><th class="col">Name</th><th class="col">Land</th><th class="col">Währung</th><th class="col">Asset-Kategorie</th><th class="col">Teilfreistellung (InvStG)</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">EUNL</td><td class="cell">IE00B4L5Y983</td><td class="cell">ISHARES CORE MSCI WORLD</td><td class="cell">Irland (IE)</td><td class="cell">EUR</td><td class="cell">Aktienfonds</td><td class="cell">30 % (Aktienfonds)</td></tr>
+</tbody>
+</table>
+</section>
+<section id="hinweise">
+<h2>Hinweise und Warnungen</h2>
+<h3>Warnungen</h3>
+<div class="note warn">⚠️ Vorabpauschale nicht berechnet (fehlende Rücknahmepreise): IE00B4L5Y983.</div>
+<h3>Methodik und Grenzen</h3>
+<ul>
+<li>Veräußerungsgewinne werden je Verkauf nach dem FIFO-Prinzip (§20 Abs. 4 Satz 7 EStG) aus den tatsächlichen Anschaffungskosten inklusive Kaufgebühren ermittelt; Verkaufsgebühren mindern den Erlös.</li>
+<li>Fremdwährungsbeträge werden mit dem EZB-Referenzkurs des jeweiligen Buchungstags umgerechnet (Erlöse und Anschaffungskosten am Valutatag, Gebühren am Handelstag); echte Devisengeschäfte mit dem Ausführungskurs.</li>
+<li>Ausländische Quellensteuer wird pauschal bis zur Höhe von 15 % des Bruttoertrags (typischer DBA-Satz) und höchstens 25 % des steuerpflichtigen Betrags als anrechenbar ausgewiesen. Eine länderspezifische DBA-Tabelle ist nicht hinterlegt; bei abweichenden Sätzen (z. B. Schweiz, Frankreich) bitte manuell prüfen. Fondsausschüttungen sind nach InvStG nicht anrechenbar.</li>
+<li>Derivate, Optionen und Termingeschäfte werden nicht ausgewertet; entsprechende Zeilen des Kontoauszugs wurden übersprungen.</li>
+<li>Die Klassifizierung von Fonds (Teilfreistellung) folgt der Konfiguration je ISIN; nicht klassifizierte Wertpapiere gelten als Aktien.</li>
+<li>Die Steuerberechnung ist eine Schätzung ohne Berücksichtigung persönlicher Verhältnisse (Günstigerprüfung, Freistellungsaufträge bei anderen Instituten, sonstige Kapitalerträge).</li>
+</ul>
+</section>
+</body>
+</html>

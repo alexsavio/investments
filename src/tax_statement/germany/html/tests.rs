@@ -2,12 +2,20 @@
 //! statement itself (the report only re-punctuates `format_eur` output), so these tests pin the
 //! document shape, escaping and the reconciliation of the worksheet rows with the tax entries.
 
-use crate::time::{self, Date, Period};
+use std::path::PathBuf;
+
+use rstest::rstest;
+
+use crate::instruments::EtfClassification;
+use crate::tax_statement::golden::GoldenCorpus;
+use crate::tax_statement::html::format::punctuate;
+use crate::taxes::TaxConfig;
+use crate::time::{self, Date, DateTime, Period};
 
 use super::super::report_details::{BookingKind, FxTreatment, TradeSide};
 use super::super::tests::{run_pipeline, run_pipeline_with_config};
 use super::super::{GermanTaxStatement, format_eur};
-use super::format::{eur, germanize};
+use super::format::eur;
 use super::{HtmlReport, ReportMeta};
 
 fn meta(year: i32) -> ReportMeta {
@@ -81,7 +89,7 @@ fn amounts_are_the_statement_figures_in_german_notation() {
     assert!(html.contains(">900,00<"));
     assert_eq!(
         eur(statement.kap_zeile_19),
-        germanize(&format_eur(statement.kap_zeile_19))
+        punctuate(&format_eur(statement.kap_zeile_19))
     );
 
     // Instrument name and ISIN from the Flex export reach the report.
@@ -103,6 +111,23 @@ fn markup_in_names_is_escaped() {
 
     assert!(html.contains("A&lt;B&amp;C &quot;quoted&quot;"));
     assert!(!html.contains("A<B&C"));
+}
+
+/// The Altbestand flag is derived in the renderer from the lot's own acquisition date, not carried
+/// on the row, and no fixture holds a pre-2009 lot — so this is the only thing pinning the cutoff.
+#[test]
+fn lots_acquired_before_2009_are_marked_altbestand() {
+    let mut statement = run_pipeline("fifo", 2024);
+    assert!(!render(&statement).contains("Altbestand (vor 2009)"));
+
+    let lot = &mut statement.report.sales[0].lots[0];
+    lot.open_date = Date::from_ymd_opt(2008, 12, 31).unwrap();
+    assert!(render(&statement).contains("Altbestand (vor 2009)"));
+
+    // The cutoff is exclusive: 1 January 2009 is already new stock.
+    let lot = &mut statement.report.sales[0].lots[0];
+    lot.open_date = Date::from_ymd_opt(2009, 1, 1).unwrap();
+    assert!(!render(&statement).contains("Altbestand (vor 2009)"));
 }
 
 #[test]
@@ -297,3 +322,98 @@ fn fx_ledger_flows_from_statement_of_funds_into_the_report() {
     assert!(html.contains("§20 steuerpflichtig"));
     assert!(html.contains(">20,00<"));
 }
+
+fn corpus() -> GoldenCorpus {
+    GoldenCorpus::new(
+        "src/tax_statement/germany/testdata/golden",
+        "UPDATE_GOLDEN=1 cargo test --lib germany::html::tests",
+    )
+}
+
+/// A meta block with a constant `generated_at`, so the rendered document is reproducible.
+fn fixed_meta(year: i32) -> ReportMeta {
+    ReportMeta {
+        generated_at: DateTime::new(
+            Date::from_ymd_opt(2026, 1, 15).unwrap(),
+            crate::time::Time::from_hms_opt(12, 0, 0).unwrap(),
+        ),
+        ..meta(year)
+    }
+}
+
+/// Per-case tax configuration. Most fixtures need none; the fund fixture needs its classification.
+type Configure = fn() -> TaxConfig;
+
+fn no_classification() -> TaxConfig {
+    TaxConfig::default()
+}
+
+/// The fixture's ETF is an equity fund, which is what puts a Teilfreistellung rate on the report.
+fn equity_fund() -> TaxConfig {
+    let mut config = TaxConfig::default();
+    config
+        .etf_classification
+        .insert("IE00B4L5Y983".to_owned(), EtfClassification::Equity);
+    config
+}
+
+/// The rendered report, byte for byte, over the committed fixtures. The renderer is a pure function
+/// of the statement and the meta block, so the only non-reproducible input is the generation
+/// timestamp, which [`fixed_meta`] freezes; every other figure comes out of the pipeline the binary
+/// runs. Regenerate with `UPDATE_GOLDEN=1 cargo test --lib germany::html::tests`.
+///
+/// One committed golden per case:
+///
+/// - `fifo` — two FIFO sale worksheets with their lots, the raw trades and the security overview.
+/// - `dividend_withholding` — the cash bookings, the withholding section and an open lot.
+/// - `fx_ledger` — the foreign-currency ledger with a §20 taxable disposal.
+/// - `vorabpauschale` — the fund sections: Vorabpauschale, Teilfreistellung and the open lots.
+/// - `derivative` — instruments the tool declines to tax, and the notes that say so.
+/// - `short_position` — a position with no automatic treatment, surfaced for manual review.
+#[rstest]
+#[case::fifo("fifo_2024", "fifo", 2024, no_classification)]
+#[case::dividend_withholding(
+    "dividend_withholding_2024",
+    "dividend_withholding",
+    2024,
+    no_classification
+)]
+#[case::fx_ledger("fx_ledger_2024", "fx_ledger", 2024, no_classification)]
+#[case::vorabpauschale("vorabpauschale_2024", "vorabpauschale", 2024, equity_fund)]
+#[case::derivative("derivative_2024", "derivative", 2024, no_classification)]
+#[case::short_position("short_position_2024", "short_position", 2024, no_classification)]
+fn rendered_report_matches_its_golden(
+    #[case] golden: &str,
+    #[case] fixture: &str,
+    #[case] year: i32,
+    #[case] configure: Configure,
+) {
+    let statement = run_pipeline_with_config(fixture, year, &configure());
+
+    let mut emitted = Vec::new();
+    HtmlReport::write(&statement, &fixed_meta(year), &mut emitted).unwrap();
+    let emitted = String::from_utf8(emitted).expect("the report must be valid UTF-8");
+
+    corpus().assert(golden, "html", &emitted);
+}
+
+#[test]
+fn every_golden_file_belongs_to_a_case() {
+    let corpus = corpus();
+    let claimed: Vec<PathBuf> = CORPUS
+        .iter()
+        .map(|name| corpus.path(name, "html"))
+        .collect();
+    corpus.assert_no_orphans(&claimed, &["html"]);
+}
+
+/// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than
+/// derived from it: `rstest` does not expose its cases to another test.
+const CORPUS: [&str; 6] = [
+    "fifo_2024",
+    "dividend_withholding_2024",
+    "fx_ledger_2024",
+    "vorabpauschale_2024",
+    "derivative_2024",
+    "short_position_2024",
+];
