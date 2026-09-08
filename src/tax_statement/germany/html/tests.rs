@@ -2,7 +2,14 @@
 //! statement itself (the report only re-punctuates `format_eur` output), so these tests pin the
 //! document shape, escaping and the reconciliation of the worksheet rows with the tax entries.
 
-use crate::time::{self, Date, Period};
+use std::path::PathBuf;
+
+use rstest::rstest;
+
+use crate::instruments::EtfClassification;
+use crate::tax_statement::golden::GoldenCorpus;
+use crate::taxes::TaxConfig;
+use crate::time::{self, Date, DateTime, Period};
 
 use super::super::report_details::{BookingKind, FxTreatment, TradeSide};
 use super::super::tests::{run_pipeline, run_pipeline_with_config};
@@ -297,3 +304,94 @@ fn fx_ledger_flows_from_statement_of_funds_into_the_report() {
     assert!(html.contains("§20 steuerpflichtig"));
     assert!(html.contains(">20,00<"));
 }
+
+/// The rendered report, byte for byte, over the committed fixtures.
+///
+/// The renderer is a pure function of the statement and the meta block, so the only non-reproducible
+/// input is the generation timestamp, which [`fixed_meta`] freezes. Every other figure in the file
+/// comes out of the same pipeline the binary runs.
+///
+/// Regenerate with `UPDATE_GOLDEN=1 cargo test --lib germany::html::tests`, then read the diff.
+fn corpus() -> GoldenCorpus {
+    GoldenCorpus::new(
+        "src/tax_statement/germany/testdata/golden",
+        "UPDATE_GOLDEN=1 cargo test --lib germany::html::tests",
+    )
+}
+
+/// A meta block with a constant `generated_at`, so the rendered document is reproducible.
+fn fixed_meta(year: i32) -> ReportMeta {
+    ReportMeta {
+        generated_at: DateTime::new(
+            Date::from_ymd_opt(2026, 1, 15).unwrap(),
+            crate::time::Time::from_hms_opt(12, 0, 0).unwrap(),
+        ),
+        ..meta(year)
+    }
+}
+
+/// Per-case tax configuration. Most fixtures need none; the fund fixture needs its classification.
+type Configure = fn() -> TaxConfig;
+
+fn no_classification() -> TaxConfig {
+    TaxConfig::default()
+}
+
+/// The fixture's ETF is an equity fund, which is what puts a Teilfreistellung rate on the report.
+fn equity_fund() -> TaxConfig {
+    let mut config = TaxConfig::default();
+    config
+        .etf_classification
+        .insert("IE00B4L5Y983".to_owned(), EtfClassification::Equity);
+    config
+}
+
+/// The corpus, one committed golden per case:
+///
+/// - `fifo` — two FIFO sale worksheets with their lots, the raw trades and the security overview.
+/// - `dividend_withholding` — the cash bookings, the withholding section and an open lot.
+/// - `fx_ledger` — the foreign-currency ledger with a §20 taxable disposal.
+/// - `vorabpauschale` — the fund sections: Vorabpauschale, Teilfreistellung and the open lots.
+#[rstest]
+#[case::fifo("fifo_2024", "fifo", 2024, no_classification)]
+#[case::dividend_withholding(
+    "dividend_withholding_2024",
+    "dividend_withholding",
+    2024,
+    no_classification
+)]
+#[case::fx_ledger("fx_ledger_2024", "fx_ledger", 2024, no_classification)]
+#[case::vorabpauschale("vorabpauschale_2024", "vorabpauschale", 2024, equity_fund)]
+fn rendered_report_matches_its_golden(
+    #[case] golden: &str,
+    #[case] fixture: &str,
+    #[case] year: i32,
+    #[case] configure: Configure,
+) {
+    let statement = run_pipeline_with_config(fixture, year, &configure());
+
+    let mut emitted = Vec::new();
+    HtmlReport::write(&statement, &fixed_meta(year), &mut emitted).unwrap();
+    let emitted = String::from_utf8(emitted).expect("the report must be valid UTF-8");
+
+    corpus().assert(golden, "html", &emitted);
+}
+
+#[test]
+fn every_golden_file_belongs_to_a_case() {
+    let corpus = corpus();
+    let claimed: Vec<PathBuf> = CORPUS
+        .iter()
+        .map(|name| corpus.path(name, "html"))
+        .collect();
+    corpus.assert_no_orphans(&claimed, &["html"]);
+}
+
+/// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than
+/// derived from it: `rstest` does not expose its cases to another test.
+const CORPUS: [&str; 4] = [
+    "fifo_2024",
+    "dividend_withholding_2024",
+    "fx_ledger_2024",
+    "vorabpauschale_2024",
+];

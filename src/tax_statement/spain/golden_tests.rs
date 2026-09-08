@@ -8,17 +8,8 @@
 //! fixture under `testdata/`, through the same `compute_tax_year` → `CsvFormatter::write` path the
 //! binary uses. Nothing here reads a real broker statement, so the corpus is safe to commit.
 //!
-//! # Regenerating
-//!
-//! When a change to the emitted statement is **intentional**, rewrite the corpus with:
-//!
-//! ```sh
-//! UPDATE_GOLDEN=1 cargo test --lib spain::golden_tests
-//! ```
-//!
-//! then read the resulting `git diff` line by line: that diff is the whole point of the corpus, and
-//! a golden nobody reviewed is worth no more than no golden at all. A plain `cargo test` never
-//! writes to `testdata/golden/`.
+//! Regenerate with `UPDATE_GOLDEN=1 cargo test --lib spain::golden_tests`; see
+//! [`crate::tax_statement::golden`].
 
 use std::path::PathBuf;
 
@@ -28,6 +19,7 @@ use crate::broker_statement::{BrokerStatement, ReadingStrictness};
 use crate::config::{Config, PortfolioConfig};
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::converter::{CurrencyConverter, CurrencyConverterBackend};
+use crate::tax_statement::golden::GoldenCorpus;
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::{SpanishTaxConfig, TaxConfig};
 use crate::time::{self, Date};
@@ -110,12 +102,11 @@ fn rcm_saldo_8000(config: &mut SpanishTaxConfig) {
     config.loss_carryforward.rcm.insert(2025, dec!(8000));
 }
 
-fn golden_dir() -> PathBuf {
-    PathBuf::from("src/tax_statement/spain/testdata/golden")
-}
-
-fn golden_path(name: &str) -> PathBuf {
-    golden_dir().join(format!("{name}.csv"))
+fn corpus() -> GoldenCorpus {
+    GoldenCorpus::new(
+        "src/tax_statement/spain/testdata/golden",
+        "UPDATE_GOLDEN=1 cargo test --lib spain::golden_tests",
+    )
 }
 
 /// The corpus. Each case is one committed golden; the regimes listed against a fixture are the ones
@@ -185,31 +176,14 @@ fn emitted_statement_matches_its_golden(
     CsvFormatter::write(&spanish, &mut emitted).unwrap();
     let emitted = String::from_utf8(emitted).expect("the statement must be valid UTF-8");
 
-    assert_golden(golden, &emitted);
+    corpus().assert(golden, "csv", &emitted);
 }
 
-/// A golden that no case claims is a golden nobody checks. Catches a renamed case leaving its file
-/// behind, and a hand-added file that never had a test.
 #[test]
 fn every_golden_file_belongs_to_a_case() {
-    let claimed: Vec<PathBuf> = CORPUS.iter().map(|name| golden_path(name)).collect();
-
-    let mut orphans = Vec::new();
-    for entry in std::fs::read_dir(golden_dir()).expect("the golden corpus directory must exist") {
-        let path = entry.unwrap().path();
-        if path.extension().is_some_and(|extension| extension == "csv") && !claimed.contains(&path)
-        {
-            orphans.push(path.display().to_string());
-        }
-    }
-    orphans.sort();
-
-    assert!(
-        orphans.is_empty(),
-        "golden files with no case in `emitted_statement_matches_its_golden`: {}. Delete them or \
-         add the case they were written for.",
-        orphans.join(", ")
-    );
+    let corpus = corpus();
+    let claimed: Vec<PathBuf> = CORPUS.iter().map(|name| corpus.path(name, "csv")).collect();
+    corpus.assert_no_orphans(&claimed, &["csv"]);
 }
 
 /// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than
@@ -228,79 +202,3 @@ const CORPUS: [&str; 12] = [
     "small_disposal_comun_2026",
     "small_disposal_mixed_navarra_2026",
 ];
-
-/// Compare against the committed golden, or rewrite it under `UPDATE_GOLDEN`.
-fn assert_golden(name: &str, emitted: &str) {
-    let path = golden_path(name);
-
-    if std::env::var_os("UPDATE_GOLDEN").is_some() {
-        std::fs::create_dir_all(golden_dir()).unwrap();
-        std::fs::write(&path, emitted)
-            .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
-        return;
-    }
-
-    let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "failed to read the golden {}: {error}. If this case is new, create it with \
-             `UPDATE_GOLDEN=1 cargo test --lib spain::golden_tests`, then read the file before \
-             committing it.",
-            path.display()
-        )
-    });
-
-    if expected == emitted {
-        return;
-    }
-
-    panic!("{}", describe_difference(name, &expected, emitted));
-}
-
-/// The first differing line, in context. A whole-file dump of two 60-line statements tells a reader
-/// nothing they can act on; the line number and its neighbours do.
-fn describe_difference(name: &str, expected: &str, emitted: &str) -> String {
-    const CONTEXT: usize = 3;
-
-    let expected_lines: Vec<&str> = expected.lines().collect();
-    let emitted_lines: Vec<&str> = emitted.lines().collect();
-
-    let first_difference = expected_lines
-        .iter()
-        .zip(&emitted_lines)
-        .position(|(a, b)| a != b)
-        .unwrap_or_else(|| expected_lines.len().min(emitted_lines.len()));
-
-    let mut report = format!(
-        "golden `{name}` no longer matches the emitted statement.\n  \
-         file: {}\n  \
-         first difference at line {} (golden has {} lines, the statement has {})\n\n",
-        golden_path(name).display(),
-        first_difference + 1,
-        expected_lines.len(),
-        emitted_lines.len(),
-    );
-
-    let start = first_difference.saturating_sub(CONTEXT);
-    for (offset, line) in expected_lines[start..first_difference].iter().enumerate() {
-        report += &format!("  {:>4} | {line}\n", start + offset + 1);
-    }
-
-    match expected_lines.get(first_difference) {
-        Some(line) => report += &format!("- {:>4} | {line}\n", first_difference + 1),
-        None => report += "-      | <the golden ends here>\n",
-    }
-    match emitted_lines.get(first_difference) {
-        Some(line) => report += &format!("+ {:>4} | {line}\n", first_difference + 1),
-        None => report += "+      | <the statement ends here>\n",
-    }
-
-    let tail_start = first_difference + 1;
-    let tail_end = expected_lines.len().min(tail_start + CONTEXT);
-    for (offset, line) in expected_lines[tail_start.min(tail_end)..tail_end].iter().enumerate() {
-        report += &format!("  {:>4} | {line}\n", tail_start + offset + 1);
-    }
-
-    report += "\nIf the change is intended, regenerate with \
-               `UPDATE_GOLDEN=1 cargo test --lib spain::golden_tests` and review the diff.";
-    report
-}

@@ -2,6 +2,8 @@ mod dividends;
 mod eur;
 mod fx_fifo;
 pub mod germany;
+#[cfg(test)]
+mod golden;
 mod interest;
 pub mod spain;
 mod statement;
