@@ -166,6 +166,22 @@ Original step detail:
   under all three regimes and read back as PDF (21–23 pages each): the FIFO worksheets, the currency
   ledger, the page breaks and the column widths all hold.
 
+Left for later, deliberately:
+
+- **`collect_open_lots` ignores stock splits** (`src/tax_statement/report/collect.rs:90`). It pushes
+  `buy.get_unsold()` raw, while `BrokerStatement::open_positions`
+  (`src/broker_statement/mod.rs:706-710`) multiplies the same quantity by
+  `stock_splits.get_multiplier(...)`. An instrument that split after purchase and is still held
+  therefore shows its pre-split share count in "Posiciones abiertas". `cost_eur` and `price` stay
+  consistent with each other, so only the count contradicts the account. Found by review of this
+  PR, but the code and the bug are shared: Germany's "Offene Positionen" prints the same, and fixing
+  it rewrites six German goldens. It belongs in its own PR, where that diff is the change under
+  review rather than noise beside a new report.
+- **`WithholdingRow.currency` is the dividend's, not the withholding's** (`processor.rs`). The two
+  are the same in every statement the tool has seen, and Germany does the same; a broker that
+  withheld in a different currency would label the `Retenido` cell wrongly. The EUR columns and the
+  rate are unaffected.
+
 Original step detail:
 
 ### B1. `src/tax_statement/spain/forms.rs` (CSV goldens are the safety net)
