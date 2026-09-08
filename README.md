@@ -11,7 +11,7 @@ Helps you with managing your investments:
 * **Automatic tax statement generation:** reads broker statements and generates tax reports:
   * **Russia:** Alters *.deX file (created by Russian tax program named Декларация) by adding all required information about income from stock selling, paid dividends and idle cash interest.
   * **Germany:** Generates CSV tax reports with Abgeltungssteuer, Solidaritätszuschlag, Kirchensteuer calculations, Teilfreistellung for ETFs, and foreign tax credits. See [Germany tax documentation](docs/germany-taxes.md).
-  * **Spain:** Generates CSV tax reports for the IRPF savings base under the Gipuzkoa foral regime (Norma Foral 3/2014), Territorio Común (LIRPF) or Navarra (Decreto Foral Legislativo 4/2008), with per-lot actualization coefficients, the valores-homogéneos deferral rule, four-year loss compensation, the double-taxation credit, and Navarra's own compensation order, 3% fee ceiling and €3,000 small-disposals exemption. See [Spain tax documentation](docs/spain-taxes.md).
+  * **Spain:** Generates CSV tax reports and a printable A4 report for the IRPF savings base under the Gipuzkoa foral regime (Norma Foral 3/2014), Territorio Común (LIRPF) or Navarra (Decreto Foral Legislativo 4/2008), with per-lot actualization coefficients, the valores-homogéneos deferral rule, four-year loss compensation, the double-taxation credit, and Navarra's own compensation order, 3% fee ceiling and €3,000 small-disposals exemption. See [Spain tax documentation](docs/spain-taxes.md).
 * **Bank deposits control:** view opened bank deposits all in one place and get notified about upcoming deposit closures.
 * **Metrics:** exports analysis results in Prometheus format.
 
@@ -81,10 +81,11 @@ investments tax-statement ib 2024 german-tax-2024.csv
 investments tax-statement ib 2024 german-tax-2024.html
 ```
 
-**Spain:** See [instructions for Spanish tax statement generation](docs/spain-taxes.md). Generate a CSV report with:
+**Spain:** See [instructions for Spanish tax statement generation](docs/spain-taxes.md). Generate a CSV report or a printable A4 report with:
 
 ```bash
 investments tax-statement ib 2026 spanish-tax-2026.csv
+investments tax-statement ib 2026 spanish-tax-2026.html
 ```
 
 <a name="simulate-sell"></a>

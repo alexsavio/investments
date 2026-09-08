@@ -1,12 +1,12 @@
-//! Golden-CSV regression tests.
+//! Golden regression tests for both emitted artefacts: the CSV statement and the printable report.
 //!
-//! Pins the complete emitted statement, byte for byte, for a set of committed fixtures under every
-//! regime, so any unintended change to a value, a label, a row order or a banner shows up as a diff
-//! in `cargo test` rather than in a filer's return.
+//! Pins each of them, byte for byte, for a set of committed fixtures under every regime, so any
+//! unintended change to a value, a label, a row order or a banner shows up as a diff in
+//! `cargo test` rather than in a filer's return.
 //!
 //! Every golden under `testdata/golden/` is produced by this file from a committed synthetic
-//! fixture under `testdata/`, through the same `compute_tax_year` → `CsvFormatter::write` path the
-//! binary uses. Nothing here reads a real broker statement, so the corpus is safe to commit.
+//! fixture under `testdata/`, through the same `compute_tax_year` → writer path the binary uses.
+//! Nothing here reads a real broker statement, so the corpus is safe to commit.
 //!
 //! Regenerate with `UPDATE_GOLDEN=1 cargo test --lib spain::golden_tests`; see
 //! [`crate::tax_statement::golden`].
@@ -22,10 +22,10 @@ use crate::currency::converter::{CurrencyConverter, CurrencyConverterBackend};
 use crate::tax_statement::golden::GoldenCorpus;
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::{SpanishTaxConfig, TaxConfig};
-use crate::time::{self, Date};
+use crate::time::{self, Date, DateTime, Period};
 use crate::types::Decimal;
 
-use super::CsvFormatter;
+use super::{CsvFormatter, HtmlReport, ReportMeta};
 
 /// Fixed EUR conversion backend: every non-EUR currency converts to EUR at 0.9, independent of
 /// date. Duplicated from the sibling `tests` module, which keeps it private; ~20 test-only lines
@@ -179,12 +179,83 @@ fn emitted_statement_matches_its_golden(
     corpus().assert(golden, "csv", &emitted);
 }
 
+/// A meta block with a constant `generated_at`, so the rendered report is reproducible. Everything
+/// else in it is fixed too: the renderer is a pure function of the statement and this block.
+fn fixed_meta(year: i32) -> ReportMeta {
+    ReportMeta {
+        year,
+        broker_name: "Interactive Brokers LLC".to_owned(),
+        portfolio_name: "ib".to_owned(),
+        account_id: Some("U1234567".to_owned()),
+        period: Period::new(
+            Date::from_ymd_opt(year, 1, 1).unwrap(),
+            Date::from_ymd_opt(year, 12, 31).unwrap(),
+        )
+        .unwrap(),
+        generated_at: DateTime::new(
+            Date::from_ymd_opt(2026, 1, 15).unwrap(),
+            crate::time::Time::from_hms_opt(12, 0, 0).unwrap(),
+        ),
+    }
+}
+
+/// The rendered report, byte for byte, over four of the fixtures above: one per regime, plus the
+/// deferral case whose section exists in no other.
+///
+/// - `fifo_gipuzkoa_2026` — the FIFO worksheets with their per-lot actualization coefficients.
+/// - `income_comun_2026` — the cash bookings, the withholding table and the credit.
+/// - `cross_offset_navarra_2026_saldo` — the compensation ledgers and the conditional F-93 boxes.
+/// - `wash_sale_multi_lot_gipuzkoa_2026` — the valores-homogéneos section and the carry-out block.
+#[rstest]
+#[case::fifo_gipuzkoa(
+    "fifo_gipuzkoa_2026", "fifo", 2026, SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+#[case::income_comun(
+    "income_comun_2026", "income", 2026, SpanishTaxRegime::Comun, no_opening_balances)]
+#[case::cross_offset_navarra(
+    "cross_offset_navarra_2026_saldo", "cross_offset", 2026,
+    SpanishTaxRegime::Navarra, rcm_saldo_2000)]
+#[case::wash_sale_multi_lot_gipuzkoa(
+    "wash_sale_multi_lot_gipuzkoa_2026", "wash_sale_multi_lot", 2026,
+    SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+fn rendered_report_matches_its_golden(
+    #[case] golden: &str,
+    #[case] fixture: &str,
+    #[case] year: i32,
+    #[case] regime: SpanishTaxRegime,
+    #[case] configure: Configure,
+) {
+    let mut config = spain_config(regime);
+    configure(config.spain.as_mut().unwrap());
+
+    let statement = read_fixture(fixture);
+    let (spanish, _has_income) =
+        super::compute_tax_year(&statement, year, &converter(), &config).unwrap();
+
+    let mut emitted = Vec::new();
+    HtmlReport::write(&spanish, &fixed_meta(year), &mut emitted).unwrap();
+    let emitted = String::from_utf8(emitted).expect("the report must be valid UTF-8");
+
+    corpus().assert(golden, "html", &emitted);
+}
+
 #[test]
 fn every_golden_file_belongs_to_a_case() {
     let corpus = corpus();
-    let claimed: Vec<PathBuf> = CORPUS.iter().map(|name| corpus.path(name, "csv")).collect();
-    corpus.assert_no_orphans(&claimed, &["csv"]);
+    let claimed: Vec<PathBuf> = CORPUS
+        .iter()
+        .map(|name| corpus.path(name, "csv"))
+        .chain(REPORT_CORPUS.iter().map(|name| corpus.path(name, "html")))
+        .collect();
+    corpus.assert_no_orphans(&claimed, &["csv", "html"]);
 }
+
+/// The file stems of the report cases above, in case order.
+const REPORT_CORPUS: [&str; 4] = [
+    "fifo_gipuzkoa_2026",
+    "income_comun_2026",
+    "cross_offset_navarra_2026_saldo",
+    "wash_sale_multi_lot_gipuzkoa_2026",
+];
 
 /// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than
 /// derived from it: `rstest` does not expose its cases to another test.

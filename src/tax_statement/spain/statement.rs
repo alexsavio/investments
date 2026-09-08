@@ -908,11 +908,6 @@ impl SpanishTaxStatement {
         self.custody_fee_cap_fraction
     }
 
-    /// Whether the regime exempts a year of small onerous transmissions.
-    pub(super) fn small_disposals_exemption_applies(&self) -> bool {
-        self.small_disposals_exemption_applies
-    }
-
     /// Prior-year saldos this year crossed into the other savings-base group.
     pub fn prior_cross_offset(&self) -> Decimal {
         self.prior_cross_offset_rcm_to_gyp + self.prior_cross_offset_gyp_to_rcm

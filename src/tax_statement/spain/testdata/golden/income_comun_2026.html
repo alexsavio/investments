@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Informe fiscal informativo 2026</title>
+<style>
+@page { size: A4 landscape; margin: 12mm; }
+
+:root {
+  --ink: #0f172a;
+  --ink-2: #334155;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --line-2: #cbd5e1;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --primary: #14305c;
+  --accent: #0f766e;
+  --accent-soft: #e6f4f2;
+  --neg: #c2410c;
+  --danger-line: #dc2626;
+  --danger-bg: #fef2f2;
+  --warn-line: #f59e0b;
+  --warn-bg: #fffbeb;
+  --info-line: #0ea5e9;
+  --info-bg: #f0f9ff;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--surface);
+  font: 9.5pt/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-feature-settings: "tnum" 1, "cv11" 1;
+}
+
+@media screen {
+  body { max-width: 277mm; margin: 0 auto; padding: 14mm 12mm; }
+  section { border-top: 1px solid var(--line); margin-top: 14mm; padding-top: 8mm; }
+}
+
+h1 {
+  color: var(--primary);
+  font-size: 26pt;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 8pt;
+}
+h2 {
+  color: var(--primary);
+  font-size: 16pt;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin: 0 0 8pt;
+  padding-left: 10pt;
+  border-left: 4px solid var(--accent);
+}
+h3 { color: var(--ink); font-size: 11.5pt; font-weight: 650; margin: 14pt 0 4pt; }
+h4 { color: var(--ink); font-size: 10.5pt; font-weight: 600; margin: 12pt 0 2pt; }
+p { margin: 0 0 6pt; color: var(--ink-2); }
+ul, ol { margin: 0 0 6pt; padding-left: 18pt; color: var(--ink-2); }
+li { margin: 0 0 2pt; }
+li::marker { color: var(--accent); }
+b { color: var(--ink); }
+code { font-size: 0.9em; background: var(--surface-3); padding: 0 3pt; border-radius: 3px; }
+
+.eyebrow {
+  color: var(--accent);
+  font-size: 8.5pt;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0 0 4pt;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6pt; list-style: none; margin: 0 0 12pt; padding: 0; }
+.chip {
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 8.5pt;
+  padding: 2pt 9pt;
+  margin: 0;
+}
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8pt; margin: 0 0 12pt; }
+.kpi {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9pt 11pt;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+}
+.kpi .label {
+  color: var(--muted);
+  font-size: 7.5pt;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 3pt;
+}
+.kpi .value { color: var(--primary); font-size: 15pt; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi .value.neg { color: var(--neg); }
+.kpi .hint { color: var(--muted); font-size: 7.5pt; margin-top: 2pt; }
+.meta { color: var(--muted); font-size: 8.5pt; }
+.security-id { color: var(--muted); font-size: 8.5pt; margin: 0 0 4pt; }
+.fine { color: var(--muted); font-size: 8pt; }
+
+.disclaimer {
+  border-left: 4px solid var(--danger-line);
+  background: var(--danger-bg);
+  border-radius: 0 8px 8px 0;
+  padding: 8pt 12pt;
+  margin: 8pt 0 10pt;
+}
+.disclaimer h3 { color: #991b1b; font-size: 10.5pt; margin: 0 0 4pt; }
+.disclaimer p { font-size: 8.5pt; }
+
+.note { border: 1px solid var(--line); border-left-width: 4px; border-radius: 0 8px 8px 0; padding: 7pt 10pt; margin: 6pt 0; color: var(--ink-2); }
+.note.info { background: var(--info-bg); border-color: #bae6fd; border-left-color: var(--info-line); }
+.note.warn { background: var(--warn-bg); border-color: #fde68a; border-left-color: var(--warn-line); }
+
+nav .toc { columns: 2; column-gap: 24pt; padding-left: 20pt; }
+nav .toc li { break-inside: avoid; margin: 0 0 3pt; }
+nav .toc li::marker { color: var(--accent); font-weight: 700; }
+nav .toc a { color: var(--ink); text-decoration: none; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8pt;
+  margin: 4pt 0 12pt;
+}
+thead { display: table-header-group; }
+thead th {
+  background: var(--surface-3);
+  color: var(--ink-2);
+  font-size: 7.25pt;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 4pt 5pt;
+  vertical-align: bottom;
+  border-bottom: 1.5px solid var(--primary);
+}
+tbody td { padding: 3pt 5pt; vertical-align: top; border-bottom: 1px solid var(--line); color: var(--ink); }
+tbody tr.data:nth-child(even) td { background: #fbfcfe; }
+tbody tr.lot td { color: var(--muted); font-size: 7.5pt; }
+tbody tr.subtotal td { font-weight: 600; background: var(--surface-2); border-top: 1px solid var(--line-2); }
+tbody tr.total td { font-weight: 700; background: var(--accent-soft); border-top: 2px solid var(--primary); border-bottom: none; }
+.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.neg { color: var(--neg); }
+
+section { break-before: page; page-break-before: always; }
+tr, .note, .disclaimer, .kpi { break-inside: avoid; page-break-inside: avoid; }
+h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
+table { orphans: 3; widows: 3; }
+
+@media print {
+  a { color: inherit; }
+  .no-print { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="hero">
+<p class="eyebrow">Ejercicio 2026 · Base del ahorro · Territorio Común (Ley 35/2006)</p>
+<h1>Informe fiscal informativo 2026</h1>
+<ul class="chips">
+<li class="chip">Interactive Brokers LLC</li>
+<li class="chip">Cartera: ib</li>
+<li class="chip">Cuenta: U1234567</li>
+<li class="chip">Periodo: 01/01/2026 – 31/12/2026</li>
+<li class="chip">Régimen: Territorio Común (Ley 35/2006)</li>
+</ul>
+<div class="kpis">
+<div class="kpi"><div class="label">Base liquidable del ahorro</div><div class="value">945,00 €</div><div class="hint">tras la compensación entre grupos</div></div>
+<div class="kpi"><div class="label">Cuota íntegra del ahorro</div><div class="value">179,55 €</div><div class="hint">escala del ahorro del ejercicio</div></div>
+<div class="kpi"><div class="label">Deducción por doble imposición</div><div class="value">135,00 €</div><div class="hint">retenciones en origen imputables</div></div>
+<div class="kpi"><div class="label">Cuota líquida del ahorro</div><div class="value">44,55 €</div><div class="hint">cuota íntegra menos deducción</div></div>
+</div>
+<div class="disclaimer">
+<h3>⚠️ Aviso y limitación de responsabilidad</h3>
+<p>Este informe se ha elaborado <b>con el mayor cuidado</b> a partir de los extractos de su bróker. Se trata de una <b>liquidación automatizada</b> y conviene revisar cada importe antes de trasladarlo a la declaración.</p>
+<p>El informe <b>no constituye asesoramiento fiscal</b>: sirve de apoyo al contribuyente que presenta su propia declaración, como los resúmenes anuales que entregan bancos y brókers. Sólo son vinculantes su propia declaración y la liquidación de la Administración. Se recomienda conservar los <b>extractos oficiales</b> como justificante.</p>
+<p>No se asume <b>ninguna responsabilidad</b> por la integridad ni por la exactitud de la información presentada.</p>
+</div>
+<p>Este informe parte de los extractos exportados por <b>Interactive Brokers LLC</b> y resume las operaciones, los rendimientos y las pérdidas del ejercicio, asignándolos a las casillas del <b>Modelo 100</b>. Las transmisiones se valoran por el método <b>FIFO</b>, y los rendimientos y ganancias se integran en la <b>base del ahorro</b>.</p>
+<p>Los importes en divisa se convierten a euros con el <b>tipo de cambio de referencia del BCE</b> de la fecha de cada apunte (los ingresos de una venta y el coste de cada lote, con el de su fecha valor).</p>
+<p class="meta">Generado el 15/01/2026 12:00 con <code>investments</code> (ejercicio 2026).</p>
+</header>
+<nav id="indice">
+<h2 class="first">Índice</h2>
+<ol class="toc">
+<li><a href="#formularios">Resumen para los formularios</a></li>
+<li><a href="#calculo">Cálculo del impuesto</a></li>
+<li><a href="#actividad">Resumen por actividad y categoría</a></li>
+<li><a href="#valores">Ganancias y pérdidas por valor</a></li>
+<li><a href="#movimientos">Movimientos de efectivo</a></li>
+<li><a href="#retenciones">Retenciones en origen</a></li>
+<li><a href="#relacion-valores">Relación de valores</a></li>
+<li><a href="#avisos">Avisos y observaciones</a></li>
+</ol>
+</nav>
+<section id="formularios">
+<h2>Resumen para los formularios</h2>
+<p>Esta tabla indica en qué <b>casilla</b> del <b>Modelo 100</b> va cada importe del ejercicio. Los valores son el resultado de la liquidación de sus operaciones; compruebe cada casilla contra el impreso de su propia campaña antes de trasladarla.</p>
+<div class="note warn"><b>MODELO 100 — declaración del IRPF (AEAT)</b> — WARNING: these are the ejercicio-2025 box numbers, read from Anexo I of the Orden HAC/277/2026 CONSULTATION DRAFT — the AEAT publishes a filing year&#39;s form in the spring of the following one, so no enacted numbering exists yet. Verify every casilla against your filing year&#39;s own form before entering it.</div>
+<table>
+<thead><tr><th class="col">Formulario</th><th class="col">Casilla</th><th class="col">Concepto</th><th class="col num">Importe (EUR)</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">Modelo 100</td><td class="cell">0027</td><td class="cell">Intereses de cuentas y depósitos (rendimientos del capital mobiliario)</td><td class="cell num">90,00</td></tr>
+<tr class="data"><td class="cell">Modelo 100</td><td class="cell">0029</td><td class="cell">Dividendos y participaciones en beneficios (excluida la renta exenta)</td><td class="cell num">900,00</td></tr>
+<tr class="data"><td class="cell">Modelo 100</td><td class="cell">0037</td><td class="cell">Gastos de administración y depósito (art. 26.1.a)</td><td class="cell num">45,00</td></tr>
+<tr class="data"><td class="cell">Modelo 100</td><td class="cell">0326_0340</td><td class="cell">Ganancias y pérdidas por transmisión de acciones cotizadas (casillas 0326-0340)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Modelo 100</td><td class="cell">0460</td><td class="cell">Base liquidable del ahorro (tras compensación)</td><td class="cell num">945,00</td></tr>
+<tr class="data"><td class="cell">Modelo 100</td><td class="cell">0588</td><td class="cell">Deducción por doble imposición internacional</td><td class="cell num">135,00</td></tr>
+</tbody>
+</table>
+<div class="note warn">Los <b>270,00</b> EUR retenidos en el extranjero <b>no son una retención española</b> y no van en la casilla 0597, que es para el impuesto retenido en España. Se recuperan únicamente a través de la deducción por doble imposición internacional; consignarlos en ambos sitios los reclama dos veces.</div>
+</section>
+<section id="calculo">
+<h2>Cálculo del impuesto</h2>
+<p>Liquidación de la <b>base del ahorro</b> del ejercicio: los dos grupos se integran por separado, se compensan entre sí y con los saldos negativos de ejercicios anteriores en el orden que marca el régimen, y la escala se aplica <b>una sola vez</b> sobre la base resultante. <b>Sólo es vinculante la liquidación de la Administración.</b></p>
+<h3>Rendimientos del capital mobiliario</h3>
+<table>
+<thead><tr><th class="col">Concepto</th><th class="col num">Importe (EUR)</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">Dividendos y distribuciones (íntegros)</td><td class="cell num">900,00</td></tr>
+<tr class="data"><td class="cell">Intereses cobrados</td><td class="cell num">90,00</td></tr>
+<tr class="data"><td class="cell">Gastos deducibles de administración y depósito</td><td class="cell num neg">-45,00</td></tr>
+<tr class="total"><td class="cell">Rendimiento neto del capital mobiliario</td><td class="cell num">945,00</td></tr>
+</tbody>
+</table>
+<h3>Ganancias y pérdidas patrimoniales</h3>
+<table>
+<thead><tr><th class="col">Concepto</th><th class="col num">Importe (EUR)</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">Transmisiones de valores (importe integrable)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Ganancias y pérdidas por conversión de divisa</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Pérdidas diferidas por valores homogéneos (no deducibles este año)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Pérdidas diferidas reintegradas al transmitirse los valores que las bloqueaban</td><td class="cell num">0,00</td></tr>
+<tr class="total"><td class="cell">Saldo de ganancias y pérdidas patrimoniales</td><td class="cell num">0,00</td></tr>
+</tbody>
+</table>
+<h3>Compensación</h3>
+<table>
+<thead><tr><th class="col">Concepto</th><th class="col num">Importe (EUR)</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">Saldos negativos de ejercicios anteriores aplicados al propio grupo (RCM) — fase 2ª-1º</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Saldos negativos de ejercicios anteriores aplicados al propio grupo (ganancias) — fase 2ª-1º</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Compensación cruzada RCM → ganancias — fase 1ª (25% — sólo Territorio Común)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Compensación cruzada ganancias → RCM — fase 1ª (25% — sólo Territorio Común)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Compensación cruzada RCM → ganancias — fase 2ª-2º (saldos de ejercicios anteriores)</td><td class="cell num">0,00</td></tr>
+<tr class="data"><td class="cell">Compensación cruzada ganancias → RCM — fase 2ª-2º (saldos de ejercicios anteriores)</td><td class="cell num">0,00</td></tr>
+<tr class="subtotal"><td class="cell">RCM integrado en la base del ahorro</td><td class="cell num">945,00</td></tr>
+<tr class="subtotal"><td class="cell">Ganancias integradas en la base del ahorro</td><td class="cell num">0,00</td></tr>
+<tr class="total"><td class="cell">Base liquidable del ahorro</td><td class="cell num">945,00</td></tr>
+</tbody>
+</table>
+<h3>Escala del ahorro</h3>
+<table>
+<thead><tr><th class="col num">Tramo desde</th><th class="col num">Tipo</th><th class="col num">Base en el tramo</th><th class="col num">Cuota</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell num">0,00</td><td class="cell num">19 %</td><td class="cell num">945,00</td><td class="cell num">179,55</td></tr>
+<tr class="total"><td class="cell">Cuota íntegra del ahorro</td><td class="cell"></td><td class="cell num">945,00</td><td class="cell num">179,55</td></tr>
+</tbody>
+</table>
+<p>Tipo medio de gravamen del ahorro: <b>19 %</b>. Es el que limita la deducción por doble imposición, y se toma redondeado a cuatro decimales tal y como lo fija la escala.</p>
+<h3>Deducción por doble imposición internacional</h3>
+<table>
+<thead><tr><th class="col">Concepto</th><th class="col num">Importe (EUR)</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">Retenciones practicadas en el extranjero</td><td class="cell num">270,00</td></tr>
+<tr class="data"><td class="cell">Renta bruta obtenida en el extranjero</td><td class="cell num">900,00</td></tr>
+<tr class="data"><td class="cell">Renta neta extranjera integrada en la base (base del límite del tipo medio)</td><td class="cell num">859,09</td></tr>
+<tr class="data"><td class="cell">Deducción por doble imposición internacional</td><td class="cell num">135,00</td></tr>
+<tr class="total"><td class="cell">Cuota líquida del ahorro</td><td class="cell num">44,55</td></tr>
+</tbody>
+</table>
+</section>
+<section id="actividad">
+<h2>Resumen por actividad y categoría</h2>
+<p>Resumen de todas las operaciones del ejercicio por <b>categoría de activo</b> y <b>tipo de actividad</b>, con el grupo de la base del ahorro al que van. Los importes son los que se integran, ya netos de la parte diferida por valores homogéneos, que se muestra en su propia columna.</p>
+<table>
+<thead><tr><th class="col">Categoría</th><th class="col">Actividad</th><th class="col num">Ganancias EUR</th><th class="col num">Pérdidas EUR</th><th class="col num">Neto EUR</th><th class="col num">Diferido EUR</th><th class="col">Grupo</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">Acciones</td><td class="cell">Dividendos y distribuciones</td><td class="cell num">900,00</td><td class="cell num">0,00</td><td class="cell num">900,00</td><td class="cell num">0,00</td><td class="cell">Rendimientos del capital mobiliario</td></tr>
+<tr class="data"><td class="cell">Acciones</td><td class="cell">Retenciones en origen</td><td class="cell num">0,00</td><td class="cell num neg">-270,00</td><td class="cell num neg">-270,00</td><td class="cell num">0,00</td><td class="cell">Informativo (fuera de la base del ahorro)</td></tr>
+<tr class="data"><td class="cell">Efectivo</td><td class="cell">Intereses cobrados</td><td class="cell num">90,00</td><td class="cell num">0,00</td><td class="cell num">90,00</td><td class="cell num">0,00</td><td class="cell">Rendimientos del capital mobiliario</td></tr>
+<tr class="data"><td class="cell">Efectivo</td><td class="cell">Comisiones de administración y depósito (deducibles)</td><td class="cell num">0,00</td><td class="cell num neg">-45,00</td><td class="cell num neg">-45,00</td><td class="cell num">0,00</td><td class="cell">Rendimientos del capital mobiliario</td></tr>
+<tr class="total"><td class="cell">TOTAL</td><td class="cell"></td><td class="cell num">990,00</td><td class="cell num neg">-315,00</td><td class="cell num">675,00</td><td class="cell num">0,00</td><td class="cell"></td></tr>
+</tbody>
+</table>
+</section>
+<section id="valores">
+<h2>Ganancias y pérdidas por valor</h2>
+<p>Desglose por valor de todo lo que el ejercicio integró: <b>dividendos y sus retenciones</b> y <b>resultados de las transmisiones</b>. Sirve para contrastar el informe contra sus propios extractos posición a posición.</p>
+<h3>Acciones</h3>
+<table>
+<thead><tr><th class="col">Valor</th><th class="col">ISIN</th><th class="col num">Dividendos brutos</th><th class="col num">Retenido</th><th class="col num">Ganancias EUR</th><th class="col num">Pérdidas EUR</th><th class="col num">Diferido EUR</th><th class="col num">Neto integrable</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">AAPL</td><td class="cell"></td><td class="cell num">900,00</td><td class="cell num neg">-270,00</td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">0,00</td></tr>
+<tr class="total"><td class="cell">Total</td><td class="cell"></td><td class="cell num">900,00</td><td class="cell num neg">-270,00</td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">0,00</td></tr>
+</tbody>
+</table>
+</section>
+<section id="movimientos">
+<h2>Movimientos de efectivo</h2>
+<p>Todos los <b>apuntes de efectivo</b> del ejercicio con efecto fiscal: dividendos y distribuciones, retenciones practicadas en origen, intereses y comisiones. Se muestran en la divisa original y en euros, al tipo de cambio de referencia del BCE de la fecha del apunte. El signo es el de la cuenta: los cargos son negativos.</p>
+<h3>Dividendos y distribuciones</h3>
+<table>
+<thead><tr><th class="col">Divisa</th><th class="col">Fecha</th><th class="col">Categoría</th><th class="col">ISIN</th><th class="col">Valor</th><th class="col">Concepto</th><th class="col num">Importe</th><th class="col num">Tipo BCE</th><th class="col num">Importe EUR</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">USD</td><td class="cell">20/05/2026</td><td class="cell">Acciones</td><td class="cell"></td><td class="cell">AAPL</td><td class="cell">AAPL dividend from 20.05.2026</td><td class="cell num">1.000,00</td><td class="cell num">0,9000</td><td class="cell num">900,00</td></tr>
+<tr class="total"><td class="cell">Total</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">900,00</td></tr>
+</tbody>
+</table>
+<h3>Retenciones en origen</h3>
+<table>
+<thead><tr><th class="col">Divisa</th><th class="col">Fecha</th><th class="col">Categoría</th><th class="col">ISIN</th><th class="col">Valor</th><th class="col">Concepto</th><th class="col num">Importe</th><th class="col num">Tipo BCE</th><th class="col num">Importe EUR</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">USD</td><td class="cell">20/05/2026</td><td class="cell">Acciones</td><td class="cell"></td><td class="cell">AAPL</td><td class="cell">Retención en origen: AAPL dividend from 20.05.2026</td><td class="cell num neg">-300,00</td><td class="cell num">0,9000</td><td class="cell num neg">-270,00</td></tr>
+<tr class="total"><td class="cell">Total</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num neg">-270,00</td></tr>
+</tbody>
+</table>
+<h3>Intereses</h3>
+<table>
+<thead><tr><th class="col">Divisa</th><th class="col">Fecha</th><th class="col">Categoría</th><th class="col">ISIN</th><th class="col">Valor</th><th class="col">Concepto</th><th class="col num">Importe</th><th class="col num">Tipo BCE</th><th class="col num">Importe EUR</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">USD</td><td class="cell">30/06/2026</td><td class="cell">Efectivo</td><td class="cell"></td><td class="cell"></td><td class="cell">Broker interest received</td><td class="cell num">100,00</td><td class="cell num">0,9000</td><td class="cell num">90,00</td></tr>
+<tr class="total"><td class="cell">Total</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">90,00</td></tr>
+</tbody>
+</table>
+<h3>Comisiones y gastos</h3>
+<table>
+<thead><tr><th class="col">Divisa</th><th class="col">Fecha</th><th class="col">Categoría</th><th class="col">ISIN</th><th class="col">Valor</th><th class="col">Concepto</th><th class="col num">Importe</th><th class="col num">Tipo BCE</th><th class="col num">Importe EUR</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">USD</td><td class="cell">15/07/2026</td><td class="cell">Efectivo</td><td class="cell"></td><td class="cell"></td><td class="cell">CUSTODY FEE</td><td class="cell num neg">-50,00</td><td class="cell num">0,9000</td><td class="cell num neg">-45,00</td></tr>
+<tr class="total"><td class="cell">Total</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num neg">-45,00</td></tr>
+</tbody>
+</table>
+</section>
+<section id="retenciones">
+<h2>Retenciones en origen</h2>
+<p>Detalle de las <b>retenciones practicadas en el extranjero</b> sobre dividendos y rendimientos asimilados. Es la base de la <b>deducción por doble imposición internacional</b>, que evita — hasta donde puede — que la misma renta tribute dos veces.</p>
+<h4>Cómo se calcula</h4>
+<ul>
+<li>La deducción tiene dos límites: lo que el convenio permite retener al Estado de la fuente (<b>15 %</b> sobre el bruto de cada pago), y el tipo medio de gravamen del ahorro aplicado a la renta neta extranjera integrada en la base. Se toma el menor.</li>
+<li>Lo retenido por encima del límite del convenio <b>no se deduce aquí</b>: se reclama al Estado de la fuente mediante la solicitud de devolución que corresponda.</li>
+<li>Una renta exenta no soporta impuesto español, así que tampoco genera deducción: la parte exenta se descuenta del bruto sobre el que se mide.</li>
+</ul>
+<h3>Desconocido (–)</h3>
+<table>
+<thead><tr><th class="col">Fecha</th><th class="col">Valor</th><th class="col">ISIN</th><th class="col">Divisa</th><th class="col num">Bruto</th><th class="col num">Bruto EUR</th><th class="col num">Retenido</th><th class="col num">Retenido EUR</th><th class="col num">Tipo</th><th class="col num">Crédito con límite del convenio</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">20/05/2026</td><td class="cell">AAPL</td><td class="cell"></td><td class="cell">USD</td><td class="cell num">1.000,00</td><td class="cell num">900,00</td><td class="cell num neg">-300,00</td><td class="cell num neg">-270,00</td><td class="cell num">30 %</td><td class="cell num">135,00</td></tr>
+<tr class="total"><td class="cell">Total</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">900,00</td><td class="cell"></td><td class="cell num neg">-270,00</td><td class="cell"></td><td class="cell num">135,00</td></tr>
+</tbody>
+</table>
+<div class="note info">La deducción del ejercicio es de <b>135,00</b> EUR: el límite del convenio, fila a fila, acotado además por el tipo medio de gravamen del ahorro sobre la renta neta extranjera integrada en la base. La columna de esta tabla muestra sólo el primero de los dos límites.</div>
+</section>
+<section id="relacion-valores">
+<h2>Relación de valores</h2>
+<p>Todos los valores negociados, mantenidos o que pagaron rendimientos en el ejercicio, con sus datos identificativos y la <b>categoría</b> que usa este informe.</p>
+<h4>⚠️ Sobre la categoría y el país</h4>
+<ul>
+<li>La <b>categoría</b> (acciones frente a fondos e IIC) sale de <code>taxes.etf_classification</code> por ISIN; lo no clasificado se trata como acciones. Ninguna cifra de la base del ahorro depende de ella: sirve para agrupar el informe y para señalar los pagadores a los que la exención de dividendos no alcanza.</li>
+<li>El <b>país</b> se deduce del prefijo del ISIN y no siempre coincide con la residencia del emisor (los ETF domiciliados en Irlanda son el caso habitual).</li>
+<li>Los <b>productos complejos</b> (productos estructurados, royalty trusts, limited partnerships o MLP) pueden necesitar una revisión manual de su calificación fiscal.</li>
+</ul>
+<table>
+<thead><tr><th class="col">Símbolo</th><th class="col">ISIN</th><th class="col">Nombre</th><th class="col">País</th><th class="col">Divisa</th><th class="col">Categoría</th></tr></thead>
+<tbody>
+<tr class="data"><td class="cell">AAPL</td><td class="cell"></td><td class="cell">AAPL</td><td class="cell"></td><td class="cell">USD</td><td class="cell">Acciones</td></tr>
+</tbody>
+</table>
+</section>
+<section id="avisos">
+<h2>Avisos y observaciones</h2>
+<h3>Método y límites</h3>
+<ul>
+<li>Las transmisiones se valoran por <b>FIFO</b>: los valores vendidos se imputan a las adquisiciones más antiguas, con las comisiones de compra en el coste y las de venta restando del importe percibido.</li>
+<li>Los importes en divisa se convierten con el <b>tipo de cambio de referencia del BCE</b> de la fecha de cada apunte. La liquidación en divisa se trata como una transmisión: <b>el resultado del saldo propio va a ganancias y pérdidas patrimoniales, y el del saldo prestado queda para revisión manual</b>.</li>
+<li>La deducción por doble imposición se calcula con un tipo de convenio del <b>15 %</b>, que es el de dividendos de cartera en la mayoría de los convenios de España. No lo es en todos: el <b>Reino Unido</b> limita el dividendo de cartera al 10% (el 15% sólo alcanza a los PID de REIT), y un <b>REIT estadounidense</b> pagado a quien posee más del 10% no goza de beneficio de convenio. Ajústela a mano si su caso es uno de esos.</li>
+<li>La <b>categoría de activo</b> (acciones frente a fondos e IIC) sale de <code>taxes.etf_classification</code> por ISIN; lo no clasificado se trata como acciones. Ninguna cifra de la base del ahorro depende de ella.</li>
+<li>Los <b>derivados, opciones y operaciones a plazo</b> no se liquidan; las líneas correspondientes del extracto se omiten.</li>
+<li>El cálculo no tiene en cuenta las circunstancias personales del contribuyente ni las rentas ajenas a este bróker.</li>
+<li>Las decisiones interpretativas abiertas están recogidas en el registro de <code>docs/spain-taxes.md</code>, cada una con la dirección en que puede fallar.</li>
+</ul>
+</section>
+</body>
+</html>

@@ -65,7 +65,7 @@ impl FixedEurBackend {
     }
 }
 
-fn converter() -> CurrencyConverter {
+pub(super) fn converter() -> CurrencyConverter {
     CurrencyConverter::new_with_backend(Box::new(FixedEurBackend {
         today: time::today(),
         eur_per_usd: dec!(0.9),
@@ -75,7 +75,7 @@ fn converter() -> CurrencyConverter {
 
 /// A converter whose USD rate steps from 0.9 to 1.0 on `from`, so a balance held across that date
 /// realizes a computable foreign-currency result.
-fn revaluing_converter(from: Date, rate: Decimal) -> CurrencyConverter {
+pub(super) fn revaluing_converter(from: Date, rate: Decimal) -> CurrencyConverter {
     CurrencyConverter::new_with_backend(Box::new(FixedEurBackend {
         today: time::today(),
         eur_per_usd: dec!(0.9),
@@ -83,7 +83,7 @@ fn revaluing_converter(from: Date, rate: Decimal) -> CurrencyConverter {
     }))
 }
 
-fn read_fixture(name: &str) -> BrokerStatement {
+pub(super) fn read_fixture(name: &str) -> BrokerStatement {
     // The fixture path is repo-relative, so it is assigned after deserialization: the config
     // deserializer requires an absolute path, which a checked-out test tree cannot provide.
     let mut portfolio: PortfolioConfig =
@@ -95,7 +95,7 @@ fn read_fixture(name: &str) -> BrokerStatement {
     BrokerStatement::load(&Config::mock(), &portfolio, ReadingStrictness::all()).unwrap()
 }
 
-fn spain_config(regime: SpanishTaxRegime) -> TaxConfig {
+pub(super) fn spain_config(regime: SpanishTaxRegime) -> TaxConfig {
     TaxConfig {
         spain: Some(SpanishTaxConfig {
             regime,
@@ -108,7 +108,7 @@ fn spain_config(regime: SpanishTaxRegime) -> TaxConfig {
 }
 
 /// Run the full Spanish pipeline over a fixture with an explicit tax config.
-fn run_pipeline_with_config(
+pub(super) fn run_pipeline_with_config(
     fixture: &str,
     year: i32,
     tax_config: &TaxConfig,
@@ -121,7 +121,7 @@ fn run_pipeline_with_config(
 }
 
 /// Run the full Spanish pipeline over a fixture under one regime.
-fn run_pipeline(fixture: &str, year: i32, regime: SpanishTaxRegime) -> SpanishTaxStatement {
+pub(super) fn run_pipeline(fixture: &str, year: i32, regime: SpanishTaxRegime) -> SpanishTaxStatement {
     run_pipeline_with_config(fixture, year, &spain_config(regime))
 }
 

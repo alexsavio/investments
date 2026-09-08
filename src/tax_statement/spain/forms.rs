@@ -214,6 +214,15 @@ pub(super) struct FormMapping {
     pub withholding_casilla: String,
 }
 
+/// The return the regime files, as the filer knows it.
+pub(super) fn form_name(regime: SpanishTaxRegime) -> &'static str {
+    match regime {
+        SpanishTaxRegime::Gipuzkoa => "Modelo 109",
+        SpanishTaxRegime::Comun => "Modelo 100",
+        SpanishTaxRegime::Navarra => "Modelo F-93",
+    }
+}
+
 /// The casillas of the filer's own return.
 pub(super) fn form_mapping(statement: &SpanishTaxStatement) -> FormMapping {
     match statement.regime {
@@ -266,7 +275,7 @@ fn modelo_109_mapping(statement: &SpanishTaxStatement) -> FormMapping {
         ] {
             boxes.push(FormBox::new(
                 "MODELO_109_ANEXO3_",
-                "Modelo 109",
+                form_name(SpanishTaxRegime::Gipuzkoa),
                 "anexo 3",
                 casilla,
                 concept,
@@ -329,7 +338,7 @@ fn modelo_109_mapping(statement: &SpanishTaxStatement) -> FormMapping {
     ] {
         boxes.push(FormBox::new(
             "MODELO_109_HOJA_",
-            "Modelo 109",
+            form_name(SpanishTaxRegime::Gipuzkoa),
             "hoja",
             casilla,
             concept,
@@ -394,7 +403,14 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
     ]
     .into_iter()
     .map(|(casilla, concept, value)| {
-        FormBox::new("MODELO_100_", "Modelo 100", "", casilla, &concept, value)
+        FormBox::new(
+            "MODELO_100_",
+            form_name(SpanishTaxRegime::Comun),
+            "",
+            casilla,
+            &concept,
+            value,
+        )
     })
     .collect();
 
@@ -587,7 +603,14 @@ fn modelo_f93_mapping(statement: &SpanishTaxStatement) -> FormMapping {
                 .filter(|(_, _, value)| *value > zero),
         )
         .map(|(casilla, concept, value)| {
-            FormBox::new("MODELO_F93_", "Modelo F-93", "", casilla, &concept, value)
+            FormBox::new(
+                "MODELO_F93_",
+                form_name(SpanishTaxRegime::Navarra),
+                "",
+                casilla,
+                &concept,
+                value,
+            )
         })
         .collect();
 

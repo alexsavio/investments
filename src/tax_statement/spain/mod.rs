@@ -5,6 +5,7 @@
 
 mod csv_formatter;
 mod forms;
+mod html;
 mod processor;
 mod report;
 mod statement;
@@ -20,6 +21,7 @@ mod property_tests;
 mod tests;
 
 pub use self::csv_formatter::CsvFormatter;
+pub use self::html::{HtmlReport, ReportMeta};
 pub use self::processor::{compute_tax_year, produces_capital_gain};
 pub use self::statement::{CapitalGainEntry, SpanishLotDetail, SpanishTaxStatement};
 

@@ -79,18 +79,21 @@ Your portfolio configuration is unchanged from any other jurisdiction.
 ## Usage
 
 ```bash
-investments tax-statement <portfolio> <year> <output.csv>
+investments tax-statement <portfolio> <year> <output.csv|output.html>
 ```
 
 For example:
 
 ```bash
 investments tax-statement ib 2026 spanish-tax-2026.csv
+investments tax-statement ib 2026 spanish-tax-2026.html
 ```
 
 The command reads every statement in the portfolio, replays the whole trade history through FIFO and
-the valores-homogéneos rule, computes the year's savings base, and writes the CSV plus a console
-summary. The output path is an optional positional argument: without it you get the summary alone.
+the valores-homogéneos rule, computes the year's savings base, and writes the output file plus a
+console summary. The output path is an optional positional argument: without it you get the summary
+alone. The extension picks the format: `.html` is the printable report described below, anything
+else the CSV.
 
 Currency conversion uses **ECB reference rates**, selected automatically from the jurisdiction.
 
@@ -830,6 +833,85 @@ for the full contract. In short: a 19-column transaction block where each capita
 its per-FIFO-lot `Lot` rows (so the actualization multiplication reads line by line), then a
 3-column `summary_key,label,value_eur` block holding the group totals, the compensation, the
 carry-forward and deferral blocks, and the Modelo mapping. Comment lines start with `#`.
+
+## HTML report (printable, A4 landscape)
+
+Passing an `.html` output path instead of `.csv` writes a self-contained, printable report in
+Spanish, modelled on the annual summaries brokers hand out:
+
+```bash
+investments tax-statement ib 2026 spanish-tax-2026.html
+```
+
+The report contains, in order (sections with nothing to say are omitted):
+
+1. Title page with the regime, the four key figures, the disclaimer, the broker, the portfolio and
+   the statement period
+2. **Resumen para los formularios** — every casilla of the filer's own return (Modelo 109, Modelo
+   100 or Modelo F-93), with the specimen each number was read from and the retenciones casilla the
+   foreign withholding must *not* go in
+3. **Cálculo del impuesto** — the two groups, the compensation, the savings scale bracket by
+   bracket, the average rate and the double-taxation credit
+4. **Resumen por actividad y categoría** and **Ganancias y pérdidas por valor** — what each activity
+   and each security contributed, with the group it lands in
+5. **Movimientos de efectivo** — dividends, withholding, interest and fees in original currency with
+   the ECB rate
+6. **Retenciones en origen** — withholding per country with the treaty-capped credit
+7. **Ganancias y pérdidas patrimoniales (FIFO)** — one worksheet per disposal with the lots it
+   consumed and, under Gipuzkoa, each lot's actualization coefficient and actualized cost
+8. **Valores homogéneos** — the losses deferred this year, the ones reintegrated, and the ones still
+   blocked at 31 December
+9. **Operaciones con valores** — every buy and sell of the year in original currency
+10. **Diferencias de cambio** — the per-currency FIFO ledger with each realization's treatment
+11. **Posiciones abiertas a 31/12** — unsold purchase lots with their EUR cost
+12. **Compensación y saldos pendientes** — each vintage's opening balance, what the year applied and
+    what expires when, followed by the `taxes.spain` block the next return starts from
+13. **Relación de valores** — symbol, ISIN, name, country, currency and category
+14. **Avisos y observaciones** — the calculation warnings, the per-position notes, the vests, the
+    corporate actions and the method's limits
+
+All EUR amounts are the same figures as in the CSV and on the console (same rounding), in Spanish
+notation (`1.234,56`); dates are `dd/mm/yyyy` everywhere except the configuration block, which uses
+ISO because that is what the configuration reads.
+
+### Converting to PDF
+
+The page carries print CSS for A4 landscape (`@page`, repeated table headers, no row splits), so any
+Chromium-based tool renders it:
+
+```bash
+# Chrome / Chromium headless
+chromium --headless --print-to-pdf=spanish-tax-2026.pdf --no-pdf-header-footer spanish-tax-2026.html
+
+# Playwright (Node): page.pdf({ path, format: 'A4', landscape: true, preferCSSPageSize: true })
+
+# Gotenberg (the file must be named index.html)
+curl --request POST http://localhost:3000/forms/chromium/convert/html \
+  --form files=@index.html --form landscape=true --form preferCssPageSize=true \
+  -o spanish-tax-2026.pdf
+```
+
+### Caveats
+
+- The report is informational and does not replace the broker's official statements.
+- The **calculation warnings are in English**, shown verbatim under "Avisos del cálculo (texto
+  literal)". They are one text for the console, the CSV and the report, so translating them here
+  would let two surfaces say different things about the same figure.
+- The **Acciones / Fondos e IIC** split reads `taxes.etf_classification` by ISIN, a key otherwise
+  used by the German statement and optional here: no figure in the savings base depends on it. It
+  groups the report and flags the payers the €1,500 Gipuzkoa exemption does not reach.
+- The double-taxation credit uses the flat 15% treaty rate described above; there is no per-country
+  treaty table.
+- Open lots reflect the FIFO engine's view at the statement's last date; a statement extending past
+  31 December already has later sales deducted (the report says so).
+- The foreign-currency ledger **starts at zero**: no opening balance is carried in, so a statement
+  that begins with currency already in the account shows a borrowed balance that is not one.
+- The deferred-loss carry-out is a snapshot at 31 December. A repurchase window that closes after
+  the statement ends is named in the report, not settled by it.
+- Security names come from `instrument_names` in the portfolio config when set, otherwise from the
+  Flex export's `description`, otherwise the symbol. The CSV keeps using the configured name or the
+  bare symbol.
+- Derivatives are skipped, as for the CSV.
 
 ## Sell simulation
 
