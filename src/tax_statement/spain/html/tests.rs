@@ -451,3 +451,90 @@ fn the_valores_homogeneos_section_shows_the_deferral_and_its_carry_out() {
         )));
     }
 }
+
+/// The bracket table re-slices the base to show where the cuota comes from, so its own column has
+/// to add up to the cuota the scale computed. A slice that drifted would print a table whose total
+/// contradicts the figure two sections earlier.
+#[rstest]
+#[case(SpanishTaxRegime::Gipuzkoa)]
+#[case(SpanishTaxRegime::Comun)]
+#[case(SpanishTaxRegime::Navarra)]
+fn the_bracket_slices_add_up_to_the_cuota(#[case] regime: SpanishTaxRegime) {
+    let statement = run_pipeline("fifo", 2026, regime);
+    let base = statement.savings_base;
+    assert!(base > dec!(0), "{regime:?}: the case must reach a bracket");
+
+    let brackets = statement.scale.brackets();
+    let mut slices = Decimal::ZERO;
+    let mut quota = Decimal::ZERO;
+    for (index, &(floor, rate)) in brackets.iter().enumerate() {
+        if base <= floor {
+            break;
+        }
+        let upper = match brackets.get(index + 1) {
+            Some(&(next_floor, _)) => std::cmp::min(base, next_floor),
+            None => base,
+        };
+        slices += upper - floor;
+        quota += (upper - floor) * rate;
+    }
+
+    assert_eq!(slices, base, "{regime:?}");
+    assert_eq!(quota, statement.savings_quota, "{regime:?}");
+
+    let html = render(&statement);
+    assert!(html.contains(">Tramo desde<"));
+    assert!(html.contains(&format!(">{}<", eur(statement.savings_quota))));
+}
+
+/// A year with no base at all reaches no bracket, so the table is the total row alone — and the
+/// section still renders, because the return exists either way.
+#[test]
+fn a_zero_base_reaches_no_bracket() {
+    let statement = run_pipeline("fee_only", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(statement.savings_base, dec!(0));
+    assert_eq!(statement.savings_quota, dec!(0));
+
+    let html = render(&statement);
+    assert!(html.contains("id=\"calculo\""));
+    assert!(html.contains(">Tramo desde<"));
+    // The one bracket row the scale would show starts at zero; with no base there is none.
+    assert!(!html.contains(">19 %<") && !html.contains(">20 %<"));
+}
+
+/// Each cash-booking group totals the figure the tax entries carry, so the section a filer ties
+/// their bank statement to cannot drift from the one the return is built from.
+#[test]
+fn the_booking_totals_reconcile_with_the_entry_totals() {
+    use super::super::report::BookingKind;
+
+    let statement = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
+    let total_of = |kind: BookingKind| -> Decimal {
+        statement
+            .report
+            .bookings
+            .iter()
+            .filter(|row| row.kind == kind)
+            .map(|row| row.amount_eur)
+            .sum()
+    };
+
+    assert_eq!(
+        total_of(BookingKind::Dividend),
+        statement.total_dividend_income
+    );
+    assert_eq!(
+        total_of(BookingKind::WithholdingTax),
+        -statement.total_foreign_withholding
+    );
+    assert_eq!(
+        total_of(BookingKind::Interest),
+        statement.total_interest_income - statement.total_paid_interest
+    );
+    assert_eq!(
+        total_of(BookingKind::Fee),
+        -(statement.total_deductible_fees
+            + statement.total_capped_fees
+            + statement.total_informational_fees)
+    );
+}
