@@ -4,9 +4,9 @@ mod fx_fifo;
 pub mod germany;
 #[cfg(test)]
 mod golden;
-pub(crate) mod html;
+mod html;
 mod interest;
-pub(crate) mod report;
+mod report;
 pub mod spain;
 mod statement;
 mod tax_agent;
@@ -194,13 +194,16 @@ fn generate_spanish_tax_statement(
     // Output the statement. The extension selects the format: `.html` is the printable A4 report,
     // anything else the CSV.
     if let Some(path) = output_path {
+        // Rejected before anything is opened, so the user reads the reason rather than a failure
+        // to write a temporary file they never asked for.
         let format = OutputFormat::from_path(path);
-        write_atomically(path, |writer| match format {
-            OutputFormat::Csv => spain::CsvFormatter::write(&statement, writer),
-            OutputFormat::Html => Err!(
+        if matches!(format, OutputFormat::Html) {
+            return Err!(
                 "The printable HTML report is not available for the Spanish tax statement yet. \
-                 Write to a .csv path instead."),
-        })?;
+                 Write the statement to a .csv path instead");
+        }
+
+        write_atomically(path, |writer| spain::CsvFormatter::write(&statement, writer))?;
 
         println!(
             "{}",
@@ -680,6 +683,11 @@ fn write_atomically<F>(path: &Path, write: F) -> EmptyResult
     temp_path.push(format!(".{}.tmp", std::process::id()));
     let temp_path = std::path::PathBuf::from(temp_path);
 
+    // A tax statement holds real trading data and the user may well have restricted it. The rename
+    // below carries the temp file's mode, not the target's, so an existing 0600 file would come
+    // back 0644 on the next run unless its mode is copied over first.
+    let existing_permissions = fs::metadata(path).ok().map(|metadata| metadata.permissions());
+
     File::create(&temp_path).map_err(GenericError::from).and_then(|file| {
         let mut writer = BufWriter::new(file);
         write(&mut writer)?;
@@ -690,10 +698,78 @@ fn write_atomically<F>(path: &Path, write: F) -> EmptyResult
         format!("Failed to write {temp_path:?}: {e}")
     })?;
 
+    if let Some(permissions) = existing_permissions {
+        fs::set_permissions(&temp_path, permissions).map_err(|e| {
+            let _ = fs::remove_file(&temp_path);
+            format!("Failed to carry the permissions of {path:?} over to {temp_path:?}: {e}")
+        })?;
+    }
+
     fs::rename(&temp_path, path).map_err(|e| {
         let _ = fs::remove_file(&temp_path);
         format!("Failed to rename {temp_path:?} to {path:?}: {e}")
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn output_format_follows_the_extension() {
+        for path in ["a.html", "a.htm", "a.HTML", "a.Htm"] {
+            assert!(matches!(OutputFormat::from_path(Path::new(path)), OutputFormat::Html),
+                    "{path} should select the HTML report");
+        }
+        for path in ["a.csv", "a.CSV", "a.txt", "a", "a.html.csv"] {
+            assert!(matches!(OutputFormat::from_path(Path::new(path)), OutputFormat::Csv),
+                    "{path} should select the CSV statement");
+        }
+    }
+
+    #[test]
+    fn write_atomically_leaves_no_temporary_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("statement.csv");
+
+        write_atomically(&path, |writer| Ok(writer.write_all(b"first")?)).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+
+        // A failing write leaves the previous contents in place and cleans up after itself.
+        let error = write_atomically(&path, |writer| {
+            writer.write_all(b"partial")?;
+            Err!("the formatter gave up")
+        }).unwrap_err().to_string();
+        assert!(error.contains("the formatter gave up"), "{error}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+
+        let leftovers: Vec<String> = fs::read_dir(dir.path()).unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "statement.csv")
+            .collect();
+        assert!(leftovers.is_empty(), "temporary files survived: {leftovers:?}");
+    }
+
+    /// A tax statement holds real trading data, so a mode the user tightened by hand must survive
+    /// the next run; the rename would otherwise hand the target the temp file's fresh 0644.
+    #[cfg(unix)]
+    #[test]
+    fn write_atomically_keeps_the_permissions_of_an_existing_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("statement.csv");
+
+        write_atomically(&path, |writer| Ok(writer.write_all(b"first")?)).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_atomically(&path, |writer| Ok(writer.write_all(b"second")?)).unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the statement became readable by others");
+    }
 }
