@@ -32,6 +32,9 @@ use super::{CsvFormatter, HtmlReport, ReportMeta};
 /// are cheaper than a shared test-utils module both modules would then have to agree on.
 struct FixedEurBackend {
     today: Date,
+    /// Optional revaluation: from this date on, the rate becomes the second element. Without it
+    /// every date shares one rate, so no foreign-currency result can ever be realized.
+    revaluation: Option<(Date, Decimal)>,
 }
 
 impl CurrencyConverterBackend for FixedEurBackend {
@@ -47,19 +50,40 @@ impl CurrencyConverterBackend for FixedEurBackend {
         &self,
         from: &str,
         to: &str,
-        _date: Date,
+        date: Date,
     ) -> GenericResult<(Option<Decimal>, Option<Decimal>)> {
         assert_eq!(to, "EUR", "the Spanish pipeline only ever converts to EUR");
         match from {
             "EUR" => Ok((None, None)),
-            "USD" => Ok((Some(dec!(0.9)), None)),
+            "USD" => Ok((Some(self.rate_on(date)), None)),
             other => Err!("fixture converter has no rate for {other}"),
         }
     }
 }
 
+impl FixedEurBackend {
+    fn rate_on(&self, date: Date) -> Decimal {
+        match self.revaluation {
+            Some((from, rate)) if date >= from => rate,
+            _ => dec!(0.9),
+        }
+    }
+}
+
 fn converter() -> CurrencyConverter {
-    CurrencyConverter::new_with_backend(Box::new(FixedEurBackend { today: time::today() }))
+    CurrencyConverter::new_with_backend(Box::new(FixedEurBackend {
+        today: time::today(),
+        revaluation: None,
+    }))
+}
+
+/// A converter whose USD rate steps from 0.9 to 1.0 on 1 June 2026, so a balance held across that
+/// date realizes a computable foreign-currency result.
+fn revaluing_converter() -> CurrencyConverter {
+    CurrencyConverter::new_with_backend(Box::new(FixedEurBackend {
+        today: time::today(),
+        revaluation: Some((Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1))),
+    }))
 }
 
 fn read_fixture(name: &str) -> BrokerStatement {
@@ -125,34 +149,89 @@ fn corpus() -> GoldenCorpus {
 ///   where the year's loss must survive it untouched.
 #[rstest]
 #[case::fifo_gipuzkoa(
-    "fifo_gipuzkoa_2026", "fifo", 2026, SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+    "fifo_gipuzkoa_2026",
+    "fifo",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances
+)]
 #[case::fifo_comun(
-    "fifo_comun_2026", "fifo", 2026, SpanishTaxRegime::Comun, no_opening_balances)]
+    "fifo_comun_2026",
+    "fifo",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances
+)]
 #[case::fifo_navarra_carried_saldo(
-    "fifo_navarra_2026_carried_saldo", "fifo", 2026, SpanishTaxRegime::Navarra, rcm_saldo_8000)]
+    "fifo_navarra_2026_carried_saldo",
+    "fifo",
+    2026,
+    SpanishTaxRegime::Navarra,
+    rcm_saldo_8000
+)]
 #[case::income_gipuzkoa(
-    "income_gipuzkoa_2026", "income", 2026, SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+    "income_gipuzkoa_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances
+)]
 #[case::income_comun(
-    "income_comun_2026", "income", 2026, SpanishTaxRegime::Comun, no_opening_balances)]
+    "income_comun_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances
+)]
 #[case::income_navarra(
-    "income_navarra_2026", "income", 2026, SpanishTaxRegime::Navarra, no_opening_balances)]
+    "income_navarra_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances
+)]
 #[case::wash_sale_multi_lot_gipuzkoa(
-    "wash_sale_multi_lot_gipuzkoa_2026", "wash_sale_multi_lot", 2026,
-    SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+    "wash_sale_multi_lot_gipuzkoa_2026",
+    "wash_sale_multi_lot",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances
+)]
 #[case::cross_offset_comun(
-    "cross_offset_comun_2026_saldo", "cross_offset", 2026, SpanishTaxRegime::Comun, rcm_saldo_2000)]
+    "cross_offset_comun_2026_saldo",
+    "cross_offset",
+    2026,
+    SpanishTaxRegime::Comun,
+    rcm_saldo_2000
+)]
 #[case::cross_offset_navarra(
-    "cross_offset_navarra_2026_saldo", "cross_offset", 2026,
-    SpanishTaxRegime::Navarra, rcm_saldo_2000)]
+    "cross_offset_navarra_2026_saldo",
+    "cross_offset",
+    2026,
+    SpanishTaxRegime::Navarra,
+    rcm_saldo_2000
+)]
 #[case::small_disposal_navarra(
-    "small_disposal_navarra_2026", "small_disposal", 2026,
-    SpanishTaxRegime::Navarra, no_opening_balances)]
+    "small_disposal_navarra_2026",
+    "small_disposal",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances
+)]
 #[case::small_disposal_comun(
-    "small_disposal_comun_2026", "small_disposal", 2026,
-    SpanishTaxRegime::Comun, no_opening_balances)]
+    "small_disposal_comun_2026",
+    "small_disposal",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances
+)]
 #[case::small_disposal_mixed_navarra(
-    "small_disposal_mixed_navarra_2026", "small_disposal_mixed", 2026,
-    SpanishTaxRegime::Navarra, no_opening_balances)]
+    "small_disposal_mixed_navarra_2026",
+    "small_disposal_mixed",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances
+)]
 fn emitted_statement_matches_its_golden(
     #[case] golden: &str,
     #[case] fixture: &str,
@@ -206,30 +285,63 @@ fn fixed_meta(year: i32) -> ReportMeta {
 /// - `income_comun_2026` — the cash bookings, the withholding table and the credit.
 /// - `cross_offset_navarra_2026_saldo` — the compensation ledgers and the conditional F-93 boxes.
 /// - `wash_sale_multi_lot_gipuzkoa_2026` — the valores-homogéneos section and the carry-out block.
+/// - `fx_gain_gipuzkoa_2026` — the per-currency ledger, the widest table in the report and the one
+///   no other case reaches.
 #[rstest]
 #[case::fifo_gipuzkoa(
-    "fifo_gipuzkoa_2026", "fifo", 2026, SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+    "fifo_gipuzkoa_2026",
+    "fifo",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    converter
+)]
 #[case::income_comun(
-    "income_comun_2026", "income", 2026, SpanishTaxRegime::Comun, no_opening_balances)]
+    "income_comun_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances,
+    converter
+)]
 #[case::cross_offset_navarra(
-    "cross_offset_navarra_2026_saldo", "cross_offset", 2026,
-    SpanishTaxRegime::Navarra, rcm_saldo_2000)]
+    "cross_offset_navarra_2026_saldo",
+    "cross_offset",
+    2026,
+    SpanishTaxRegime::Navarra,
+    rcm_saldo_2000,
+    converter
+)]
 #[case::wash_sale_multi_lot_gipuzkoa(
-    "wash_sale_multi_lot_gipuzkoa_2026", "wash_sale_multi_lot", 2026,
-    SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+    "wash_sale_multi_lot_gipuzkoa_2026",
+    "wash_sale_multi_lot",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    converter
+)]
+#[case::fx_gain_gipuzkoa(
+    "fx_gain_gipuzkoa_2026",
+    "fx_gain",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    revaluing_converter
+)]
 fn rendered_report_matches_its_golden(
     #[case] golden: &str,
     #[case] fixture: &str,
     #[case] year: i32,
     #[case] regime: SpanishTaxRegime,
     #[case] configure: Configure,
+    #[case] rates: fn() -> CurrencyConverter,
 ) {
     let mut config = spain_config(regime);
     configure(config.spain.as_mut().unwrap());
 
     let statement = read_fixture(fixture);
     let (spanish, _has_income) =
-        super::compute_tax_year(&statement, year, &converter(), &config).unwrap();
+        super::compute_tax_year(&statement, year, &rates(), &config).unwrap();
 
     let mut emitted = Vec::new();
     HtmlReport::write(&spanish, &fixed_meta(year), &mut emitted).unwrap();
@@ -250,11 +362,12 @@ fn every_golden_file_belongs_to_a_case() {
 }
 
 /// The file stems of the report cases above, in case order.
-const REPORT_CORPUS: [&str; 4] = [
+const REPORT_CORPUS: [&str; 5] = [
     "fifo_gipuzkoa_2026",
     "income_comun_2026",
     "cross_offset_navarra_2026_saldo",
     "wash_sale_multi_lot_gipuzkoa_2026",
+    "fx_gain_gipuzkoa_2026",
 ];
 
 /// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than

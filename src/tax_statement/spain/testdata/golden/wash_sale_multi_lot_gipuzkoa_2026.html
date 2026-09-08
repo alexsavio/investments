@@ -235,7 +235,7 @@ table { orphans: 3; widows: 3; }
 </section>
 <section id="calculo">
 <h2>Cálculo del impuesto</h2>
-<p>Liquidación de la <b>base del ahorro</b> del ejercicio: los dos grupos se integran por separado, se compensan entre sí y con los saldos negativos de ejercicios anteriores en el orden que marca el régimen, y la escala se aplica <b>una sola vez</b> sobre la base resultante. <b>Sólo es vinculante la liquidación de la Administración.</b></p>
+<p>Liquidación de la <b>base del ahorro</b> del ejercicio: los dos grupos se integran por separado, se compensan entre sí y con los saldos negativos de ejercicios anteriores en el orden que marca el régimen, y la escala se aplica <b>una sola vez</b> sobre la base resultante. En las tablas de esta sección <b>lo que resta lleva signo negativo</b>, de modo que cada columna suma hasta su total; el CSV publica las mismas magnitudes en positivo. <b>Sólo es vinculante la liquidación de la Administración.</b></p>
 <h3>Rendimientos del capital mobiliario</h3>
 <table>
 <thead><tr><th class="col">Concepto</th><th class="col num">Importe (EUR)</th></tr></thead>
@@ -253,11 +253,11 @@ table { orphans: 3; widows: 3; }
 <tbody>
 <tr class="data"><td class="cell">Transmisiones de valores (importe integrable)</td><td class="cell num">90,00</td></tr>
 <tr class="data"><td class="cell">Ganancias y pérdidas por conversión de divisa</td><td class="cell num">0,00</td></tr>
-<tr class="data"><td class="cell">Pérdidas diferidas por valores homogéneos (no deducibles este año)</td><td class="cell num">360,00</td></tr>
 <tr class="data"><td class="cell">Pérdidas diferidas reintegradas al transmitirse los valores que las bloqueaban</td><td class="cell num neg">-270,00</td></tr>
 <tr class="total"><td class="cell">Saldo de ganancias y pérdidas patrimoniales</td><td class="cell num neg">-180,00</td></tr>
 </tbody>
 </table>
+<div class="note info">Además, <b>360,00</b> EUR de pérdidas quedaron diferidas por valores homogéneos y no se integran este ejercicio; ya están descontadas de la fila de transmisiones. Se detallan en «Valores homogéneos».</div>
 <h3>Compensación</h3>
 <table>
 <thead><tr><th class="col">Concepto</th><th class="col num">Importe (EUR)</th></tr></thead>
@@ -291,13 +291,13 @@ table { orphans: 3; widows: 3; }
 </section>
 <section id="actividad">
 <h2>Resumen por actividad y categoría</h2>
-<p>Resumen de todas las operaciones del ejercicio por <b>categoría de activo</b> y <b>tipo de actividad</b>, con el grupo de la base del ahorro al que van. Los importes son los que se integran, ya netos de la parte diferida por valores homogéneos, que se muestra en su propia columna. El total es la suma de la columna, <b>no la base del ahorro</b>: las filas informativas quedan fuera de ella y la compensación se aplica después. La base está en «Cálculo del impuesto».</p>
+<p>Resumen de todas las operaciones del ejercicio por <b>categoría de activo</b> y <b>tipo de actividad</b>, con el grupo de la base del ahorro al que van. Los importes son los que se integran, ya netos de la parte diferida por valores homogéneos, que se muestra en su propia columna. El signo es el de la cuenta: lo que resta va en negativo. El total suma <b>las filas que llegan a un grupo</b>, no las informativas, y es el resultado de los dos grupos <b>antes de compensar</b>: la base liquidable está en «Cálculo del impuesto».</p>
 <table>
 <thead><tr><th class="col">Categoría</th><th class="col">Actividad</th><th class="col num">Ganancias EUR</th><th class="col num">Pérdidas EUR</th><th class="col num">Neto EUR</th><th class="col num">Diferido EUR</th><th class="col">Grupo</th></tr></thead>
 <tbody>
 <tr class="data"><td class="cell">Acciones</td><td class="cell">Transmisiones de valores</td><td class="cell num">630,00</td><td class="cell num neg">-540,00</td><td class="cell num">90,00</td><td class="cell num">360,00</td><td class="cell">Ganancias y pérdidas patrimoniales</td></tr>
 <tr class="data"><td class="cell">Acciones</td><td class="cell">Pérdidas diferidas reintegradas</td><td class="cell num">0,00</td><td class="cell num neg">-270,00</td><td class="cell num neg">-270,00</td><td class="cell num">0,00</td><td class="cell">Ganancias y pérdidas patrimoniales</td></tr>
-<tr class="total"><td class="cell">TOTAL</td><td class="cell"></td><td class="cell num">630,00</td><td class="cell num neg">-810,00</td><td class="cell num neg">-180,00</td><td class="cell num">360,00</td><td class="cell"></td></tr>
+<tr class="total"><td class="cell">TOTAL — resultado de los dos grupos antes de compensar</td><td class="cell"></td><td class="cell num">630,00</td><td class="cell num neg">-810,00</td><td class="cell num neg">-180,00</td><td class="cell num">360,00</td><td class="cell"></td></tr>
 </tbody>
 </table>
 </section>
@@ -400,9 +400,9 @@ table { orphans: 3; widows: 3; }
 </section>
 <section id="compensacion">
 <h2>Compensación y saldos pendientes</h2>
-<p>Un saldo negativo de la base del ahorro sólo puede compensarse en los <b>4 años</b> siguientes al ejercicio en que se generó, así que el año de origen forma parte del dato. Lo que queda pendiente se arrastra a la configuración del ejercicio siguiente.</p>
+<p>Un saldo negativo de la base del ahorro sólo puede compensarse en los <b>4 años</b> siguientes al ejercicio en que se generó, así que el año de origen forma parte del dato: «Aplicable hasta» es el último ejercicio en cuya declaración cabe usarlo. Lo que queda pendiente se arrastra a la configuración del ejercicio siguiente.</p>
 <table>
-<thead><tr><th class="col">Grupo</th><th class="col">Año de origen</th><th class="col num">Saldo inicial</th><th class="col num">Aplicado</th><th class="col num">Pendiente</th><th class="col">Caduca en</th></tr></thead>
+<thead><tr><th class="col">Grupo</th><th class="col">Año de origen</th><th class="col num">Saldo inicial</th><th class="col num">Aplicado</th><th class="col num">Pendiente</th><th class="col">Aplicable hasta</th></tr></thead>
 <tbody>
 <tr class="data"><td class="cell">Ganancias</td><td class="cell">2026</td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">180,00</td><td class="cell">2030</td></tr>
 </tbody>

@@ -132,19 +132,87 @@ fn amounts_are_the_statement_figures_in_spanish_notation() {
     assert!(html.contains("Estados Unidos (US)"));
 }
 
+/// Every broker-supplied string is poisoned, not just the two the eye lands on: the negative
+/// assertion is only worth what the poison covers, and half of these reach `p`/`note`/`ul`, which
+/// take trusted HTML and escape nothing themselves.
 #[test]
-fn markup_in_names_is_escaped() {
-    let mut statement = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+fn broker_supplied_text_is_escaped_wherever_it_reaches_the_page() {
+    const POISON: &str = "A<B&C \"quoted\"";
+
+    let mut statement = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
     for security in &mut statement.report.securities {
-        security.name = "A<B&C \"quoted\"".to_owned();
+        security.symbol = POISON.to_owned();
+        security.isin = POISON.to_owned();
+        security.name = POISON.to_owned();
+        security.currency = POISON.to_owned();
     }
     for trade in &mut statement.report.trades {
-        trade.name = "A<B&C \"quoted\"".to_owned();
+        trade.name = POISON.to_owned();
+        trade.symbol = POISON.to_owned();
+        trade.isin = POISON.to_owned();
+        trade.currency = POISON.to_owned();
+        trade.trade_id = Some(POISON.to_owned());
     }
-    let html = render(&statement);
+    for booking in &mut statement.report.bookings {
+        booking.name = POISON.to_owned();
+        booking.isin = POISON.to_owned();
+        booking.description = POISON.to_owned();
+        booking.currency = POISON.to_owned();
+    }
+    for row in &mut statement.report.withholding {
+        row.name = POISON.to_owned();
+        row.isin = POISON.to_owned();
+        row.currency = POISON.to_owned();
+    }
+    for row in &mut statement.report.fx_rows {
+        row.currency = POISON.to_owned();
+        row.transaction_id = POISON.to_owned();
+        row.activity_code = POISON.to_owned();
+    }
+    for lot in &mut statement.report.open_lots {
+        lot.name = POISON.to_owned();
+        lot.isin = POISON.to_owned();
+        lot.currency = POISON.to_owned();
+    }
+    for entry in &mut statement.dividends {
+        entry.symbol = POISON.to_owned();
+        entry.isin = POISON.to_owned();
+        entry.description = POISON.to_owned();
+        entry.notes = Some(POISON.to_owned());
+    }
+    for entry in &mut statement.interest {
+        entry.description = POISON.to_owned();
+        entry.notes = Some(POISON.to_owned());
+    }
+    for entry in &mut statement.fees {
+        entry.description = POISON.to_owned();
+        entry.notes = Some(POISON.to_owned());
+        entry.review = Some(POISON.to_owned());
+    }
+    for entry in &mut statement.stock_grants {
+        entry.symbol = POISON.to_owned();
+        entry.description = POISON.to_owned();
+    }
+    for entry in &mut statement.corporate_actions {
+        entry.symbol = POISON.to_owned();
+        entry.description = POISON.to_owned();
+        entry.notes = POISON.to_owned();
+    }
+    statement
+        .short_positions
+        .push((POISON.to_owned(), dec!(-3)));
+
+    let mut meta = meta(statement.year);
+    meta.broker_name = POISON.to_owned();
+    meta.portfolio_name = POISON.to_owned();
+    meta.account_id = Some(POISON.to_owned());
+    let mut buffer = Vec::new();
+    HtmlReport::write(&statement, &meta, &mut buffer).unwrap();
+    let html = String::from_utf8(buffer).unwrap();
 
     assert!(html.contains("A&lt;B&amp;C &quot;quoted&quot;"));
-    assert!(!html.contains("A<B&C"));
+    assert!(!html.contains("A<B&C"), "unescaped poison reached the page");
+    assert!(!html.contains("\"quoted\""));
 }
 
 /// A year whose only content is a pending balance still has a report: the four sections that can
@@ -233,8 +301,17 @@ fn withholding_rows_carry_the_entry_figures() {
     let statement = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
     let report = &statement.report;
 
-    assert_eq!(report.withholding.len(), statement.dividends.len());
-    for (row, entry) in report.withholding.iter().zip(&statement.dividends) {
+    // A withholding row exists only for a dividend that had tax withheld, so the population is
+    // the filtered one; zipping the whole dividend list would pass on this fixture and mis-pair on
+    // a statement that mixes withheld and un-withheld payments.
+    let withheld: Vec<_> = statement
+        .dividends
+        .iter()
+        .filter(|entry| !entry.withheld_eur.is_zero())
+        .collect();
+    assert!(!withheld.is_empty());
+    assert_eq!(report.withholding.len(), withheld.len());
+    for (row, entry) in report.withholding.iter().zip(&withheld) {
         assert_eq!(row.symbol, entry.symbol);
         assert_eq!(row.gross_eur, entry.gross_eur);
         assert_eq!(row.withheld_eur, entry.withheld_eur);
@@ -537,4 +614,92 @@ fn the_booking_totals_reconcile_with_the_entry_totals() {
             + statement.total_capped_fees
             + statement.total_informational_fees)
     );
+}
+
+/// The FIFO section joins two vectors by index, which is the one place a wrong number could be
+/// attributed to the wrong disposal. A broken pairing must cost the section, not print another
+/// sale's actualization coefficient against a lot.
+#[test]
+fn a_broken_worksheet_pairing_refuses_the_section() {
+    let statement = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert!(render(&statement).contains(">Coeficiente<"));
+
+    // One fewer entry than worksheets.
+    let mut short = statement.clone();
+    short.capital_gains.pop();
+    let html = render(&short);
+    assert!(html.contains("id=\"transmisiones\""));
+    assert!(html.contains("No se ha podido emparejar"));
+    assert!(!html.contains(">Coeficiente<"));
+
+    // Same count, but a worksheet against the wrong security.
+    let mut swapped = statement.clone();
+    swapped.capital_gains[0].symbol = "OTHER".to_owned();
+    assert!(render(&swapped).contains("No se ha podido emparejar"));
+
+    // Same count and security, but a lot count that would silently truncate the zip.
+    let mut trimmed = statement.clone();
+    trimmed.capital_gains[0].lots.pop();
+    assert!(render(&trimmed).contains("No se ha podido emparejar"));
+}
+
+/// The activity total sums only what reaches a savings-base group, so it is exactly the two group
+/// results before compensation. A row put in the wrong group, or an informational one leaking into
+/// the sum, would break this identity.
+#[rstest]
+#[case("income", SpanishTaxRegime::Gipuzkoa)]
+#[case("income", SpanishTaxRegime::Comun)]
+#[case("income", SpanishTaxRegime::Navarra)]
+#[case("fifo", SpanishTaxRegime::Gipuzkoa)]
+#[case("wash_sale_multi_lot", SpanishTaxRegime::Gipuzkoa)]
+fn the_activity_total_is_the_two_group_results(
+    #[case] fixture: &str,
+    #[case] regime: SpanishTaxRegime,
+) {
+    let statement = run_pipeline(fixture, 2026, regime);
+    let html = render(&statement);
+
+    let total = statement.rcm_net + statement.gyp_net;
+    assert!(
+        html.contains("TOTAL — resultado de los dos grupos antes de compensar"),
+        "{fixture}/{regime:?}"
+    );
+    assert!(
+        html.contains(&format!(">{}<", eur(total))),
+        "{fixture}/{regime:?}: expected the total {} on the page",
+        eur(total)
+    );
+}
+
+/// Ejercicios up to 2024 carry the Anexo 3 breakdown, whose casillas live in a different numbering
+/// space from the Hoja: casilla 28 means one thing on each. Every golden files 2026, so the report
+/// columns for that branch are pinned only here.
+#[test]
+fn a_2024_gipuzkoa_report_names_the_anexo_3_sheet() {
+    use crate::taxes::spain::carryforward::LossLedger;
+    use crate::taxes::spain::compensation::CrossOffset;
+    use crate::taxes::spain::scale::SavingsScale;
+
+    let regime = SpanishTaxRegime::Gipuzkoa;
+    let mut statement = SpanishTaxStatement::new(
+        2024,
+        regime,
+        SavingsScale::for_year(regime, 2024).unwrap(),
+        LossLedger::default(),
+        LossLedger::default(),
+        CrossOffset::None,
+        dec!(0.15),
+        dec!(1500),
+        None,
+        false,
+    );
+    statement.calculate_totals();
+
+    let html = render(&statement);
+    assert!(html.contains(">06+16 (anexo 3)<"));
+    assert!(html.contains(">17 (anexo 3)<"));
+    assert!(html.contains(">28 (hoja)<"));
+    // NF 1/2025 renumbering has not happened for this ejercicio.
+    assert!(html.contains(">60 (hoja)<"));
+    assert!(!html.contains(">70 (hoja)<"));
 }

@@ -588,6 +588,16 @@ fn process_trades(
         });
     }
 
+    // The report pairs `report.sales[i]` with `capital_gains[i]`: both are pushed in the same
+    // iteration above, under the same filing-year filter. A lot printed against another sale's
+    // actualization coefficient is a number a Gipuzkoa filer would copy onto the return, so the
+    // pairing is checked here as well as refused by the renderer.
+    debug_assert_eq!(
+        statement.report.sales.len(),
+        statement.capital_gains.len(),
+        "every filing-year disposal must carry exactly one report worksheet"
+    );
+
     flag_open_wash_sale_windows(statement, broker_statement);
 
     Ok(has_income)

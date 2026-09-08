@@ -134,9 +134,12 @@ pub(super) fn tax_computation(
         &format!(
             "Liquidación de la {} del ejercicio: los dos grupos se integran por separado, se \
              compensan entre sí y con los saldos negativos de ejercicios anteriores en el orden que \
-             marca el régimen, y la escala se aplica {} sobre la base resultante. {}",
+             marca el régimen, y la escala se aplica {} sobre la base resultante. En las tablas de \
+             esta sección {}, de modo que cada columna suma hasta su total; el CSV publica las \
+             mismas magnitudes en positivo. {}",
             b("base del ahorro"),
             b("una sola vez"),
+            b("lo que resta lleva signo negativo"),
             b("Sólo es vinculante la liquidación de la Administración.")
         ),
     );
@@ -163,24 +166,31 @@ pub(super) fn tax_computation(
         "Gastos deducibles de administración y depósito".to_owned(),
         -statement.total_deductible_fees,
     ));
-    if let Some(cap) = statement.custody_fee_cap {
-        rows.push(line(
-            format!(
-                "Límite del {} de los ingresos íntegros no exentos (TRLFIRPF art. 32.1.a)",
-                pct(statement.custody_fee_cap_fraction().unwrap_or_default())
-            ),
-            cap,
-        ));
-        rows.push(line(
-            "Gastos excluidos por ese límite".to_owned(),
-            statement.total_capped_fees,
-        ));
-    }
     rows.push(Row::total(vec![
         Cell::text("Rendimiento neto del capital mobiliario"),
         Cell::num(eur(statement.rcm_net)),
     ]));
     table(out, &AMOUNT_COLUMNS, &rows);
+
+    // The ceiling and what it disallowed are figures *about* the deducted fees, not further
+    // amounts to subtract: the deduction row above is already net of them. They go beside the
+    // table rather than in its column, which has to add up to the total under it.
+    if let Some(cap) = statement.custody_fee_cap {
+        note(
+            out,
+            "info",
+            &format!(
+                "TRLFIRPF art. 32.1.a limita los gastos de administración y depósito al {} de los \
+                 ingresos íntegros no exentos procedentes de los valores, que aquí son {} EUR. El \
+                 límite excluyó {} EUR, ya descontados de la fila anterior.",
+                b(&pct(statement
+                    .custody_fee_cap_fraction()
+                    .unwrap_or_default())),
+                b(&eur(cap)),
+                b(&eur(statement.total_capped_fees))
+            ),
+        );
+    }
 
     h3(out, "Ganancias y pérdidas patrimoniales");
     let mut rows = vec![
@@ -191,10 +201,6 @@ pub(super) fn tax_computation(
         line(
             forms::fx_summary_label(statement.regime).to_owned(),
             statement.total_fx_result,
-        ),
-        line(
-            "Pérdidas diferidas por valores homogéneos (no deducibles este año)".to_owned(),
-            statement.total_deferred_loss,
         ),
         line(
             "Pérdidas diferidas reintegradas al transmitirse los valores que las bloqueaban"
@@ -222,6 +228,22 @@ pub(super) fn tax_computation(
         Cell::num(eur(statement.gyp_net)),
     ]));
     table(out, &AMOUNT_COLUMNS, &rows);
+
+    // A deferred loss is not a further subtraction: the transmissions row above is already the
+    // integrable result, net of it. It sits beside the table for the same reason as the fee
+    // ceiling.
+    if statement.total_deferred_loss > Decimal::ZERO {
+        note(
+            out,
+            "info",
+            &format!(
+                "Además, {} EUR de pérdidas quedaron diferidas por valores homogéneos y no se \
+                 integran este ejercicio; ya están descontadas de la fila de transmisiones. Se \
+                 detallan en «Valores homogéneos».",
+                b(&eur(statement.total_deferred_loss))
+            ),
+        );
+    }
 
     h3(out, "Compensación");
     let labels = forms::compensation_labels(statement.regime);
@@ -565,12 +587,14 @@ pub(super) fn by_activity(
         &format!(
             "Resumen de todas las operaciones del ejercicio por {} y {}, con el grupo de la base \
              del ahorro al que van. Los importes son los que se integran, ya netos de la parte \
-             diferida por valores homogéneos, que se muestra en su propia columna. El total es la \
-             suma de la columna, {}: las filas informativas quedan fuera de ella y la compensación \
-             se aplica después. La base está en «Cálculo del impuesto».",
+             diferida por valores homogéneos, que se muestra en su propia columna. El signo es el \
+             de la cuenta: lo que resta va en negativo. El total suma {}, no las informativas, y \
+             es el resultado de los dos grupos {}: la base liquidable está en «Cálculo del \
+             impuesto».",
             b("categoría de activo"),
             b("tipo de actividad"),
-            b("no la base del ahorro")
+            b("las filas que llegan a un grupo"),
+            b("antes de compensar")
         ),
     );
 
@@ -587,8 +611,13 @@ pub(super) fn by_activity(
     let (mut total_gain, mut total_loss, mut total_deferred) =
         (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO);
     for row in &all {
-        total_gain += row.gain;
-        total_loss += row.loss;
+        // Only what reaches a savings-base group is totalled. Summing the informational rows too
+        // would print a bold figure that is no tax quantity at all — a reader would take it for
+        // the base. What is left is `rcm_net + gyp_net`, which the section below then compensates.
+        if row.group != Group::Informational {
+            total_gain += row.gain;
+            total_loss += row.loss;
+        }
         total_deferred += row.deferred;
         table_rows.push(Row::data(vec![
             Cell::text(row.category),
@@ -601,7 +630,7 @@ pub(super) fn by_activity(
         ]));
     }
     table_rows.push(Row::total(vec![
-        Cell::text("TOTAL"),
+        Cell::text("TOTAL — resultado de los dos grupos antes de compensar"),
         Cell::empty(),
         Cell::num(eur(total_gain)),
         Cell::num(eur(total_loss)),
@@ -1012,7 +1041,8 @@ pub(super) fn compensation(
         &format!(
             "Un saldo negativo de la base del ahorro sólo puede compensarse en los {} \
              siguientes al ejercicio en que se generó, así que el año de origen forma parte del \
-             dato. Lo que queda pendiente se arrastra a la configuración del ejercicio siguiente.",
+             dato: «Aplicable hasta» es el último ejercicio en cuya declaración cabe usarlo. Lo que \
+             queda pendiente se arrastra a la configuración del ejercicio siguiente.",
             b(&format!("{CARRYFORWARD_YEARS} años"))
         ),
     );
@@ -1024,7 +1054,7 @@ pub(super) fn compensation(
             col("Saldo inicial", Align::Right),
             col("Aplicado", Align::Right),
             col("Pendiente", Align::Right),
-            col("Caduca en", Align::Left),
+            col("Aplicable hasta", Align::Left),
         ];
         let mut rows = Vec::new();
         for (group, prior, applied, next, expired) in groups {
@@ -1298,7 +1328,10 @@ pub(super) fn notes(out: &mut String, statement: &SpanishTaxStatement, meta: &Re
             ));
         }
     }
-    position_notes.dedup();
+    // The notes come from four loops, so identical texts are never adjacent and `dedup` alone
+    // would keep both. Order stays chronological within each source, which is how they read.
+    let mut seen = std::collections::HashSet::new();
+    position_notes.retain(|note| seen.insert(note.clone()));
     if !position_notes.is_empty() {
         h3(out, "Notas por posición");
         ul(out, &position_notes);

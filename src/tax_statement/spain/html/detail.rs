@@ -253,6 +253,40 @@ pub(super) fn sales(out: &mut String, statement: &SpanishTaxStatement, _meta: &R
     if report.sales.is_empty() {
         return false;
     }
+
+    // The worksheet of `capital_gains[i]` is `report.sales[i]`, and their lots line up index for
+    // index: the processor pushes both in one iteration. The figures this section reads from the
+    // entry — the actualized cost, the deferred part, each lot's coefficient — would otherwise be
+    // printed against a different disposal, which is worse than not printing them. Refuse loudly
+    // rather than guess.
+    let paired = report.sales.len() == statement.capital_gains.len()
+        && report
+            .sales
+            .iter()
+            .zip(&statement.capital_gains)
+            .all(|(sale, entry)| {
+                sale.symbol == entry.symbol
+                    && sale.sale_date == entry.sale_date
+                    && sale.lots.len() == entry.lots.len()
+            });
+    if !paired {
+        section_start(
+            out,
+            "transmisiones",
+            "Ganancias y pérdidas patrimoniales (FIFO)",
+        );
+        note(
+            out,
+            "warn",
+            "No se ha podido emparejar cada hoja de cálculo FIFO con su ganancia o pérdida \
+             patrimonial, así que esta sección se omite para no atribuir a una transmisión los \
+             importes de otra. Los resultados por transmisión están en «Cálculo del impuesto» y en \
+             el CSV. Comunique este fallo.",
+        );
+        section_end(out);
+        return true;
+    }
+
     // Only Gipuzkoa actualizes an acquisition cost; elsewhere the coefficient is a constant 1 and
     // two columns of it would be noise.
     let actualizes = statement.regime == SpanishTaxRegime::Gipuzkoa;
@@ -353,9 +387,7 @@ pub(super) fn sales(out: &mut String, statement: &SpanishTaxStatement, _meta: &R
 
             for &index in indexes {
                 let sale = &report.sales[index];
-                let Some(entry) = statement.capital_gains.get(index) else {
-                    continue;
-                };
+                let entry = &statement.capital_gains[index];
                 proceeds += sale.proceeds_eur;
                 cost += sale.cost_basis_eur;
                 result += entry.fiscal_gain_loss;
@@ -446,13 +478,23 @@ pub(super) fn sales(out: &mut String, statement: &SpanishTaxStatement, _meta: &R
     );
 
     if has_old_lot {
+        // Only Navarra keeps an abatement regime the tool declines to compute, so only its report
+        // carries the literal warning this would otherwise send every filer to look for.
+        let pointer = match statement.regime {
+            SpanishTaxRegime::Navarra => {
+                " El aviso literal del cálculo, con la norma aplicable, está en «Avisos y                  observaciones»."
+            }
+            _ => "",
+        };
         note(
             out,
             "warn",
-            "Alguno de los lotes consumidos se adquirió antes del 31 de diciembre de 1994. Los \
-             regímenes de abatimiento que alcanzan a esas adquisiciones <b>no se calculan</b> aquí, \
-             de modo que el resultado mostrado puede estar sobrevalorado. El aviso literal del \
-             cálculo, con la norma aplicable, está en «Avisos y observaciones».",
+            &format!(
+                "Alguno de los lotes consumidos se adquirió antes del 31 de diciembre de 1994. Los \
+                 regímenes de abatimiento que alcanzan a esas adquisiciones {} aquí, de modo que el \
+                 resultado mostrado puede estar sobrevalorado.{pointer}",
+                b("no se calculan")
+            ),
         );
     }
 
