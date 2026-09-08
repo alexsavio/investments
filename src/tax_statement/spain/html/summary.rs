@@ -565,9 +565,12 @@ pub(super) fn by_activity(
         &format!(
             "Resumen de todas las operaciones del ejercicio por {} y {}, con el grupo de la base \
              del ahorro al que van. Los importes son los que se integran, ya netos de la parte \
-             diferida por valores homogéneos, que se muestra en su propia columna.",
+             diferida por valores homogéneos, que se muestra en su propia columna. El total es la \
+             suma de la columna, {}: las filas informativas quedan fuera de ella y la compensación \
+             se aplica después. La base está en «Cálculo del impuesto».",
             b("categoría de activo"),
-            b("tipo de actividad")
+            b("tipo de actividad"),
+            b("no la base del ahorro")
         ),
     );
 
