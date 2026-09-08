@@ -27,7 +27,7 @@ pub(crate) use crate::tax_statement::eur::{format_eur, round_eur};
 /// Anlage KAP-INV line numbers for one fund type: (distributions, Vorabpauschale, sale gains/losses).
 ///
 /// The tool classifies funds as equity / mixed / bond; on the form those map to Aktienfonds,
-/// Mischfonds, and sonstige Investmentfonds. Shared by the CSV and the HTML report.
+/// Mischfonds, and sonstige Investmentfonds.
 ///
 /// Pinned to the official forms of the Bundesfinanzverwaltung (Formular-Management-System,
 /// formulare-bfinv.de): "Anlage KAP-INV 2024" (print id 2024AnlKAP-INV361NET, September 2024) and

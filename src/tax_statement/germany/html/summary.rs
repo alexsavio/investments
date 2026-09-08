@@ -669,7 +669,6 @@ pub(super) fn by_security(
     }
     let names = security_names(statement);
 
-    // category → (name, symbol, isin) → results
     let mut groups: BTreeMap<AssetCategory, BTreeMap<(String, String, String), SecurityResult>> =
         BTreeMap::new();
     for entry in &statement.capital_gains {

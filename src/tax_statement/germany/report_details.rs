@@ -76,7 +76,6 @@ pub enum BookingKind {
     CashGrant,
 }
 
-/// How a foreign-currency result is treated for tax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FxTreatment {
     /// §20 EStG capital income (interest-bearing account, held currency disposed).
@@ -251,7 +250,6 @@ pub struct FxRow {
     pub activity_code: String,
     /// Signed units of this portion (positive = inflow).
     pub units: Decimal,
-    /// EUR per unit of the movement.
     pub eur_per_unit: Decimal,
     /// `units × eur_per_unit`.
     pub amount_eur: Decimal,

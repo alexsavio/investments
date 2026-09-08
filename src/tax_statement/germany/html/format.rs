@@ -148,7 +148,6 @@ pub(super) fn category_label(category: AssetCategory) -> &'static str {
     }
 }
 
-/// Teilfreistellung as shown in the security overview.
 pub(super) fn teilfreistellung_label(rate: TeilfreistellungRate) -> String {
     match rate {
         TeilfreistellungRate::None => "–".to_owned(),
