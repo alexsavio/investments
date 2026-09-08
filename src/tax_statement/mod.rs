@@ -678,14 +678,15 @@ impl OutputFormat {
 fn write_atomically<F>(path: &Path, write: F) -> EmptyResult
     where F: FnOnce(&mut BufWriter<File>) -> EmptyResult
 {
+    // A rename replaces a symlink instead of following it, which would leave the file the user
+    // actually tracks stale while the run reports success. Resolve the link first so the replace
+    // lands on its target. A path that does not exist yet has nothing to resolve.
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = resolved.as_path();
+
     let mut temp_path = path.as_os_str().to_os_string();
     temp_path.push(format!(".{}.tmp", std::process::id()));
     let temp_path = std::path::PathBuf::from(temp_path);
-
-    // A tax statement holds real trading data and the user may well have restricted it. The rename
-    // below carries the temp file's mode, not the target's, so an existing 0600 file would come
-    // back 0644 on the next run unless its mode is copied over first.
-    let existing_permissions = fs::metadata(path).ok().map(|metadata| metadata.permissions());
 
     File::create(&temp_path).map_err(GenericError::from).and_then(|file| {
         let mut writer = BufWriter::new(file);
@@ -697,18 +698,35 @@ fn write_atomically<F>(path: &Path, write: F) -> EmptyResult
         format!("Failed to write {temp_path:?}: {e}")
     })?;
 
-    if let Some(permissions) = existing_permissions {
-        fs::set_permissions(&temp_path, permissions).map_err(|e| {
-            let _ = fs::remove_file(&temp_path);
-            format!("Failed to carry the permissions of {path:?} over to {temp_path:?}: {e}")
-        })?;
-    }
+    carry_permissions(path, &temp_path).map_err(|e| {
+        let _ = fs::remove_file(&temp_path);
+        format!("Failed to carry the permissions of {path:?} over to {temp_path:?}: {e}")
+    })?;
 
     fs::rename(&temp_path, path).map_err(|e| {
         let _ = fs::remove_file(&temp_path);
         format!("Failed to rename {temp_path:?} to {path:?}: {e}")
     })?;
 
+    Ok(())
+}
+
+// A tax statement holds real trading data and the user may well have restricted it, but the rename
+// carries the temporary file's mode, not the target's, so an existing 0600 file would come back
+// 0644 unless its mode is copied over first.
+#[cfg(unix)]
+fn carry_permissions(target: &Path, temp_path: &Path) -> EmptyResult {
+    if let Ok(metadata) = fs::metadata(target) {
+        fs::set_permissions(temp_path, metadata.permissions())?;
+    }
+    Ok(())
+}
+
+// Windows Permissions carry only the read-only flag, which cannot help here (a read-only target
+// already refuses the rename) and can hurt: a read-only temporary file also refuses the cleanup
+// that follows a failed rename, leaving it behind.
+#[cfg(not(unix))]
+fn carry_permissions(_target: &Path, _temp_path: &Path) -> EmptyResult {
     Ok(())
 }
 
@@ -751,6 +769,26 @@ mod tests {
             .filter(|name| name != "statement.csv")
             .collect();
         assert!(leftovers.is_empty(), "temporary files survived: {leftovers:?}");
+    }
+
+    /// A symlinked output path must reach the file it points at. A bare rename would replace the
+    /// link with a regular file and leave that target holding stale figures, while the run still
+    /// reported success.
+    #[cfg(unix)]
+    #[test]
+    fn write_atomically_follows_a_symlinked_output_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("statement.csv");
+        let link = dir.path().join("latest.csv");
+
+        write_atomically(&target, |writer| Ok(writer.write_all(b"first")?)).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        write_atomically(&link, |writer| Ok(writer.write_all(b"second")?)).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "second");
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+                "the link was replaced instead of followed");
     }
 
     /// A mode the user tightened by hand must survive the next run; the rename would otherwise

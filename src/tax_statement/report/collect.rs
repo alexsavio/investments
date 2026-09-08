@@ -222,6 +222,14 @@ pub(crate) fn collect_fx_rows<C, T>(
                 } => Some((acquisition_date, acquisition_rate)),
             };
             let (treatment, gain_loss_eur) = treatment_of(row).unzip();
+            debug_assert_eq!(
+                opening.is_some(),
+                treatment.is_some(),
+                "{} on {}: a realizing row must carry a treatment and an acquisition must not; \
+                 the row would otherwise show an opening lot beside a blank result",
+                row.activity_code,
+                row.date,
+            );
 
             report.fx_rows.push(FxRow {
                 currency: result.currency.clone(),
@@ -248,8 +256,40 @@ mod tests {
     use crate::broker_statement::{BrokerStatement, ReadingStrictness};
     use crate::config::{Config, PortfolioConfig};
 
+    use crate::tax_statement::fx_fifo::{CurrencyFxResult, FxLedgerKind, FxLedgerRow};
+    use crate::time::Date;
+
     use super::super::details::ReportDetails;
-    use super::collect_securities;
+    use super::{collect_fx_rows, collect_securities};
+
+    /// The pairing half of the `treatment_of` contract is checked, not merely documented: a
+    /// closure that drops a realizing row would otherwise print an opening lot beside a blank
+    /// result, which reads as a €0 gain rather than as a bug.
+    #[test]
+    #[should_panic(expected = "a realizing row must carry a treatment")]
+    fn a_closure_that_drops_a_realizing_row_is_caught() {
+        let results = [CurrencyFxResult {
+            currency: "USD".to_owned(),
+            taxable: Vec::new(),
+            non_taxable: Vec::new(),
+            ledger: vec![FxLedgerRow {
+                date: Date::from_ymd_opt(2024, 3, 1).unwrap(),
+                transaction_id: "1".to_owned(),
+                activity_code: "SELL".to_owned(),
+                units: dec!(-100),
+                rate: dec!(0.9),
+                kind: FxLedgerKind::Disposal {
+                    acquisition_date: Date::from_ymd_opt(2024, 1, 1).unwrap(),
+                    acquisition_rate: dec!(0.88),
+                    amount: dec!(2),
+                },
+                balance_after: dec!(0),
+            }],
+        }];
+
+        let mut report: ReportDetails<(), ()> = ReportDetails::default();
+        collect_fx_rows(&mut report, &results, 2024, &|_row| None);
+    }
 
     /// A fund that neither traded nor paid out in the year reaches the security overview only
     /// through `extra_symbols`; no German fixture carries one, so nothing else pins this argument.

@@ -35,7 +35,8 @@ impl GoldenCorpus {
         let path = self.path(name, extension);
 
         if std::env::var_os("UPDATE_GOLDEN").is_some() {
-            std::fs::create_dir_all(&self.dir).unwrap();
+            std::fs::create_dir_all(&self.dir)
+                .unwrap_or_else(|error| panic!("failed to create {}: {error}", self.dir.display()));
             std::fs::write(&path, emitted)
                 .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
             return;
