@@ -52,7 +52,6 @@ pub struct StockBuy {
     pub execution_date: Date,
     pub out_of_order_execution: bool,
 
-    // Broker-assigned trade id when the statement carries one (informational, used in reports)
     pub trade_id: Option<String>,
 
     sold: Decimal,
@@ -172,7 +171,6 @@ pub struct StockSell {
     pub execution_date: Date,
     pub out_of_order_execution: bool,
 
-    // Broker-assigned trade id when the statement carries one (informational, used in reports)
     pub trade_id: Option<String>,
 
     pub emulation: bool,
@@ -415,7 +413,6 @@ pub struct FifoDetails {
     pub source: StockSourceDetails,
     cost: PurchaseTotalCost,
 
-    // Broker-assigned id of the opening trade, when known
     pub trade_id: Option<String>,
 
     pub tax_exemption_applied: bool,

@@ -802,7 +802,6 @@ fn process_dividends(
         // Get quantity from holdings (approximate)
         let quantity = dec!(0); // Dividend records don't always include quantity
 
-        // Report rows: the cash booking(s) and, when tax was withheld, the withholding worksheet.
         let (_, name) = security_identity(broker_statement, &dividend.issuer);
         let category = AssetCategory::from(teilfreistellung_rate);
         statement.report.bookings.push(BookingRow {

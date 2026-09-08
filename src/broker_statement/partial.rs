@@ -24,7 +24,6 @@ pub type PartialBrokerStatementRc = Rc<RefCell<PartialBrokerStatement>>;
 
 pub struct PartialBrokerStatement {
     pub period: Option<Period>,
-    // Broker account id when the statement carries one (informational, used in reports)
     pub account_id: Option<String>,
 
     pub has_starting_assets: Option<bool>,

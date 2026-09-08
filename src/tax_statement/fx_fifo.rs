@@ -66,14 +66,14 @@ pub struct FxLedgerRow {
 pub enum FxLedgerKind {
     /// Opened or extended a lot (held when `units > 0`, borrowed when `units < 0`); no result.
     Acquisition,
-    /// Disposed held currency: a §20 gain/loss `amount` (EUR, full precision) against a lot opened
-    /// on `acquisition_date` at `acquisition_rate`.
+    /// Disposed held currency: the realized result `amount` (EUR, full precision) against a lot
+    /// opened on `acquisition_date` at `acquisition_rate`.
     Disposal {
         acquisition_date: Date,
         acquisition_rate: Decimal,
         amount: Decimal,
     },
-    /// Repaid borrowed currency: the non-taxable result `amount` against the borrowing lot.
+    /// Repaid borrowed currency: the realized result `amount` against the borrowing lot.
     Repayment {
         acquisition_date: Date,
         acquisition_rate: Decimal,
