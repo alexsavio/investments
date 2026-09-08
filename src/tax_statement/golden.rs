@@ -10,7 +10,7 @@
 //! that diff is the whole point of the corpus, and a golden nobody reviewed is worth no more than
 //! no golden at all. A plain `cargo test` never writes to a golden directory.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A directory of golden files, plus the command that rewrites them.
 pub(crate) struct GoldenCorpus {
@@ -84,7 +84,7 @@ impl GoldenCorpus {
 
     /// The first differing line, in context. A whole-file dump of two long artefacts tells a reader
     /// nothing they can act on; the line number and its neighbours do.
-    fn describe_difference(&self, path: &PathBuf, expected: &str, emitted: &str) -> String {
+    fn describe_difference(&self, path: &Path, expected: &str, emitted: &str) -> String {
         const CONTEXT: usize = 3;
 
         let expected_lines: Vec<&str> = expected.lines().collect();

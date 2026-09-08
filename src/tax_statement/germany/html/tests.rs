@@ -8,13 +8,14 @@ use rstest::rstest;
 
 use crate::instruments::EtfClassification;
 use crate::tax_statement::golden::GoldenCorpus;
+use crate::tax_statement::html::format::punctuate;
 use crate::taxes::TaxConfig;
 use crate::time::{self, Date, DateTime, Period};
 
 use super::super::report_details::{BookingKind, FxTreatment, TradeSide};
 use super::super::tests::{run_pipeline, run_pipeline_with_config};
 use super::super::{GermanTaxStatement, format_eur};
-use super::format::{eur, germanize};
+use super::format::eur;
 use super::{HtmlReport, ReportMeta};
 
 fn meta(year: i32) -> ReportMeta {
@@ -88,7 +89,7 @@ fn amounts_are_the_statement_figures_in_german_notation() {
     assert!(html.contains(">900,00<"));
     assert_eq!(
         eur(statement.kap_zeile_19),
-        germanize(&format_eur(statement.kap_zeile_19))
+        punctuate(&format_eur(statement.kap_zeile_19))
     );
 
     // Instrument name and ISIN from the Flex export reach the report.

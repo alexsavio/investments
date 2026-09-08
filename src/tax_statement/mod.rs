@@ -4,6 +4,7 @@ mod fx_fifo;
 pub mod germany;
 #[cfg(test)]
 mod golden;
+pub(crate) mod html;
 mod interest;
 pub mod spain;
 mod statement;
