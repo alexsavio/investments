@@ -3,7 +3,7 @@
 //! Processes broker statement data and populates the German tax statement
 //! with capital gains, dividends, interest entries, and FX gains/losses.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::Datelike;
 use log::{debug, warn};
@@ -11,7 +11,7 @@ use rust_decimal::RoundingStrategy;
 
 use crate::broker_statement::{
     BrokerCorporateActionType, BrokerStatement, Dividend, ForeignCashFlow, ForexTrade,
-    StockSellType, StockSource, StockSourceDetails,
+    StockSellType, StockSourceDetails,
 };
 use crate::config::{ForeignCurrencyTaxation, OpeningForeignCurrency};
 use crate::core::GenericResult;
@@ -26,9 +26,8 @@ use crate::time::Date;
 use crate::types::Decimal;
 
 use super::report_details::{
-    AssetCategory, BookingKind, BookingRow, FxRow, FxTreatment, LotSource, OpenLotRow, SaleLotRow,
-    SaleWorksheet, SecurityRow, TradeRow, TradeSide, WithholdingRow, classify, ecb_rate,
-    isin_country, security_identity,
+    AssetCategory, BookingKind, BookingRow, FxTreatment, LotSource, SaleLotRow, SaleWorksheet,
+    TradeRow, TradeSide, WithholdingRow, classify, ecb_rate, isin_country, security_identity,
 };
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, CorporateActionType, DividendEntry,
@@ -36,6 +35,9 @@ use super::statement::{
     VorabpauschaleEntry,
 };
 use crate::tax_statement::fx_fifo::{CurrencyFxResult, FxLedgerKind, OpeningLot, compute_fx_fifo};
+use crate::tax_statement::report::collect::{
+    collect_buys, collect_fx_rows as collect_shared_fx_rows, collect_open_lots, collect_securities,
+};
 
 /// Helper function to convert to EUR with context-specific error message.
 fn convert_to_eur(
@@ -169,12 +171,44 @@ pub fn process_broker_statement(
 
     // Report-only detail (no tax effect): the raw buys, the open lots and the security list. Sells
     // and their FIFO lots were recorded by process_trades from the very values that fed the entries.
-    collect_buys(statement, broker_statement, year, converter)?;
+    let category_of = |isin: &str| AssetCategory::from(classify(tax_config, isin));
+    collect_buys(&mut statement.report, broker_statement, year, converter)?;
     statement.report.trades.sort_by(|a, b| {
         (&a.symbol, a.date, a.settle_date).cmp(&(&b.symbol, b.date, b.settle_date))
     });
-    collect_open_lots(statement, broker_statement, year, converter, tax_config)?;
-    collect_securities(statement, broker_statement, tax_config);
+    collect_open_lots(
+        &mut statement.report,
+        broker_statement,
+        year,
+        converter,
+        &category_of,
+        &|original_symbol, vest_date, quantity| {
+            grant_lot_cost_basis_eur(
+                broker_statement,
+                original_symbol,
+                vest_date,
+                quantity,
+                converter,
+            )
+        },
+    )?;
+
+    // The Vorabpauschale and the stock grants name funds and shares that need not have traded or
+    // paid out in the year, so the security overview would otherwise miss them.
+    let mut extra_symbols: Vec<&str> = statement
+        .vorabpauschale
+        .iter()
+        .map(|row| row.symbol.as_str())
+        .chain(statement.stock_grants.iter().map(|row| row.symbol.as_str()))
+        .collect();
+    extra_symbols.sort_unstable();
+    extra_symbols.dedup();
+    collect_securities(
+        &mut statement.report,
+        broker_statement,
+        &extra_symbols,
+        &category_of,
+    );
 
     // Short positions get no automatic tax treatment; surface them for manual §20 EStG review.
     statement.short_positions = broker_statement
@@ -318,7 +352,6 @@ fn process_trades(
                 proceeds_eur: lot_proceeds_eur,
                 gain_loss_eur: lot_proceeds_eur - lot_cost_eur,
                 holding_days: (trade.conclusion_time.date - lot.conclusion_time.date).num_days(),
-                pre_2009,
             });
         }
 
@@ -542,184 +575,6 @@ fn grant_lot_cost_basis_eur(
         original_symbol, vest_date
     );
     convert_to_eur(converter, vest_date, cost, &context)
-}
-
-/// Record the year's raw purchases for the report (sells are recorded by `process_trades`).
-fn collect_buys(
-    statement: &mut GermanTaxStatement,
-    broker_statement: &BrokerStatement,
-    year: i32,
-    converter: &CurrencyConverter,
-) -> GenericResult<()> {
-    for buy in &broker_statement.stock_buys {
-        if buy.conclusion_time.date.year() != year {
-            continue;
-        }
-        let StockSource::Trade {
-            price,
-            volume,
-            commission,
-        } = buy.type_
-        else {
-            continue;
-        };
-
-        let (isin, name) = security_identity(broker_statement, &buy.symbol);
-        // Same convention as the FIFO engine: volume converted at settlement, commission at
-        // conclusion, each rounded to cents.
-        let cost_eur = buy.total_cost("EUR", converter)?.amount;
-
-        statement.report.trades.push(TradeRow {
-            date: buy.conclusion_time.date,
-            settle_date: buy.execution_date,
-            trade_id: buy.trade_id.clone(),
-            symbol: buy.symbol.clone(),
-            isin,
-            name,
-            side: TradeSide::Buy,
-            quantity: buy.quantity,
-            currency: price.currency.to_string(),
-            price: price.amount,
-            gross: -volume.amount,
-            commission: -commission.amount,
-            net: -(volume.amount + commission.amount),
-            eur_per_unit: ecb_rate(converter, buy.execution_date, price.currency)?,
-            amount_eur: -cost_eur,
-        });
-    }
-    Ok(())
-}
-
-/// Record the purchase lots still (partly) unsold for the report's open-positions section.
-///
-/// The unsold quantity is the FIFO engine's view at the statement's last date; the as-of date
-/// recorded alongside is the tax year end, or the statement end when the statement ends earlier.
-/// A statement that extends past the tax year already has later sales consumed from these lots,
-/// which the renderer points out.
-fn collect_open_lots(
-    statement: &mut GermanTaxStatement,
-    broker_statement: &BrokerStatement,
-    year: i32,
-    converter: &CurrencyConverter,
-    tax_config: &TaxConfig,
-) -> GenericResult<()> {
-    let year_end = Date::from_ymd_opt(year, 12, 31).expect("31 December is always a valid date");
-    statement.report.open_lots_as_of = Some(broker_statement.period.last_date().min(year_end));
-
-    for buy in &broker_statement.stock_buys {
-        let unsold = buy.get_unsold();
-        if unsold <= dec!(0) || buy.conclusion_time.date > year_end {
-            continue;
-        }
-
-        let (isin, name) = security_identity(broker_statement, &buy.symbol);
-        let category = AssetCategory::from(classify(tax_config, &isin));
-
-        let (source, currency, price) = match buy.type_ {
-            StockSource::Trade { price, .. } => (
-                LotSource::Trade,
-                price.currency.to_string(),
-                Some(price.amount),
-            ),
-            StockSource::Grant => (LotSource::Grant, String::new(), None),
-            StockSource::CorporateAction => (LotSource::CorporateAction, String::new(), None),
-        };
-
-        let cost_eur = match buy.type_ {
-            StockSource::Grant => grant_lot_cost_basis_eur(
-                broker_statement,
-                &buy.original_symbol,
-                buy.conclusion_time.date,
-                unsold,
-                converter,
-            )?,
-            _ => {
-                let total_cost_eur = buy.total_cost("EUR", converter)?.amount;
-                if buy.quantity.is_zero() {
-                    dec!(0)
-                } else {
-                    total_cost_eur * unsold / buy.quantity
-                }
-            }
-        };
-
-        statement.report.open_lots.push(OpenLotRow {
-            symbol: buy.symbol.clone(),
-            isin,
-            name,
-            category,
-            open_date: buy.conclusion_time.date,
-            trade_id: buy.trade_id.clone(),
-            source,
-            quantity: unsold,
-            currency,
-            price,
-            cost_eur,
-        });
-    }
-
-    statement
-        .report
-        .open_lots
-        .sort_by(|a, b| (&a.symbol, a.open_date).cmp(&(&b.symbol, b.open_date)));
-    Ok(())
-}
-
-/// Build the security overview from every symbol the report mentions.
-fn collect_securities(
-    statement: &mut GermanTaxStatement,
-    broker_statement: &BrokerStatement,
-    tax_config: &TaxConfig,
-) {
-    let report = &statement.report;
-    let mut symbols: BTreeSet<&str> = BTreeSet::new();
-    symbols.extend(report.trades.iter().map(|row| row.symbol.as_str()));
-    symbols.extend(report.sales.iter().map(|row| row.symbol.as_str()));
-    symbols.extend(report.open_lots.iter().map(|row| row.symbol.as_str()));
-    symbols.extend(
-        report
-            .bookings
-            .iter()
-            .filter(|row| !row.symbol.is_empty())
-            .map(|row| row.symbol.as_str()),
-    );
-    symbols.extend(
-        statement
-            .vorabpauschale
-            .iter()
-            .map(|row| row.symbol.as_str()),
-    );
-    symbols.extend(statement.stock_grants.iter().map(|row| row.symbol.as_str()));
-
-    let mut securities = Vec::with_capacity(symbols.len());
-    for symbol in symbols {
-        let (isin, name) = security_identity(broker_statement, symbol);
-        let rate = classify(tax_config, &isin);
-        let currency = report
-            .trades
-            .iter()
-            .find(|row| row.symbol == symbol)
-            .map(|row| row.currency.clone())
-            .or_else(|| {
-                report
-                    .bookings
-                    .iter()
-                    .find(|row| row.symbol == symbol)
-                    .map(|row| row.currency.clone())
-            })
-            .unwrap_or_default();
-
-        securities.push(SecurityRow {
-            symbol: symbol.to_owned(),
-            country_code: isin_country(&isin),
-            isin,
-            name,
-            currency,
-            category: AssetCategory::from(rate),
-            teilfreistellung_rate: rate,
-        });
-    }
-    statement.report.securities = securities;
 }
 
 /// Process dividends and create dividend entries.
@@ -1255,79 +1110,47 @@ fn collect_fx_rows(
     year: i32,
     fx_taxation: ForeignCurrencyTaxation,
 ) {
-    for result in results {
-        for row in &result.ledger {
-            if row.date.year() != year {
-                continue;
+    collect_shared_fx_rows(
+        &mut statement.report,
+        results,
+        year,
+        &|row| match row.kind {
+            FxLedgerKind::Acquisition => None,
+            FxLedgerKind::Disposal {
+                acquisition_date,
+                amount,
+                ..
+            } => {
+                let treatment = match fx_taxation {
+                    ForeignCurrencyTaxation::InterestBearing => FxTreatment::Section20Taxable,
+                    ForeignCurrencyTaxation::NonInterestBearing => {
+                        if held_over_one_year(acquisition_date, row.date) {
+                            FxTreatment::Section23LongTermTaxFree
+                        } else {
+                            FxTreatment::Section23ShortTerm
+                        }
+                    }
+                };
+                let amount = if treatment == FxTreatment::Section20Taxable {
+                    amount.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
+                } else {
+                    amount
+                };
+                Some((treatment, amount))
             }
-
-            let (opening, treatment, gain_loss_eur) = match row.kind {
-                FxLedgerKind::Acquisition => (None, None, None),
-                FxLedgerKind::Disposal {
-                    acquisition_date,
-                    acquisition_rate,
-                    amount,
-                } => {
-                    let treatment = match fx_taxation {
-                        ForeignCurrencyTaxation::InterestBearing => FxTreatment::Section20Taxable,
-                        ForeignCurrencyTaxation::NonInterestBearing => {
-                            if held_over_one_year(acquisition_date, row.date) {
-                                FxTreatment::Section23LongTermTaxFree
-                            } else {
-                                FxTreatment::Section23ShortTerm
-                            }
-                        }
-                    };
-                    let amount = if treatment == FxTreatment::Section20Taxable {
-                        amount.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
-                    } else {
-                        amount
-                    };
-                    (
-                        Some((acquisition_date, acquisition_rate)),
-                        Some(treatment),
-                        Some(amount),
-                    )
-                }
-                FxLedgerKind::Repayment {
-                    acquisition_date,
-                    acquisition_rate,
-                    amount,
-                } => {
-                    let treatment = match fx_taxation {
-                        ForeignCurrencyTaxation::InterestBearing => {
-                            FxTreatment::LoanRepaymentNonTaxable
-                        }
-                        ForeignCurrencyTaxation::NonInterestBearing => {
-                            FxTreatment::Section23BorrowedReview
-                        }
-                    };
-                    (
-                        Some((acquisition_date, acquisition_rate)),
-                        Some(treatment),
-                        Some(amount),
-                    )
-                }
-            };
-
-            statement.report.fx_rows.push(FxRow {
-                currency: result.currency.clone(),
-                date: row.date,
-                transaction_id: row.transaction_id.clone(),
-                activity_code: row.activity_code.clone(),
-                units: row.units,
-                eur_per_unit: row.rate,
-                amount_eur: row.units * row.rate,
-                open_date: opening.map(|(date, _)| date),
-                open_eur_per_unit: opening.map(|(_, rate)| rate),
-                open_value_eur: opening.map(|(_, rate)| row.units.abs() * rate),
-                gain_loss_eur,
-                balance_after: row.balance_after,
-                holding_days: opening.map(|(date, _)| (row.date - date).num_days()),
-                treatment,
-            });
-        }
-    }
+            FxLedgerKind::Repayment { amount, .. } => {
+                let treatment = match fx_taxation {
+                    ForeignCurrencyTaxation::InterestBearing => {
+                        FxTreatment::LoanRepaymentNonTaxable
+                    }
+                    ForeignCurrencyTaxation::NonInterestBearing => {
+                        FxTreatment::Section23BorrowedReview
+                    }
+                };
+                Some((treatment, amount))
+            }
+        },
+    );
 }
 
 /// Route FIFO realizations into the §20 EStG capital-income path (Anlage KAP) for the default

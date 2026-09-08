@@ -12,7 +12,6 @@ mod summary;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Write;
 
@@ -246,14 +245,4 @@ fn title_block(out: &mut String, statement: &GermanTaxStatement, meta: &ReportMe
         statement.year
     );
     out.push_str("</header>\n");
-}
-
-/// Plain security names by symbol, from the security overview.
-pub(super) fn security_names(statement: &GermanTaxStatement) -> HashMap<&str, &str> {
-    statement
-        .report
-        .securities
-        .iter()
-        .map(|security| (security.symbol.as_str(), security.name.as_str()))
-        .collect()
 }

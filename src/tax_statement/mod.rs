@@ -6,6 +6,7 @@ pub mod germany;
 mod golden;
 pub(crate) mod html;
 mod interest;
+pub(crate) mod report;
 pub mod spain;
 mod statement;
 mod tax_agent;
