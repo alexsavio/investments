@@ -8,21 +8,22 @@ mod statement;
 mod tax_agent;
 mod trades;
 
-use std::fs::File;
-use std::io::BufWriter;
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use ansi_term::Color;
 
 use crate::broker_statement::{BrokerStatement, ReadingStrictness};
 use crate::config::Config;
-use crate::core::GenericResult;
+use crate::core::{EmptyResult, GenericError, GenericResult};
 use crate::currency::converter::CurrencyConverter;
 use crate::db;
 use crate::localities::Jurisdiction;
 use crate::taxes::TaxCalculator;
 use crate::taxes::spain::carryforward::CARRYFORWARD_YEARS;
 use crate::telemetry::TelemetryRecordBuilder;
+use crate::time;
 use crate::types::Decimal;
 
 pub use self::statement::TaxStatement;
@@ -493,17 +494,28 @@ fn generate_german_tax_statement(
         &portfolio.opening_foreign_currency,
     )?;
 
-    // Output the statement
+    // Output the statement. The extension selects the format: `.html` is the printable A4 report,
+    // anything else the CSV.
     if let Some(path) = output_path {
-        let file = File::create(path)
-            .map_err(|e| format!("Failed to create output file {path:?}: {e}"))?;
-        let mut writer = BufWriter::new(file);
-
-        germany::CsvFormatter::write(&statement, &mut writer)?;
+        let format = GermanOutputFormat::from_path(path);
+        write_atomically(path, |writer| match format {
+            GermanOutputFormat::Csv => germany::CsvFormatter::write(&statement, writer),
+            GermanOutputFormat::Html => {
+                let meta = germany::ReportMeta {
+                    year,
+                    broker_name: broker_statement.broker.name.to_owned(),
+                    portfolio_name: portfolio_name.to_owned(),
+                    account_id: broker_statement.account_id.clone(),
+                    period: broker_statement.period,
+                    generated_at: time::now(),
+                };
+                germany::HtmlReport::write(&statement, &meta, writer)
+            }
+        })?;
 
         println!(
             "{}",
-            Color::Green.paint(format!("German tax statement written to {path:?}"))
+            Color::Green.paint(format!("German tax {} written to {path:?}", format.description()))
         );
 
         // Print summary
@@ -610,8 +622,7 @@ fn generate_german_tax_statement(
         println!(
             "{}",
             Color::Yellow
-                .paint("Income found but no output file specified. Pass a file path after the \
-                        year to save the CSV.")
+                .paint("Income found but no output file specified. Pass an output path (*.csv, or *.html for the printable report).")
         );
         println!("\nCapital gains: {} entries", statement.capital_gains.len());
         println!("Dividends: {} entries", statement.dividends.len());
@@ -624,4 +635,56 @@ fn generate_german_tax_statement(
     }
 
     Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker))
+}
+
+#[derive(Clone, Copy)]
+enum GermanOutputFormat {
+    Csv,
+    Html,
+}
+
+impl GermanOutputFormat {
+    fn from_path(path: &Path) -> GermanOutputFormat {
+        let extension = path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase());
+        match extension.as_deref() {
+            Some("html") | Some("htm") => GermanOutputFormat::Html,
+            _ => GermanOutputFormat::Csv,
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            GermanOutputFormat::Csv => "statement (CSV)",
+            GermanOutputFormat::Html => "report (HTML)",
+        }
+    }
+}
+
+// Writes through a per-process temporary file and renames it into place, so an aborted run never
+// leaves a truncated report behind and two concurrent runs never share a temp file
+fn write_atomically<F>(path: &Path, write: F) -> EmptyResult
+    where F: FnOnce(&mut BufWriter<File>) -> EmptyResult
+{
+    let mut temp_path = path.as_os_str().to_os_string();
+    temp_path.push(format!(".{}.tmp", std::process::id()));
+    let temp_path = std::path::PathBuf::from(temp_path);
+
+    File::create(&temp_path).map_err(GenericError::from).and_then(|file| {
+        let mut writer = BufWriter::new(file);
+        write(&mut writer)?;
+        writer.flush()?;
+        Ok(())
+    }).map_err(|e| {
+        let _ = fs::remove_file(&temp_path);
+        format!("Failed to write {temp_path:?}: {e}")
+    })?;
+
+    fs::rename(&temp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&temp_path);
+        format!("Failed to rename {temp_path:?} to {path:?}: {e}")
+    })?;
+
+    Ok(())
 }

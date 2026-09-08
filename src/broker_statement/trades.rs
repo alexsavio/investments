@@ -52,6 +52,9 @@ pub struct StockBuy {
     pub execution_date: Date,
     pub out_of_order_execution: bool,
 
+    // Broker-assigned trade id when the statement carries one (informational, used in reports)
+    pub trade_id: Option<String>,
+
     sold: Decimal,
 }
 
@@ -67,7 +70,7 @@ impl StockBuy {
             symbol: symbol.to_owned(), original_symbol: symbol.to_owned(),
             quantity, type_: StockSource::Trade {price, volume, commission}, cost,
             conclusion_time, execution_date, out_of_order_execution: false,
-            sold: dec!(0),
+            trade_id: None, sold: dec!(0),
         }
     }
 
@@ -76,7 +79,7 @@ impl StockBuy {
             symbol: symbol.to_owned(), original_symbol: symbol.to_owned(),
             quantity, type_: StockSource::Grant, cost: PurchaseTotalCost::new(),
             out_of_order_execution: true, conclusion_time: date.into(), execution_date: date,
-            sold: dec!(0),
+            trade_id: None, sold: dec!(0),
         }
     }
 
@@ -87,7 +90,7 @@ impl StockBuy {
         StockBuy {
             symbol: symbol.to_owned(), original_symbol: symbol.to_owned(),
             quantity, type_: StockSource::CorporateAction, cost, out_of_order_execution: true,
-            conclusion_time, execution_date, sold: dec!(0),
+            conclusion_time, execution_date, trade_id: None, sold: dec!(0),
         }
     }
 
@@ -97,6 +100,12 @@ impl StockBuy {
 
     pub fn get_unsold(&self) -> Decimal {
         self.quantity - self.sold
+    }
+
+    // Total purchase cost of the whole lot (trade volume + commission) in the requested currency,
+    // each component converted at its own transaction date
+    pub fn total_cost(&self, currency: &str, converter: &CurrencyConverter) -> GenericResult<Cash> {
+        self.cost.calculate(None, currency, converter)
     }
 
     pub fn sell(&mut self, quantity: Decimal, multiplier: Decimal) -> StockSellSource {
@@ -127,6 +136,7 @@ impl StockBuy {
             quantity, multiplier, type_, cost,
             conclusion_time: self.conclusion_time,
             execution_date: self.execution_date,
+            trade_id: self.trade_id.clone(),
         }
     }
 }
@@ -162,6 +172,9 @@ pub struct StockSell {
     pub execution_date: Date,
     pub out_of_order_execution: bool,
 
+    // Broker-assigned trade id when the statement carries one (informational, used in reports)
+    pub trade_id: Option<String>,
+
     pub emulation: bool,
     sources: Vec<StockSellSource>,
 }
@@ -175,7 +188,7 @@ impl StockSell {
             symbol: symbol.to_owned(), original_symbol: symbol.to_owned(),
             quantity, type_: StockSellType::Trade {price, volume, commission},
             conclusion_time, execution_date, out_of_order_execution: false,
-            emulation, sources: Vec::new(),
+            trade_id: None, emulation, sources: Vec::new(),
         }
     }
 
@@ -186,7 +199,7 @@ impl StockSell {
             symbol: symbol.to_owned(), original_symbol: symbol.to_owned(),
             quantity, type_: StockSellType::CorporateAction,
             conclusion_time, execution_date, out_of_order_execution: true,
-            emulation: false, sources: Vec::new(),
+            trade_id: None, emulation: false, sources: Vec::new(),
         }
     }
 
@@ -337,6 +350,8 @@ pub struct StockSellSource {
 
     pub conclusion_time: DateOptTime,
     pub execution_date: Date,
+
+    pub trade_id: Option<String>,
 }
 
 pub struct SellDetails {
@@ -400,6 +415,9 @@ pub struct FifoDetails {
     pub source: StockSourceDetails,
     cost: PurchaseTotalCost,
 
+    // Broker-assigned id of the opening trade, when known
+    pub trade_id: Option<String>,
+
     pub tax_exemption_applied: bool,
     pub long_term_ownership_deductible: Option<LtoDeductibleProfit>,
 }
@@ -455,6 +473,8 @@ impl FifoDetails {
 
             source: details,
             cost: source.cost.clone(),
+
+            trade_id: source.trade_id.clone(),
 
             tax_exemption_applied: false,
             long_term_ownership_deductible: None,

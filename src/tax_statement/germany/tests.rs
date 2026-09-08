@@ -55,7 +55,7 @@ fn converter() -> CurrencyConverter {
     }))
 }
 
-fn read_fixture(name: &str) -> BrokerStatement {
+pub(super) fn read_fixture(name: &str) -> BrokerStatement {
     // The fixture path is repo-relative, so it is assigned after deserialization: the config
     // deserializer requires an absolute path, which a checked-out test tree cannot provide.
     let mut portfolio: PortfolioConfig =
@@ -69,7 +69,7 @@ fn read_fixture(name: &str) -> BrokerStatement {
 
 /// Run the full German tax pipeline over a fixture with an explicit tax config, defaulting to the
 /// §20 (interest-bearing) foreign-currency treatment.
-fn run_pipeline_with_config(
+pub(super) fn run_pipeline_with_config(
     fixture: &str,
     year: i32,
     tax_config: &TaxConfig,
@@ -83,7 +83,7 @@ fn run_pipeline_with_config(
 }
 
 /// Run the full German tax pipeline with an explicit tax config and foreign-currency treatment.
-fn run_pipeline_full(
+pub(super) fn run_pipeline_full(
     fixture: &str,
     year: i32,
     tax_config: &TaxConfig,
@@ -108,7 +108,7 @@ fn run_pipeline_full(
 }
 
 /// Run the full German tax pipeline over a fixture and return the finalized statement.
-fn run_pipeline(fixture: &str, year: i32) -> GermanTaxStatement {
+pub(super) fn run_pipeline(fixture: &str, year: i32) -> GermanTaxStatement {
     run_pipeline_with_config(fixture, year, &TaxConfig::default())
 }
 

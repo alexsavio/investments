@@ -74,10 +74,11 @@ See [instructions for portfolio rebalancing](docs/rebalancing.md).
 
 ![investments tax-statement](/docs/images/tax-statement-command.png?raw=true "investments tax-statement")
 
-**Germany:** See [instructions for German tax statement generation](docs/germany-taxes.md). Generate a CSV report with:
+**Germany:** See [instructions for German tax statement generation](docs/germany-taxes.md). Generate a CSV statement or a printable A4 HTML report (the extension selects the format) with:
 
 ```bash
 investments tax-statement ib 2024 german-tax-2024.csv
+investments tax-statement ib 2024 german-tax-2024.html
 ```
 
 **Spain:** See [instructions for Spanish tax statement generation](docs/spain-taxes.md). Generate a CSV report with:

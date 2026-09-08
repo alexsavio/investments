@@ -189,7 +189,7 @@ impl Parser {
                         .value_parser(parse_year),
 
                     Arg::new("TAX_STATEMENT")
-                        .help("Path to tax statement *.deX file")
+                        .help("Path to tax statement *.deX file (Russia) or output file for the German report: *.csv, or *.html for the printable A4 report")
                         .value_parser(value_parser!(PathBuf))
                 ]))
 

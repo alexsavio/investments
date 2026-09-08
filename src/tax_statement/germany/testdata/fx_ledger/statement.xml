@@ -1,0 +1,22 @@
+<FlexQueryResponse queryName="german-tax-test" type="AF">
+  <FlexStatements count="1">
+    <FlexStatement accountId="U0000002" fromDate="20240101" toDate="20241231" period="LastYear" whenGenerated="20250115;120000">
+      <CashReport>
+        <CashReportCurrency currency="BASE_SUMMARY" endingCash="-880" dividends="0" brokerInterest="0" withholdingTax="0"/>
+        <CashReportCurrency currency="EUR" endingCash="-880" dividends="0" brokerInterest="0" withholdingTax="0"/>
+        <CashReportCurrency currency="USD" endingCash="0" dividends="0" brokerInterest="0" withholdingTax="0"/>
+      </CashReport>
+      <Trades>
+        <Trade currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" dateTime="20240315;100000" settleDate="20240318" quantity="10" tradePrice="100" tradeMoney="-1000" ibCommission="0" buySell="BUY" openCloseIndicator="O" tradeID="9001" transactionID="7002"/>
+      </Trades>
+      <StmtFunds>
+        <StatementOfFundsLine currency="EUR" date="20240301" activityCode="FOREX" activityDescription="Trading Currency Leg from Forex Trade: -880 EUR.USD" amount="-880" balance="-880" transactionID="7001" levelOfDetail="Currency"/>
+        <StatementOfFundsLine currency="USD" date="20240301" activityCode="FOREX" activityDescription="Trading Currency Leg from Forex Trade: 1000 EUR.USD" amount="1000" balance="1000" transactionID="7001" levelOfDetail="Currency"/>
+        <StatementOfFundsLine currency="USD" date="20240315" settleDate="20240318" activityCode="BUY" activityDescription="Buy 10 APPLE INC" symbol="AAPL" isin="US0378331005" description="APPLE INC" assetCategory="STK" tradeQuantity="10" tradePrice="100" tradeGross="-1000" tradeCommission="0" buySell="BUY" amount="-1000" balance="0" transactionID="7002" levelOfDetail="Currency"/>
+      </StmtFunds>
+      <OpenPositions>
+        <OpenPosition currency="USD" symbol="AAPL" isin="US0378331005" description="APPLE INC" position="10" markPrice="150"/>
+      </OpenPositions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>

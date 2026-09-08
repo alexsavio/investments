@@ -317,6 +317,9 @@ impl InstrumentInfo {
 pub struct Instrument {
     pub symbol: String,
     name: Option<String>,
+    /// The broker's own description of the instrument (e.g. "APPLE INC"). Kept apart from `name`,
+    /// which is user-configured and feeds `get_name()`; reports fall back to it when no name is set.
+    description: Option<String>,
     pub isin: HashSet<ISIN>,
     cusip: HashSet<CUSIP>,
     pub exchanges: Exchanges,
@@ -333,6 +336,7 @@ impl Instrument {
         Instrument {
             symbol:    symbol.to_owned(),
             name:      None,
+            description: None,
             isin:      HashSet::new(),
             cusip:     HashSet::new(),
             exchanges: Exchanges::new_empty(),
@@ -340,8 +344,20 @@ impl Instrument {
         }
     }
 
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
     pub fn set_name(&mut self, name: &str) {
         self.name.replace(name.to_owned());
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    pub fn set_description(&mut self, description: &str) {
+        self.description.replace(description.to_owned());
     }
 
     pub fn add_isin(&mut self, isin: ISIN) {

@@ -3,15 +3,15 @@
 //! Processes broker statement data and populates the German tax statement
 //! with capital gains, dividends, interest entries, and FX gains/losses.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use chrono::Datelike;
 use log::{debug, warn};
 use rust_decimal::RoundingStrategy;
 
 use crate::broker_statement::{
-    BrokerCorporateActionType, BrokerStatement, Dividend, FifoDetails, ForeignCashFlow, ForexTrade,
-    StockSourceDetails,
+    BrokerCorporateActionType, BrokerStatement, Dividend, ForeignCashFlow, ForexTrade,
+    StockSellType, StockSource, StockSourceDetails,
 };
 use crate::config::{ForeignCurrencyTaxation, OpeningForeignCurrency};
 use crate::core::GenericResult;
@@ -25,12 +25,17 @@ use crate::taxes::germany::{AbgeltungsteuerBreakdown, TeilfreistellungRate};
 use crate::time::Date;
 use crate::types::Decimal;
 
-use crate::tax_statement::fx_fifo::{CurrencyFxResult, OpeningLot, compute_fx_fifo};
+use super::report_details::{
+    AssetCategory, BookingKind, BookingRow, FxRow, FxTreatment, LotSource, OpenLotRow, SaleLotRow,
+    SaleWorksheet, SecurityRow, TradeRow, TradeSide, WithholdingRow, classify, ecb_rate,
+    isin_country, security_identity,
+};
 use super::statement::{
     CapitalGainEntry, CashGrantEntry, CorporateActionEntry, CorporateActionType, DividendEntry,
     FeeEntry, FxGainEntry, GermanTaxStatement, InterestEntry, Section23, StockGrantEntry,
     VorabpauschaleEntry,
 };
+use crate::tax_statement::fx_fifo::{CurrencyFxResult, FxLedgerKind, OpeningLot, compute_fx_fifo};
 
 /// Helper function to convert to EUR with context-specific error message.
 fn convert_to_eur(
@@ -76,7 +81,8 @@ pub fn compute_tax_year(
     // church_tax_rate is accepted in the documented percent form (0, 8, 9) and normalized to a
     // fraction here — used raw it would levy a ~900% church tax.
     let church_tax_rate = tax_config.german_church_tax_fraction()?;
-    let (loss_carryforward_stock, loss_carryforward_other) = tax_config.german_loss_carryforward()?;
+    let (loss_carryforward_stock, loss_carryforward_other) =
+        tax_config.german_loss_carryforward()?;
     let sparer_pauschbetrag = tax_config.german_sparer_pauschbetrag(year);
 
     let mut statement = GermanTaxStatement::new(
@@ -160,6 +166,15 @@ pub fn process_broker_statement(
     // Vorabpauschale (§18 InvStG) for funds held at year end. Must run after process_dividends, which
     // supplies the per-fund distributions this uses.
     process_vorabpauschale(statement, broker_statement, year, tax_config)?;
+
+    // Report-only detail (no tax effect): the raw buys, the open lots and the security list. Sells
+    // and their FIFO lots were recorded by process_trades from the very values that fed the entries.
+    collect_buys(statement, broker_statement, year, converter)?;
+    statement.report.trades.sort_by(|a, b| {
+        (&a.symbol, a.date, a.settle_date).cmp(&(&b.symbol, b.date, b.settle_date))
+    });
+    collect_open_lots(statement, broker_statement, year, converter, tax_config)?;
+    collect_securities(statement, broker_statement, tax_config);
 
     // Short positions get no automatic tax treatment; surface them for manual §20 EStG review.
     statement.short_positions = broker_statement
@@ -253,24 +268,58 @@ fn process_trades(
         let mut cost_basis_eur = dec!(0);
         let mut pre_2009_profit = dec!(0);
         let mut has_pre_2009_lot = false;
+        let mut lot_rows = Vec::with_capacity(details.fifo.len());
         for lot in &details.fifo {
             let lot_cost_eur = match lot.source {
                 // Vested RSU shares are acquired at their vest-date FMV (already taxed as employment
                 // income); StockSourceDetails::Grant carries zero trade cost, so substitute the FMV.
-                StockSourceDetails::Grant => {
-                    grant_lot_cost_basis_eur(broker_statement, lot, converter)?
-                }
+                StockSourceDetails::Grant => grant_lot_cost_basis_eur(
+                    broker_statement,
+                    &lot.original_symbol,
+                    lot.conclusion_time.date,
+                    lot.quantity,
+                    converter,
+                )?,
                 _ => lot.total_cost("EUR", converter)?.amount,
             };
             cost_basis_eur += lot_cost_eur;
 
-            if lot.conclusion_time.date < pre_2009_cutoff {
+            let lot_quantity = lot.quantity * lot.multiplier;
+            let lot_share = if total_quantity.is_zero() {
+                dec!(0)
+            } else {
+                lot_quantity / total_quantity
+            };
+            let lot_proceeds_eur = net_proceeds_eur * lot_share;
+
+            let pre_2009 = lot.conclusion_time.date < pre_2009_cutoff;
+            if pre_2009 {
                 has_pre_2009_lot = true;
                 if !total_quantity.is_zero() {
-                    let lot_share = (lot.quantity * lot.multiplier) / total_quantity;
-                    pre_2009_profit += net_proceeds_eur * lot_share - lot_cost_eur;
+                    pre_2009_profit += lot_proceeds_eur - lot_cost_eur;
                 }
             }
+
+            // Report worksheet row: the same lot cost that just entered the cost basis.
+            lot_rows.push(SaleLotRow {
+                open_date: lot.conclusion_time.date,
+                open_trade_id: lot.trade_id.clone(),
+                source: match lot.source {
+                    StockSourceDetails::Trade { .. } => LotSource::Trade,
+                    StockSourceDetails::Grant => LotSource::Grant,
+                    StockSourceDetails::CorporateAction => LotSource::CorporateAction,
+                },
+                quantity: lot_quantity,
+                price: match lot.source {
+                    StockSourceDetails::Trade { price, .. } => Some(price.amount),
+                    _ => None,
+                },
+                cost_eur: lot_cost_eur,
+                proceeds_eur: lot_proceeds_eur,
+                gain_loss_eur: lot_proceeds_eur - lot_cost_eur,
+                holding_days: (trade.conclusion_time.date - lot.conclusion_time.date).num_days(),
+                pre_2009,
+            });
         }
 
         let gross_gain_loss = net_proceeds_eur - cost_basis_eur;
@@ -361,6 +410,55 @@ fn process_trades(
         let church_tax = taxes.kirchensteuer;
         let total_tax = taxes.total;
 
+        // Report rows for this sale: the raw trade and its FIFO worksheet, from the same values.
+        let (price, volume, commission) = match trade.type_ {
+            StockSellType::Trade {
+                price,
+                volume,
+                commission,
+            } => (price, volume, commission),
+            StockSellType::CorporateAction => unreachable!(),
+        };
+        let (_, name) = security_identity(broker_statement, &trade.symbol);
+        let eur_per_unit = ecb_rate(converter, trade.execution_date, price.currency)?;
+        statement.report.trades.push(TradeRow {
+            date: trade.conclusion_time.date,
+            settle_date: trade.execution_date,
+            trade_id: trade.trade_id.clone(),
+            symbol: trade.symbol.clone(),
+            isin: isin.clone(),
+            name: name.clone(),
+            side: TradeSide::Sell,
+            quantity: trade.quantity,
+            currency: price.currency.to_string(),
+            price: price.amount,
+            gross: volume.amount,
+            commission: -commission.amount,
+            net: volume.amount - commission.amount,
+            eur_per_unit,
+            amount_eur: net_proceeds_eur,
+        });
+        statement.report.sales.push(SaleWorksheet {
+            symbol: trade.symbol.clone(),
+            isin: isin.clone(),
+            name,
+            category: AssetCategory::from(teilfreistellung_rate),
+            sale_date: trade.conclusion_time.date,
+            settle_date: trade.execution_date,
+            trade_id: trade.trade_id.clone(),
+            quantity: trade.quantity,
+            currency: price.currency.to_string(),
+            price: price.amount,
+            gross: volume.amount,
+            commission: commission.amount,
+            eur_per_unit,
+            proceeds_eur: net_proceeds_eur,
+            cost_basis_eur,
+            gain_loss_eur: gross_gain_loss,
+            notes: notes.clone(),
+            lots: lot_rows,
+        });
+
         let entry = CapitalGainEntry {
             transaction_date: trade.conclusion_time.date,
             settle_date: trade.execution_date,
@@ -408,21 +506,21 @@ fn process_trades(
 /// to zero (conservative: overstates the gain rather than understating it).
 fn grant_lot_cost_basis_eur(
     broker_statement: &BrokerStatement,
-    lot: &FifoDetails,
+    original_symbol: &str,
+    vest_date: Date,
+    quantity: Decimal,
     converter: &CurrencyConverter,
 ) -> GenericResult<Decimal> {
-    let vest_date = lot.conclusion_time.date;
-
     let Some(grant) = broker_statement
         .stock_grants
         .iter()
-        .find(|grant| grant.symbol == lot.original_symbol && grant.date == vest_date)
+        .find(|grant| grant.symbol == original_symbol && grant.date == vest_date)
     else {
         warn!(
             "Stock grant lot for {} vested {} has no matching grant record; using a €0 cost basis, \
              which taxes the whole disposal proceeds as gain. Supply the vest-date FMV and correct \
              the figure by hand — see the open-interpretations section of docs/germany-taxes.md.",
-            lot.original_symbol, vest_date
+            original_symbol, vest_date
         );
         return Ok(dec!(0));
     };
@@ -432,18 +530,196 @@ fn grant_lot_cost_basis_eur(
             "Stock grant {} vested {}: vest-date FMV unavailable; using a €0 cost basis, which \
              taxes the whole disposal proceeds as gain. Correct the figure by hand — see the \
              open-interpretations section of docs/germany-taxes.md.",
-            lot.original_symbol, vest_date
+            original_symbol, vest_date
         );
         return Ok(dec!(0));
     };
 
-    // fmv is per original (un-split) share; lot.quantity is likewise the pre-multiplier share count.
-    let cost = Cash::new(fmv.currency, fmv.amount * lot.quantity);
+    // fmv is per original (un-split) share; `quantity` is likewise the pre-multiplier share count.
+    let cost = Cash::new(fmv.currency, fmv.amount * quantity);
     let context = format!(
         "Converting vest-date FMV for stock grant {} on {}",
-        lot.original_symbol, vest_date
+        original_symbol, vest_date
     );
     convert_to_eur(converter, vest_date, cost, &context)
+}
+
+/// Record the year's raw purchases for the report (sells are recorded by `process_trades`).
+fn collect_buys(
+    statement: &mut GermanTaxStatement,
+    broker_statement: &BrokerStatement,
+    year: i32,
+    converter: &CurrencyConverter,
+) -> GenericResult<()> {
+    for buy in &broker_statement.stock_buys {
+        if buy.conclusion_time.date.year() != year {
+            continue;
+        }
+        let StockSource::Trade {
+            price,
+            volume,
+            commission,
+        } = buy.type_
+        else {
+            continue;
+        };
+
+        let (isin, name) = security_identity(broker_statement, &buy.symbol);
+        // Same convention as the FIFO engine: volume converted at settlement, commission at
+        // conclusion, each rounded to cents.
+        let cost_eur = buy.total_cost("EUR", converter)?.amount;
+
+        statement.report.trades.push(TradeRow {
+            date: buy.conclusion_time.date,
+            settle_date: buy.execution_date,
+            trade_id: buy.trade_id.clone(),
+            symbol: buy.symbol.clone(),
+            isin,
+            name,
+            side: TradeSide::Buy,
+            quantity: buy.quantity,
+            currency: price.currency.to_string(),
+            price: price.amount,
+            gross: -volume.amount,
+            commission: -commission.amount,
+            net: -(volume.amount + commission.amount),
+            eur_per_unit: ecb_rate(converter, buy.execution_date, price.currency)?,
+            amount_eur: -cost_eur,
+        });
+    }
+    Ok(())
+}
+
+/// Record the purchase lots still (partly) unsold for the report's open-positions section.
+///
+/// The unsold quantity is the FIFO engine's view at the statement's last date; the as-of date
+/// recorded alongside is the tax year end, or the statement end when the statement ends earlier.
+/// A statement that extends past the tax year already has later sales consumed from these lots,
+/// which the renderer points out.
+fn collect_open_lots(
+    statement: &mut GermanTaxStatement,
+    broker_statement: &BrokerStatement,
+    year: i32,
+    converter: &CurrencyConverter,
+    tax_config: &TaxConfig,
+) -> GenericResult<()> {
+    let year_end = Date::from_ymd_opt(year, 12, 31).expect("31 December is always a valid date");
+    statement.report.open_lots_as_of = Some(broker_statement.period.last_date().min(year_end));
+
+    for buy in &broker_statement.stock_buys {
+        let unsold = buy.get_unsold();
+        if unsold <= dec!(0) || buy.conclusion_time.date > year_end {
+            continue;
+        }
+
+        let (isin, name) = security_identity(broker_statement, &buy.symbol);
+        let category = AssetCategory::from(classify(tax_config, &isin));
+
+        let (source, currency, price) = match buy.type_ {
+            StockSource::Trade { price, .. } => (
+                LotSource::Trade,
+                price.currency.to_string(),
+                Some(price.amount),
+            ),
+            StockSource::Grant => (LotSource::Grant, String::new(), None),
+            StockSource::CorporateAction => (LotSource::CorporateAction, String::new(), None),
+        };
+
+        let cost_eur = match buy.type_ {
+            StockSource::Grant => grant_lot_cost_basis_eur(
+                broker_statement,
+                &buy.original_symbol,
+                buy.conclusion_time.date,
+                unsold,
+                converter,
+            )?,
+            _ => {
+                let total_cost_eur = buy.total_cost("EUR", converter)?.amount;
+                if buy.quantity.is_zero() {
+                    dec!(0)
+                } else {
+                    total_cost_eur * unsold / buy.quantity
+                }
+            }
+        };
+
+        statement.report.open_lots.push(OpenLotRow {
+            symbol: buy.symbol.clone(),
+            isin,
+            name,
+            category,
+            open_date: buy.conclusion_time.date,
+            trade_id: buy.trade_id.clone(),
+            source,
+            quantity: unsold,
+            currency,
+            price,
+            cost_eur,
+        });
+    }
+
+    statement
+        .report
+        .open_lots
+        .sort_by(|a, b| (&a.symbol, a.open_date).cmp(&(&b.symbol, b.open_date)));
+    Ok(())
+}
+
+/// Build the security overview from every symbol the report mentions.
+fn collect_securities(
+    statement: &mut GermanTaxStatement,
+    broker_statement: &BrokerStatement,
+    tax_config: &TaxConfig,
+) {
+    let report = &statement.report;
+    let mut symbols: BTreeSet<&str> = BTreeSet::new();
+    symbols.extend(report.trades.iter().map(|row| row.symbol.as_str()));
+    symbols.extend(report.sales.iter().map(|row| row.symbol.as_str()));
+    symbols.extend(report.open_lots.iter().map(|row| row.symbol.as_str()));
+    symbols.extend(
+        report
+            .bookings
+            .iter()
+            .filter(|row| !row.symbol.is_empty())
+            .map(|row| row.symbol.as_str()),
+    );
+    symbols.extend(
+        statement
+            .vorabpauschale
+            .iter()
+            .map(|row| row.symbol.as_str()),
+    );
+    symbols.extend(statement.stock_grants.iter().map(|row| row.symbol.as_str()));
+
+    let mut securities = Vec::with_capacity(symbols.len());
+    for symbol in symbols {
+        let (isin, name) = security_identity(broker_statement, symbol);
+        let rate = classify(tax_config, &isin);
+        let currency = report
+            .trades
+            .iter()
+            .find(|row| row.symbol == symbol)
+            .map(|row| row.currency.clone())
+            .or_else(|| {
+                report
+                    .bookings
+                    .iter()
+                    .find(|row| row.symbol == symbol)
+                    .map(|row| row.currency.clone())
+            })
+            .unwrap_or_default();
+
+        securities.push(SecurityRow {
+            symbol: symbol.to_owned(),
+            country_code: isin_country(&isin),
+            isin,
+            name,
+            currency,
+            category: AssetCategory::from(rate),
+            teilfreistellung_rate: rate,
+        });
+    }
+    statement.report.securities = securities;
 }
 
 /// Process dividends and create dividend entries.
@@ -525,6 +801,57 @@ fn process_dividends(
 
         // Get quantity from holdings (approximate)
         let quantity = dec!(0); // Dividend records don't always include quantity
+
+        // Report rows: the cash booking(s) and, when tax was withheld, the withholding worksheet.
+        let (_, name) = security_identity(broker_statement, &dividend.issuer);
+        let category = AssetCategory::from(teilfreistellung_rate);
+        statement.report.bookings.push(BookingRow {
+            kind: BookingKind::Dividend,
+            date: dividend.date,
+            symbol: dividend.issuer.clone(),
+            isin: isin.clone(),
+            name: name.clone(),
+            category: Some(category),
+            description: dividend.description(),
+            currency: dividend.amount.currency.to_string(),
+            amount: dividend.amount.amount,
+            eur_per_unit: ecb_rate(converter, dividend.date, dividend.amount.currency)?,
+            amount_eur: gross_amount_eur,
+        });
+        if !dividend.tax_withheld.is_zero() {
+            statement.report.bookings.push(BookingRow {
+                kind: BookingKind::WithholdingTax,
+                date: dividend.date,
+                symbol: dividend.issuer.clone(),
+                isin: isin.clone(),
+                name: name.clone(),
+                category: Some(category),
+                description: format!("Quellensteuer: {}", dividend.description()),
+                currency: dividend.tax_withheld.currency.to_string(),
+                amount: -dividend.tax_withheld.amount,
+                eur_per_unit: ecb_rate(converter, dividend.date, dividend.tax_withheld.currency)?,
+                amount_eur: -foreign_withholding_tax,
+            });
+            statement.report.withholding.push(WithholdingRow {
+                date: dividend.date,
+                symbol: dividend.issuer.clone(),
+                country_code: isin_country(&isin),
+                isin: isin.clone(),
+                name,
+                category,
+                currency: dividend.amount.currency.to_string(),
+                gross: dividend.amount.amount,
+                gross_eur: gross_amount_eur,
+                withheld: dividend.tax_withheld.amount,
+                withheld_eur: foreign_withholding_tax,
+                withholding_rate: if gross_amount_eur.is_zero() {
+                    dec!(0)
+                } else {
+                    foreign_withholding_tax / gross_amount_eur
+                },
+                creditable_eur: foreign_tax_credit,
+            });
+        }
 
         let entry = DividendEntry {
             payment_date: dividend.date,
@@ -792,6 +1119,20 @@ fn process_interest(
         let foreign_tax_credit = dec!(0);
         let net_tax = total_tax;
 
+        statement.report.bookings.push(BookingRow {
+            kind: BookingKind::Interest,
+            date: interest.date,
+            symbol: String::new(),
+            isin: String::new(),
+            name: String::new(),
+            category: None,
+            description: format!("Guthabenzinsen {}", interest.amount.currency),
+            currency: interest.amount.currency.to_string(),
+            amount: interest.amount.amount,
+            eur_per_unit: ecb_rate(converter, interest.date, interest.amount.currency)?,
+            amount_eur: gross_amount_eur,
+        });
+
         let entry = InterestEntry {
             payment_date: interest.date,
             description: format!("Idle cash interest - {}", interest.amount.currency),
@@ -888,12 +1229,106 @@ fn process_fx_gains(
         },
     )?;
 
-    Ok(match fx_taxation {
+    let has_income = match fx_taxation {
         ForeignCurrencyTaxation::InterestBearing => route_fx_section20(statement, &results, year),
         ForeignCurrencyTaxation::NonInterestBearing => {
             route_fx_section23(statement, &results, year)
         }
-    })
+    };
+    collect_fx_rows(statement, &results, year, fx_taxation);
+    Ok(has_income)
+}
+
+/// "Mehr als ein Jahr" (§23 EStG): tax-free only when the disposal is strictly after the first
+/// anniversary of acquisition (holding period per §187/§188 BGB via §108 AO).
+fn held_over_one_year(acquisition_date: Date, disposal_date: Date) -> bool {
+    acquisition_date
+        .checked_add_months(chrono::Months::new(12))
+        .is_some_and(|anniversary| disposal_date > anniversary)
+}
+
+/// Record every foreign-currency movement portion of the year for the report worksheet, labelled
+/// with the treatment the routing above gave it. §20 taxable results carry the same cent-rounded
+/// value as their `FxGainEntry`; the other kinds stay at full precision (their totals round once).
+fn collect_fx_rows(
+    statement: &mut GermanTaxStatement,
+    results: &[CurrencyFxResult],
+    year: i32,
+    fx_taxation: ForeignCurrencyTaxation,
+) {
+    for result in results {
+        for row in &result.ledger {
+            if row.date.year() != year {
+                continue;
+            }
+
+            let (opening, treatment, gain_loss_eur) = match row.kind {
+                FxLedgerKind::Acquisition => (None, None, None),
+                FxLedgerKind::Disposal {
+                    acquisition_date,
+                    acquisition_rate,
+                    amount,
+                } => {
+                    let treatment = match fx_taxation {
+                        ForeignCurrencyTaxation::InterestBearing => FxTreatment::Section20Taxable,
+                        ForeignCurrencyTaxation::NonInterestBearing => {
+                            if held_over_one_year(acquisition_date, row.date) {
+                                FxTreatment::Section23LongTermTaxFree
+                            } else {
+                                FxTreatment::Section23ShortTerm
+                            }
+                        }
+                    };
+                    let amount = if treatment == FxTreatment::Section20Taxable {
+                        amount.round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
+                    } else {
+                        amount
+                    };
+                    (
+                        Some((acquisition_date, acquisition_rate)),
+                        Some(treatment),
+                        Some(amount),
+                    )
+                }
+                FxLedgerKind::Repayment {
+                    acquisition_date,
+                    acquisition_rate,
+                    amount,
+                } => {
+                    let treatment = match fx_taxation {
+                        ForeignCurrencyTaxation::InterestBearing => {
+                            FxTreatment::LoanRepaymentNonTaxable
+                        }
+                        ForeignCurrencyTaxation::NonInterestBearing => {
+                            FxTreatment::Section23BorrowedReview
+                        }
+                    };
+                    (
+                        Some((acquisition_date, acquisition_rate)),
+                        Some(treatment),
+                        Some(amount),
+                    )
+                }
+            };
+
+            statement.report.fx_rows.push(FxRow {
+                currency: result.currency.clone(),
+                date: row.date,
+                transaction_id: row.transaction_id.clone(),
+                activity_code: row.activity_code.clone(),
+                units: row.units,
+                eur_per_unit: row.rate,
+                amount_eur: row.units * row.rate,
+                open_date: opening.map(|(date, _)| date),
+                open_eur_per_unit: opening.map(|(_, rate)| rate),
+                open_value_eur: opening.map(|(_, rate)| row.units.abs() * rate),
+                gain_loss_eur,
+                balance_after: row.balance_after,
+                holding_days: opening.map(|(date, _)| (row.date - date).num_days()),
+                treatment,
+            });
+        }
+    }
 }
 
 /// Route FIFO realizations into the §20 EStG capital-income path (Anlage KAP) for the default
@@ -996,14 +1431,7 @@ fn route_fx_section23(
                 continue;
             }
 
-            // "mehr als ein Jahr": tax-free only when the disposal is strictly after the first
-            // anniversary of acquisition (holding period per §187/§188 BGB via §108 AO).
-            let held_over_one_year = realization
-                .acquisition_date
-                .checked_add_months(chrono::Months::new(12))
-                .is_some_and(|anniversary| realization.date > anniversary);
-
-            if held_over_one_year {
+            if held_over_one_year(realization.acquisition_date, realization.date) {
                 // A > 1-year loss is non-deductible under §23 and has no reportable effect, so only
                 // gains accumulate into the tax-free bucket.
                 if realization.amount > dec!(0) {
@@ -1076,6 +1504,20 @@ fn process_fees(
             .description
             .clone()
             .unwrap_or_else(|| "Broker fee".to_string());
+
+        statement.report.bookings.push(BookingRow {
+            kind: BookingKind::Fee,
+            date: fee.date,
+            symbol: String::new(),
+            isin: String::new(),
+            name: String::new(),
+            category: None,
+            description: description.clone(),
+            currency: fee_cash.currency.to_string(),
+            amount: -fee_cash.amount,
+            eur_per_unit: ecb_rate(converter, fee.date, fee_cash.currency)?,
+            amount_eur: -amount_eur,
+        });
 
         let entry = FeeEntry {
             date: fee.date,
@@ -1206,6 +1648,20 @@ fn process_cash_grants(
             grant.description, grant.date
         );
         let amount_eur = convert_to_eur(converter, grant.date, grant.amount, &context)?;
+
+        statement.report.bookings.push(BookingRow {
+            kind: BookingKind::CashGrant,
+            date: grant.date,
+            symbol: String::new(),
+            isin: String::new(),
+            name: String::new(),
+            category: None,
+            description: grant.description.clone(),
+            currency: grant.amount.currency.to_string(),
+            amount: grant.amount.amount,
+            eur_per_unit: ecb_rate(converter, grant.date, grant.amount.currency)?,
+            amount_eur,
+        });
 
         let entry = CashGrantEntry {
             date: grant.date,
@@ -1376,8 +1832,8 @@ fn process_corporate_actions(
 
 #[cfg(test)]
 mod tests {
-    use crate::tax_statement::fx_fifo::FxRealization;
     use super::*;
+    use crate::tax_statement::fx_fifo::FxRealization;
     use crate::tax_statement::germany::{CsvFormatter, GermanTaxStatement};
     use crate::taxes::germany::TeilfreistellungRate;
 
@@ -2525,7 +2981,8 @@ mod tests {
     /// The chain `simulate-sell` builds: the year's tax after each disposal is added in turn.
     /// Mirrors `GermanTaxSimulation::observe`, which recomputes the year once per emulated sale.
     fn tax_after_each(
-        statement: &mut GermanTaxStatement, disposals: &[CapitalGainEntry],
+        statement: &mut GermanTaxStatement,
+        disposals: &[CapitalGainEntry],
     ) -> Vec<Decimal> {
         disposals
             .iter()
@@ -2551,12 +3008,15 @@ mod tests {
         statement.calculate_totals();
         assert_eq!(statement.net_tax_due, dec!(0));
 
-        let taxes = tax_after_each(&mut statement, &[
-            stock_capital_entry(dec!(1000)), // pot −3000 → −2000: free
-            stock_capital_entry(dec!(2000)), // pot exhausted, still nothing taxable
-            stock_capital_entry(dec!(1000)), // +1000 net gain, covered by the allowance
-            stock_capital_entry(dec!(1000)), // +2000 net, less €1,000 allowance → €1,000 taxable
-        ]);
+        let taxes = tax_after_each(
+            &mut statement,
+            &[
+                stock_capital_entry(dec!(1000)), // pot −3000 → −2000: free
+                stock_capital_entry(dec!(2000)), // pot exhausted, still nothing taxable
+                stock_capital_entry(dec!(1000)), // +1000 net gain, covered by the allowance
+                stock_capital_entry(dec!(1000)), // +2000 net, less €1,000 allowance → €1,000 taxable
+            ],
+        );
 
         assert_eq!(taxes[0], dec!(0));
         assert_eq!(taxes[1], dec!(0));
@@ -2869,6 +3329,7 @@ mod tests {
                 realization((2025, 4, 1), (2025, 5, 1), dec!(15)), // borrowed → manual review
                 realization((2024, 1, 1), (2024, 6, 1), dec!(77)), // other year → filtered
             ],
+            ledger: Vec::new(),
         };
 
         let mut statement =
@@ -2896,6 +3357,7 @@ mod tests {
             currency: "USD".to_string(),
             taxable: vec![realization((2024, 6, 10), (2025, 6, 10), dec!(40))],
             non_taxable: vec![],
+            ledger: Vec::new(),
         };
         let mut statement =
             GermanTaxStatement::new(2025, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
@@ -2907,6 +3369,7 @@ mod tests {
             currency: "USD".to_string(),
             taxable: vec![realization((2024, 6, 10), (2025, 6, 11), dec!(40))],
             non_taxable: vec![],
+            ledger: Vec::new(),
         };
         let mut statement =
             GermanTaxStatement::new(2025, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
@@ -2922,6 +3385,7 @@ mod tests {
             currency: "USD".to_string(),
             taxable: vec![realization((2025, 1, 10), (2025, 6, 10), dec!(100))],
             non_taxable: vec![realization((2025, 4, 1), (2025, 5, 1), dec!(15))],
+            ledger: Vec::new(),
         };
         let mut statement =
             GermanTaxStatement::new(2025, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
@@ -2937,5 +3401,117 @@ mod tests {
         assert!(csv.contains("SECTION23_BORROWED_REVIEW"));
         // €1000 Freigrenze applies from 2024 onward.
         assert!(csv.contains("1000"));
+    }
+
+    /// The report ledger keeps every movement portion with the treatment the routing gave it; §20
+    /// taxable rows carry the same cent-rounded result as their `FxGainEntry`, the other kinds stay
+    /// at full precision, and rows outside the tax year are dropped.
+    #[test]
+    fn fx_rows_follow_the_ledger_with_treatments() {
+        use crate::tax_statement::fx_fifo::FxLedgerRow;
+
+        let date = |day: u32| Date::from_ymd_opt(2025, 3, day).unwrap();
+        let ledger = vec![
+            FxLedgerRow {
+                date: date(1),
+                transaction_id: "10".to_string(),
+                activity_code: "FOREX".to_string(),
+                units: dec!(1000),
+                rate: dec!(0.90),
+                kind: FxLedgerKind::Acquisition,
+                balance_after: dec!(1000),
+            },
+            FxLedgerRow {
+                date: date(5),
+                transaction_id: "11".to_string(),
+                activity_code: "BUY".to_string(),
+                units: dec!(-1000),
+                rate: dec!(0.901005),
+                kind: FxLedgerKind::Disposal {
+                    acquisition_date: date(1),
+                    acquisition_rate: dec!(0.90),
+                    amount: dec!(1.005),
+                },
+                balance_after: dec!(0),
+            },
+            FxLedgerRow {
+                date: date(6),
+                transaction_id: "12".to_string(),
+                activity_code: "SELL".to_string(),
+                units: dec!(200),
+                rate: dec!(0.91),
+                kind: FxLedgerKind::Repayment {
+                    acquisition_date: date(5),
+                    acquisition_rate: dec!(0.90),
+                    amount: dec!(-2),
+                },
+                balance_after: dec!(0),
+            },
+            FxLedgerRow {
+                date: Date::from_ymd_opt(2024, 12, 31).unwrap(),
+                transaction_id: "9".to_string(),
+                activity_code: "DEP".to_string(),
+                units: dec!(50),
+                rate: dec!(0.95),
+                kind: FxLedgerKind::Acquisition,
+                balance_after: dec!(50),
+            },
+        ];
+        let result = CurrencyFxResult {
+            currency: "USD".to_string(),
+            taxable: vec![realization((2025, 3, 1), (2025, 3, 5), dec!(1.005))],
+            non_taxable: vec![],
+            ledger,
+        };
+
+        let mut statement =
+            GermanTaxStatement::new(2025, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        collect_fx_rows(
+            &mut statement,
+            std::slice::from_ref(&result),
+            2025,
+            ForeignCurrencyTaxation::InterestBearing,
+        );
+        let rows = &statement.report.fx_rows;
+        assert_eq!(rows.len(), 3);
+
+        assert_eq!(rows[0].currency, "USD");
+        assert_eq!(rows[0].transaction_id, "10");
+        assert_eq!(rows[0].amount_eur, dec!(900));
+        assert_eq!(rows[0].treatment, None);
+        assert_eq!(rows[0].gain_loss_eur, None);
+        assert_eq!(rows[0].open_date, None);
+
+        assert_eq!(rows[1].treatment, Some(FxTreatment::Section20Taxable));
+        assert_eq!(rows[1].gain_loss_eur, Some(dec!(1.01)));
+        assert_eq!(rows[1].open_date, Some(date(1)));
+        assert_eq!(rows[1].open_eur_per_unit, Some(dec!(0.90)));
+        assert_eq!(rows[1].open_value_eur, Some(dec!(900)));
+        assert_eq!(rows[1].holding_days, Some(4));
+        assert_eq!(rows[1].balance_after, dec!(0));
+
+        assert_eq!(
+            rows[2].treatment,
+            Some(FxTreatment::LoanRepaymentNonTaxable)
+        );
+        assert_eq!(rows[2].gain_loss_eur, Some(dec!(-2)));
+        assert_eq!(rows[2].holding_days, Some(1));
+
+        // The same ledger under the non-interest-bearing (§23) treatment.
+        let mut statement =
+            GermanTaxStatement::new(2025, dec!(0), dec!(0), dec!(0), dec!(0)).unwrap();
+        collect_fx_rows(
+            &mut statement,
+            std::slice::from_ref(&result),
+            2025,
+            ForeignCurrencyTaxation::NonInterestBearing,
+        );
+        let rows = &statement.report.fx_rows;
+        assert_eq!(rows[1].treatment, Some(FxTreatment::Section23ShortTerm));
+        assert_eq!(rows[1].gain_loss_eur, Some(dec!(1.005)));
+        assert_eq!(
+            rows[2].treatment,
+            Some(FxTreatment::Section23BorrowedReview)
+        );
     }
 }
