@@ -306,13 +306,6 @@ fn fx_ledger_flows_from_statement_of_funds_into_the_report() {
     assert!(html.contains(">20,00<"));
 }
 
-/// The rendered report, byte for byte, over the committed fixtures.
-///
-/// The renderer is a pure function of the statement and the meta block, so the only non-reproducible
-/// input is the generation timestamp, which [`fixed_meta`] freezes. Every other figure in the file
-/// comes out of the same pipeline the binary runs.
-///
-/// Regenerate with `UPDATE_GOLDEN=1 cargo test --lib germany::html::tests`, then read the diff.
 fn corpus() -> GoldenCorpus {
     GoldenCorpus::new(
         "src/tax_statement/germany/testdata/golden",
@@ -347,7 +340,12 @@ fn equity_fund() -> TaxConfig {
     config
 }
 
-/// The corpus, one committed golden per case:
+/// The rendered report, byte for byte, over the committed fixtures. The renderer is a pure function
+/// of the statement and the meta block, so the only non-reproducible input is the generation
+/// timestamp, which [`fixed_meta`] freezes; every other figure comes out of the pipeline the binary
+/// runs. Regenerate with `UPDATE_GOLDEN=1 cargo test --lib germany::html::tests`.
+///
+/// One committed golden per case:
 ///
 /// - `fifo` — two FIFO sale worksheets with their lots, the raw trades and the security overview.
 /// - `dividend_withholding` — the cash bookings, the withholding section and an open lot.

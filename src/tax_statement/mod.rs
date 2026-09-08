@@ -191,16 +191,20 @@ fn generate_spanish_tax_statement(
         return Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker));
     }
 
+    // Output the statement. The extension selects the format: `.html` is the printable A4 report,
+    // anything else the CSV.
     if let Some(path) = output_path {
-        let file = File::create(path)
-            .map_err(|e| format!("Failed to create output file {path:?}: {e}"))?;
-        let mut writer = BufWriter::new(file);
-
-        spain::CsvFormatter::write(&statement, &mut writer)?;
+        let format = OutputFormat::from_path(path);
+        write_atomically(path, |writer| match format {
+            OutputFormat::Csv => spain::CsvFormatter::write(&statement, writer),
+            OutputFormat::Html => Err!(
+                "The printable HTML report is not available for the Spanish tax statement yet. \
+                 Write to a .csv path instead."),
+        })?;
 
         println!(
             "{}",
-            Color::Green.paint(format!("Spanish tax statement written to {path:?}"))
+            Color::Green.paint(format!("Spanish tax {} written to {path:?}", format.description()))
         );
     }
 
@@ -501,10 +505,10 @@ fn generate_german_tax_statement(
     // Output the statement. The extension selects the format: `.html` is the printable A4 report,
     // anything else the CSV.
     if let Some(path) = output_path {
-        let format = GermanOutputFormat::from_path(path);
+        let format = OutputFormat::from_path(path);
         write_atomically(path, |writer| match format {
-            GermanOutputFormat::Csv => germany::CsvFormatter::write(&statement, writer),
-            GermanOutputFormat::Html => {
+            OutputFormat::Csv => germany::CsvFormatter::write(&statement, writer),
+            OutputFormat::Html => {
                 let meta = germany::ReportMeta {
                     year,
                     broker_name: broker_statement.broker.name.to_owned(),
@@ -641,27 +645,28 @@ fn generate_german_tax_statement(
     Ok(TelemetryRecordBuilder::new_with_broker(portfolio.broker))
 }
 
+/// Output format of a written tax statement, selected by the path's extension.
 #[derive(Clone, Copy)]
-enum GermanOutputFormat {
+enum OutputFormat {
     Csv,
     Html,
 }
 
-impl GermanOutputFormat {
-    fn from_path(path: &Path) -> GermanOutputFormat {
+impl OutputFormat {
+    fn from_path(path: &Path) -> OutputFormat {
         let extension = path.extension()
             .and_then(|extension| extension.to_str())
             .map(|extension| extension.to_ascii_lowercase());
         match extension.as_deref() {
-            Some("html") | Some("htm") => GermanOutputFormat::Html,
-            _ => GermanOutputFormat::Csv,
+            Some("html") | Some("htm") => OutputFormat::Html,
+            _ => OutputFormat::Csv,
         }
     }
 
     fn description(self) -> &'static str {
         match self {
-            GermanOutputFormat::Csv => "statement (CSV)",
-            GermanOutputFormat::Html => "report (HTML)",
+            OutputFormat::Csv => "statement (CSV)",
+            OutputFormat::Html => "report (HTML)",
         }
     }
 }
