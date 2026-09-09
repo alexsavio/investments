@@ -63,8 +63,7 @@ pub const WIDER_WINDOW_MONTHS: u32 = 12;
 const TWO_MONTH_WINDOW_VENUES: &[&str] = &[
     // United States, Annex of (EU) 2017/2320.
     "AMEX", "ARCA", "BATS", "BYX", "BZX", "CBOE", "EDGA", "EDGX", "IEX", "NASDAQ", "NYSE",
-    "NYSENAT", "PSE", "PHLX",
-    // EEA regulated markets IB reports for stocks.
+    "NYSENAT", "PSE", "PHLX", // EEA regulated markets IB reports for stocks.
     "AEB", "BM", "BVL", "BVME", "CPH", "ENEXT.BE", "FWB", "GETTEX", "HEX", "IBIS", "IBIS2", "ICEX",
     "MIL", "OSE", "SBF", "SFB", "SWB", "TGATE", "VSE", "WSE",
     // Australia, (EU) 2017/2318; Hong Kong, (EU) 2017/2319.
@@ -349,14 +348,12 @@ impl WashSaleEngine {
         let mut released = Vec::new();
         let mut blocked_consumed = Decimal::ZERO;
         for &(lot_date, quantity) in &disposal.consumed {
-            state
-                .acquisitions
-                .entry(lot_date)
-                .or_default()
-                .consumed += quantity;
+            state.acquisitions.entry(lot_date).or_default().consumed += quantity;
             blocked_consumed += release(state, lot_date, quantity, &mut released);
         }
-        state.blocked.retain(|lot| lot.blocked_quantity > Decimal::ZERO);
+        state
+            .blocked
+            .retain(|lot| lot.blocked_quantity > Decimal::ZERO);
 
         let own_loss = match disposal.fiscal_result {
             Some(result) if result < Decimal::ZERO => -result,
@@ -381,8 +378,7 @@ impl WashSaleEngine {
             let (_, wider_total) = match_window(state, disposal, wider_window(disposal.date));
             outcome.wider_window_loss =
                 own_loss * (wider_total - matched_total) / disposal.quantity;
-            outcome.boundary_reviews =
-                review_boundaries(state, disposal, own_loss, matched_total);
+            outcome.boundary_reviews = review_boundaries(state, disposal, own_loss, matched_total);
         }
 
         // Definitiveness is measured on the **blocked** shares, not on the whole disposal: the
@@ -429,9 +425,9 @@ impl WashSaleEngine {
 
     /// Blocked lots still standing, keyed by instrument, for the carry-out config.
     pub fn blocked_lots(&self) -> impl Iterator<Item = (&str, &BlockedLot)> {
-        self.instruments.iter().flat_map(|(key, state)| {
-            state.blocked.iter().map(move |lot| (key.as_str(), lot))
-        })
+        self.instruments
+            .iter()
+            .flat_map(|(key, state)| state.blocked.iter().map(move |lot| (key.as_str(), lot)))
     }
 }
 
@@ -489,7 +485,9 @@ fn release(
 /// quantity. An acquisition already consumed — by this sale or an earlier one — or already blocking
 /// cannot block again: those shares are gone or spoken for.
 fn match_window(
-    state: &InstrumentState, disposal: &Disposal, (start, end): (Date, Date),
+    state: &InstrumentState,
+    disposal: &Disposal,
+    (start, end): (Date, Date),
 ) -> (Vec<(Date, Decimal)>, Decimal) {
     let mut matched: Vec<(Date, Decimal)> = Vec::new();
     let mut matched_total = Decimal::ZERO;
@@ -530,7 +528,10 @@ fn match_window(
 /// At most one inward and one outward review per edge: two readings that move the same edge the same
 /// way are one question, not two.
 fn review_boundaries(
-    state: &InstrumentState, disposal: &Disposal, own_loss: Decimal, matched_total: Decimal,
+    state: &InstrumentState,
+    disposal: &Disposal,
+    own_loss: Decimal,
+    matched_total: Decimal,
 ) -> Vec<BoundaryReview> {
     let (start, end) = window(disposal.date);
     let per_share = own_loss / disposal.quantity;
@@ -555,10 +556,18 @@ fn review_boundaries(
         let mut outward_date = edge;
 
         for candidate in candidates.into_iter().flatten() {
-            let bounds = if anterior { (candidate, end) } else { (start, candidate) };
+            let bounds = if anterior {
+                (candidate, end)
+            } else {
+                (start, candidate)
+            };
             let (_, total) = match_window(state, disposal, bounds);
 
-            let narrows = if anterior { candidate > edge } else { candidate < edge };
+            let narrows = if anterior {
+                candidate > edge
+            } else {
+                candidate < edge
+            };
             let delta = if narrows {
                 matched_total - total
             } else {
@@ -587,7 +596,11 @@ fn review_boundaries(
                 continue;
             }
             reviews.push(BoundaryReview {
-                kind: if clamped { BoundaryKind::Clamp } else { unclamped_kind },
+                kind: if clamped {
+                    BoundaryKind::Clamp
+                } else {
+                    unclamped_kind
+                },
                 boundary_date: edge,
                 alternative_date,
                 amount: per_share * quantity,
@@ -616,10 +629,23 @@ fn block(
 
     for &(date, quantity) in matched {
         for &(origin_sale_date, amount) in placements {
+            let blocked_quantity = quantity * amount / total;
+            let deferred_loss = amount * quantity / matched_total;
+
+            // A lot that carries neither shares nor euros blocks nothing, and the disposal path
+            // only prunes lots it has drawn down. Both products share the factor `quantity`, so
+            // they underflow together once it falls below `Decimal`'s 28-digit scale — far under
+            // a share, but reachable by repeated proportional re-attachment. Pushing it would put
+            // a deferral of zero shares into the carry-out block a filer pastes into next year's
+            // config.
+            if blocked_quantity <= Decimal::ZERO && deferred_loss <= Decimal::ZERO {
+                continue;
+            }
+
             state.blocked.push(BlockedLot {
                 buy_date: date,
-                blocked_quantity: quantity * amount / total,
-                deferred_loss: amount * quantity / matched_total,
+                blocked_quantity,
+                deferred_loss,
                 origin_sale_date,
             });
         }
@@ -704,7 +730,11 @@ mod tests {
         );
 
         let outcome = engine.process(&disposal(
-            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+            date!(2026, 3, 10),
+            dec!(100),
+            dec!(-900),
+            &[(date!(2026, 1, 5), dec!(100))],
+        ));
 
         assert_eq!(outcome.deferred_loss, expected_deferred);
         assert_eq!(outcome.wider_window_loss, expected_wider);
@@ -777,11 +807,18 @@ mod tests {
     const KEY: &str = "US0378331005";
 
     fn acquisition(date: Date, quantity: Decimal) -> Acquisition {
-        Acquisition { key: KEY.to_owned(), date, quantity }
+        Acquisition {
+            key: KEY.to_owned(),
+            date,
+            quantity,
+        }
     }
 
     fn disposal(
-        date: Date, quantity: Decimal, result: Decimal, consumed: &[(Date, Decimal)],
+        date: Date,
+        quantity: Decimal,
+        result: Decimal,
+        consumed: &[(Date, Decimal)],
     ) -> Disposal {
         Disposal {
             key: KEY.to_owned(),
@@ -808,18 +845,25 @@ mod tests {
         );
 
         let outcome = engine.process(&disposal(
-            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+            date!(2026, 3, 10),
+            dec!(100),
+            dec!(-900),
+            &[(date!(2026, 1, 5), dec!(100))],
+        ));
 
         assert_eq!(outcome.deferred_loss, dec!(360));
         assert!(outcome.reintegrations.is_empty());
 
         let blocked: Vec<&BlockedLot> = engine.blocked_lots().map(|(_, lot)| lot).collect();
-        assert_eq!(blocked, vec![&BlockedLot {
-            buy_date: date!(2026, 4, 20),
-            blocked_quantity: dec!(40),
-            deferred_loss: dec!(360),
-            origin_sale_date: date!(2026, 3, 10),
-        }]);
+        assert_eq!(
+            blocked,
+            vec![&BlockedLot {
+                buy_date: date!(2026, 4, 20),
+                blocked_quantity: dec!(40),
+                deferred_loss: dec!(360),
+                origin_sale_date: date!(2026, 3, 10),
+            }]
+        );
     }
 
     /// A repurchase *before* the sale blocks only the shares the sale did not itself consume.
@@ -839,7 +883,11 @@ mod tests {
         );
 
         let outcome = engine.process(&disposal(
-            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 10), dec!(100))]));
+            date!(2026, 3, 10),
+            dec!(100),
+            dec!(-900),
+            &[(date!(2026, 1, 10), dec!(100))],
+        ));
 
         assert_eq!(outcome.deferred_loss, dec!(450));
         let blocked: Vec<&BlockedLot> = engine.blocked_lots().map(|(_, lot)| lot).collect();
@@ -872,16 +920,27 @@ mod tests {
             [],
         );
         engine.process(&disposal(
-            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+            date!(2026, 3, 10),
+            dec!(100),
+            dec!(-900),
+            &[(date!(2026, 1, 5), dec!(100))],
+        ));
 
         // 25 of the 40 blocked shares go; 360 × 25/40 becomes integrable again.
         let outcome = engine.process(&disposal(
-            date!(2026, 11, 15), dec!(25), dec!(450), &[(date!(2026, 4, 20), dec!(25))]));
+            date!(2026, 11, 15),
+            dec!(25),
+            dec!(450),
+            &[(date!(2026, 4, 20), dec!(25))],
+        ));
 
         assert_eq!(outcome.reintegrations.len(), 1);
         assert_eq!(outcome.reintegrations[0].amount, dec!(225));
         // Labelled with the sale the deferral came from, not the sale that released it.
-        assert_eq!(outcome.reintegrations[0].origin_sale_date, date!(2026, 3, 10));
+        assert_eq!(
+            outcome.reintegrations[0].origin_sale_date,
+            date!(2026, 3, 10)
+        );
 
         let blocked: Vec<&BlockedLot> = engine.blocked_lots().map(|(_, lot)| lot).collect();
         assert_eq!(blocked[0].blocked_quantity, dec!(15));
@@ -902,20 +961,32 @@ mod tests {
         );
 
         let deferral = engine.process(&disposal(
-            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+            date!(2026, 3, 10),
+            dec!(100),
+            dec!(-900),
+            &[(date!(2026, 1, 5), dec!(100))],
+        ));
         assert_eq!(deferral.deferred_loss, dec!(360));
 
-        let blocked: Vec<Decimal> =
-            engine.blocked_lots().map(|(_, lot)| lot.deferred_loss).collect();
+        let blocked: Vec<Decimal> = engine
+            .blocked_lots()
+            .map(|(_, lot)| lot.deferred_loss)
+            .collect();
         assert_eq!(blocked, vec![dec!(225), dec!(135)]);
 
         // Sell 30: the whole 25-share lot and 5 of the 15-share one.
         let release = engine.process(&disposal(
-            date!(2026, 11, 15), dec!(30), dec!(630),
-            &[(date!(2026, 4, 20), dec!(25)), (date!(2026, 5, 5), dec!(5))]));
+            date!(2026, 11, 15),
+            dec!(30),
+            dec!(630),
+            &[(date!(2026, 4, 20), dec!(25)), (date!(2026, 5, 5), dec!(5))],
+        ));
 
-        let released: Vec<Decimal> =
-            release.reintegrations.iter().map(|entry| entry.amount).collect();
+        let released: Vec<Decimal> = release
+            .reintegrations
+            .iter()
+            .map(|entry| entry.amount)
+            .collect();
         assert_eq!(released, vec![dec!(225), dec!(45)]);
 
         let surviving: Vec<&BlockedLot> = engine.blocked_lots().map(|(_, lot)| lot).collect();
@@ -937,7 +1008,11 @@ mod tests {
         );
 
         let outcome = engine.process(&disposal(
-            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+            date!(2026, 3, 10),
+            dec!(100),
+            dec!(-900),
+            &[(date!(2026, 1, 5), dec!(100))],
+        ));
 
         assert_eq!(outcome.deferred_loss, dec!(900));
         let blocked: Vec<&BlockedLot> = engine.blocked_lots().map(|(_, lot)| lot).collect();
@@ -964,29 +1039,48 @@ mod tests {
         );
 
         let first = engine.process(&disposal(
-            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+            date!(2026, 3, 10),
+            dec!(100),
+            dec!(-900),
+            &[(date!(2026, 1, 5), dec!(100))],
+        ));
         // The 2026-02-01 and 2026-04-20 acquisitions are both in the window: 100 + 60 available,
         // capped at the 100 shares sold.
         assert_eq!(first.deferred_loss, dec!(900));
 
         let second = engine.process(&disposal(
-            date!(2026, 3, 20), dec!(100), dec!(-500), &[(date!(2026, 2, 1), dec!(100))]));
+            date!(2026, 3, 20),
+            dec!(100),
+            dec!(-500),
+            &[(date!(2026, 2, 1), dec!(100))],
+        ));
         // Selling the blocking shares releases the whole first deferral, but only 40 of the 100
         // shares left the estate for good: 900 × 40% = 360 becomes integrable.
         assert_eq!(second.reintegrations.len(), 1);
         assert_eq!(second.reintegrations[0].amount, dec!(360));
-        assert_eq!(second.reintegrations[0].origin_sale_date, date!(2026, 3, 10));
+        assert_eq!(
+            second.reintegrations[0].origin_sale_date,
+            date!(2026, 3, 10)
+        );
         // Only the 60 shares bought on 2026-04-20 are free to block this loss, so 500 × 60/100
         // defers. The shares it just freed are gone, not available to itself.
         assert_eq!(second.deferred_loss, dec!(300));
 
         // The 60 shares now carry both deferrals: this sale's 300 and the re-attached 540.
-        let blocked: Decimal =
-            engine.blocked_lots().map(|(_, lot)| lot.deferred_loss).sum();
+        let blocked: Decimal = engine
+            .blocked_lots()
+            .map(|(_, lot)| lot.deferred_loss)
+            .sum();
         assert_eq!(blocked, dec!(840));
-        let blocked_quantity: Decimal =
-            engine.blocked_lots().map(|(_, lot)| lot.blocked_quantity).sum();
-        assert_eq!(blocked_quantity, dec!(60), "one blocked share per matched share");
+        let blocked_quantity: Decimal = engine
+            .blocked_lots()
+            .map(|(_, lot)| lot.blocked_quantity)
+            .sum();
+        assert_eq!(
+            blocked_quantity,
+            dec!(60),
+            "one blocked share per matched share"
+        );
     }
 
     /// A disposal with a homogeneous repurchase inside its own window is not a "transmisión
@@ -1004,11 +1098,19 @@ mod tests {
         );
 
         engine.process(&disposal(
-            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+            date!(2026, 3, 10),
+            dec!(100),
+            dec!(-900),
+            &[(date!(2026, 1, 5), dec!(100))],
+        ));
 
         // Sells every blocking share, but buys 40 back inside the window: nothing is integrable.
         let chained = engine.process(&disposal(
-            date!(2026, 8, 10), dec!(40), dec!(720), &[(date!(2026, 4, 20), dec!(40))]));
+            date!(2026, 8, 10),
+            dec!(40),
+            dec!(720),
+            &[(date!(2026, 4, 20), dec!(40))],
+        ));
         assert!(chained.reintegrations.is_empty());
 
         let blocked: Vec<&BlockedLot> = engine.blocked_lots().map(|(_, lot)| lot).collect();
@@ -1020,10 +1122,17 @@ mod tests {
 
         // Nothing bought back this time, so the transfer is definitive.
         let definitive = engine.process(&disposal(
-            date!(2026, 12, 20), dec!(40), dec!(720), &[(date!(2026, 9, 15), dec!(40))]));
+            date!(2026, 12, 20),
+            dec!(40),
+            dec!(720),
+            &[(date!(2026, 9, 15), dec!(40))],
+        ));
         assert_eq!(definitive.reintegrations.len(), 1);
         assert_eq!(definitive.reintegrations[0].amount, dec!(360));
-        assert_eq!(definitive.reintegrations[0].origin_sale_date, date!(2026, 3, 10));
+        assert_eq!(
+            definitive.reintegrations[0].origin_sale_date,
+            date!(2026, 3, 10)
+        );
         assert_eq!(engine.blocked_lots().count(), 0);
     }
 
@@ -1056,20 +1165,33 @@ mod tests {
         );
 
         let first = engine.process(&disposal(
-            date!(2026, 3, 10), dec!(100), dec!(-900), &[(date!(2026, 1, 5), dec!(100))]));
+            date!(2026, 3, 10),
+            dec!(100),
+            dec!(-900),
+            &[(date!(2026, 1, 5), dec!(100))],
+        ));
         assert_eq!(first.deferred_loss, dec!(360));
 
         // 40 blocked shares and 60 unblocked ones go together, at a gain, so only the release is in
         // play.
         let mixed = engine.process(&disposal(
-            date!(2026, 9, 10), dec!(100), dec!(1000),
-            &[(date!(2026, 4, 20), dec!(40)), (date!(2026, 6, 1), dec!(60))]));
+            date!(2026, 9, 10),
+            dec!(100),
+            dec!(1000),
+            &[
+                (date!(2026, 4, 20), dec!(40)),
+                (date!(2026, 6, 1), dec!(60)),
+            ],
+        ));
 
         let integrable: Decimal = mixed.reintegrations.iter().map(|entry| entry.amount).sum();
         assert_eq!(integrable, expected_integrable);
         assert_eq!(mixed.deferred_loss, dec!(0));
 
-        let re_attached: Decimal = engine.blocked_lots().map(|(_, lot)| lot.deferred_loss).sum();
+        let re_attached: Decimal = engine
+            .blocked_lots()
+            .map(|(_, lot)| lot.deferred_loss)
+            .sum();
         assert_eq!(re_attached, expected_re_attached);
         // Whatever moved on is still labelled with the sale it came from.
         for (_, lot) in engine.blocked_lots() {
@@ -1128,7 +1250,11 @@ mod tests {
         );
 
         let outcome = engine.process(&disposal(
-            date!(2026, 5, 10), dec!(15), dec!(100), &[(date!(2025, 12, 20), dec!(15))]));
+            date!(2026, 5, 10),
+            dec!(15),
+            dec!(100),
+            &[(date!(2025, 12, 20), dec!(15))],
+        ));
 
         assert_eq!(outcome.reintegrations[0].amount, dec!(420));
         assert_eq!(engine.blocked_lots().count(), 0);
