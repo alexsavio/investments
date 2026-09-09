@@ -787,9 +787,11 @@ Two of those rows carry a caveat the number alone does not:
 - **0326-0340 is the acciones-cotizadas block** (0327 one row per operation, 0339 the sum of gains,
   0340 the sum of losses). The tool posts the ganancias group's net figure, which also contains any
   foreign-currency conversion result — a transmisión under LIRPF art. 33, but of a different kind of
-  element, belonging in the block for otros elementos patrimoniales. A Común year with a currency
-  result therefore prints a warning naming the amount to split out; the tool does not split it,
-  because the alternative block's numbering is not verified against an enacted form. Gipuzkoa's
+  element, belonging in apartado F2 under casilla **1626**, "otros elementos patrimoniales (bienes o
+  derechos) no afectos a actividades económicas". A Común year with a currency result therefore
+  prints a warning naming the amount to split out and the apartado it goes to; the tool does not
+  split it, and does not name that sub-block's value casillas — the selector is verified against the
+  AEAT's own help, its value boxes are not, and a wrong box is worse than none. Gipuzkoa's
   casilla 30 and Navarra's 706 are labelled "por transmisiones" without narrowing to shares, so the
   same figure is at home there.
 
