@@ -42,13 +42,14 @@ SUMMARY_FX_BORROWED_REVIEW,Resultados de divisa sobre saldo prestado (excluidos 
 CARRYFORWARD_GYP_2026,Saldo negativo pendiente — GYP — origen 2026,7200.00
 
 # MODELO 100 — declaración del IRPF (AEAT)
-# WARNING: these are the ejercicio-2025 box numbers, read from Anexo I of the
-# Orden HAC/277/2026 CONSULTATION DRAFT — the AEAT publishes a filing year's
-# form in the spring of the following one, so no enacted numbering exists yet.
-# Verify every casilla against your filing year's own form before entering it.
+# Casillas read from Anexo I of Orden HAC/277/2026 (BOE-A-2026-7041, BOE nº 76
+# of 27-03-2026), the enacted order for ejercicio 2025. Every box below carries
+# the same number in the ejercicio-2024 order (Orden HAC/242/2025). A form for a
+# filing year is published in the spring of the next one: for a later year, check
+# each casilla against that year's own Anexo I before entering it.
 MODELO_100_0027,Intereses de cuentas y depósitos (rendimientos del capital mobiliario),0.00
 MODELO_100_0029,Dividendos y participaciones en beneficios (excluida la renta exenta),7200.00
 MODELO_100_0037,Gastos de administración y depósito (art. 26.1.a),0.00
-MODELO_100_0326_0340,Ganancias y pérdidas por transmisión de acciones cotizadas (casillas 0326-0340),-9000.00
+MODELO_100_0326_0340,Ganancias y pérdidas por transmisión de acciones cotizadas (casillas 0326-0340; excluye el resultado de divisa),-9000.00
 MODELO_100_0460,Base imponible del ahorro (tras compensación) — la base liquidable es la casilla 0510 y resta el remanente de reducciones que esta herramienta no calcula,3400.00
 MODELO_100_0588,Deducción por doble imposición internacional,0.00

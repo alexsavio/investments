@@ -83,9 +83,11 @@ mod modelo_109 {
 
 /// Modelo 100 box numbers for ejercicio 2025.
 ///
-/// Read from Anexo I of the Orden HAC/277/2026 consultation draft — the AEAT form for a filing year
-/// is published in the spring of the following one, so these are the newest numbers that exist and
-/// they are a draft, not the enacted order.
+/// Read from Anexo I of **Orden HAC/277/2026, de 25 de marzo** (BOE-A-2026-7041, BOE núm. 76 of
+/// 27-03-2026), the enacted order that approves the ejercicio-2025 models. Every casilla below
+/// carries the same number in the ejercicio-2024 order (Orden HAC/242/2025, BOE-A-2025-5049, BOE
+/// núm. 63 of 14-03-2025), so the two published years agree. Retrieved 2026-09-09 with
+/// `pdftotext -layout`, which is what keeps a box number aligned with the label it belongs to.
 mod modelo_100 {
     pub const INTEREST: &str = "0027";
     pub const DIVIDENDS: &str = "0029";
@@ -101,17 +103,39 @@ mod modelo_100 {
     pub const SAVINGS_BASE: &str = "0460";
     /// Named only so the label can point at it; nothing the tool computes belongs in it.
     pub const SAVINGS_BASE_AFTER_REDUCTIONS: &str = "0510";
-    /// Where apartado F2 puts a transmission of anything other than a listed share: the block
+    /// Where apartado F2 puts a transmission of anything other than a listed share: the sub-block
     /// "ganancias y pérdidas patrimoniales derivadas de transmisiones de otros elementos
-    /// patrimoniales", casillas 1624 onwards. The AEAT's own help scopes it by exclusion — it does
-    /// not reach "acciones admitidas a negociación en mercados oficiales que deben declararse en
-    /// apartados anteriores", which is 0326-0340 — and the element is then chosen by clave 5,
-    /// "otros elementos patrimoniales no afectos a actividades económicas".
+    /// patrimoniales". The AEAT scopes it by exclusion — it does not reach the acciones cotizadas
+    /// of the 0326-0340 block above it.
     ///
-    /// Only the block's first casilla is named. Which box inside it takes which figure depends on
-    /// the clave and the row, and the tool has no verified mapping for that: sending a filer to the
-    /// right block to read its labels beats sending them to a box that might be the wrong one.
+    /// 1624 is the sub-block's **first** casilla, and it is the owner selector ("contribuyente
+    /// titular del elemento patrimonial transmitido"), not an amount. It is named so a filer can
+    /// find the block on the page; nothing the tool computes goes in it.
     pub const OTHER_ELEMENTS: &str = "1624";
+    /// Tipo de elemento patrimonial, the box that selects which kind of element the row describes.
+    pub const OTHER_ELEMENTS_KIND: &str = "1626";
+    /// The value of `OTHER_ELEMENTS_KIND` for "otros elementos patrimoniales **no afectos** a
+    /// actividades económicas".
+    ///
+    /// Four, not five, and the difference is not cosmetic: clave 5 is the *afectos* one — business
+    /// assets, "por ejemplo, licencia de taxi" — which routes the gain through the DA 7.ª reduction
+    /// into casilla 0387 instead of the DT 9.ª path into 0386. Five is easy to reach for because it
+    /// **was** this concept's number on the pre-restructuring form (ejercicios 2019-2021), before
+    /// the AEAT split inmuebles into their own sub-block and renumbered the claves.
+    pub const OTHER_ELEMENTS_PRIVATE_KEY: &str = "4";
+    /// Per-element boxes of the sub-block, in the order the form asks for them.
+    pub const OTHER_ELEMENTS_DISPOSAL_VALUE: &str = "1633";
+    pub const OTHER_ELEMENTS_ACQUISITION_VALUE: &str = "1637";
+    /// Pérdida obtenida, then the part imputable to the year; the latter is what 0385 sums.
+    pub const OTHER_ELEMENTS_LOSS_IMPUTABLE: &str = "1639";
+    /// Ganancia obtenida → no exenta → reducida no exenta → imputable; the last is what 0386 sums.
+    pub const OTHER_ELEMENTS_GAIN_IMPUTABLE: &str = "1650";
+    /// "Suma de pérdidas patrimoniales derivadas de transmisiones de otros elementos patrimoniales
+    /// (suma de las casillas [1639])". Feeds casilla 0423 in apartado G.
+    pub const OTHER_ELEMENTS_LOSSES: &str = "0385";
+    /// "Suma de ganancias patrimoniales derivadas de transmisiones de otros elementos patrimoniales
+    /// no afectos a actividades económicas (suma de las casillas [1650])". Feeds 0422.
+    pub const OTHER_ELEMENTS_GAINS: &str = "0386";
     pub const FOREIGN_TAX_CREDIT: &str = "0588";
     /// Retenciones del capital mobiliario — Spanish withholding only. See `modelo_109::RCM_WITHHOLDING`.
     pub const RCM_WITHHOLDING: &str = "0597";
@@ -387,6 +411,34 @@ fn modelo_109_mapping(statement: &SpanishTaxStatement) -> FormMapping {
 }
 
 fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
+    // A currency conversion transmits a patrimonial element that is not a listed share, so its
+    // result belongs to the otros-elementos sub-block of apartado F2 rather than to 0326-0340.
+    // Both sums go in, not the net: the form keeps gains and losses in separate boxes that feed
+    // casillas 0422 and 0423 separately.
+    let has_conversions = !statement.fx_gains.is_empty();
+    let other_elements: Vec<(&str, String, Decimal)> = if !has_conversions {
+        Vec::new()
+    } else {
+        vec![
+            (
+                modelo_100::OTHER_ELEMENTS_GAINS,
+                "Suma de ganancias por transmisión de otros elementos patrimoniales no afectos \
+                 (conversiones de divisa)"
+                    .to_owned(),
+                statement.total_fx_gains,
+            ),
+            (
+                modelo_100::OTHER_ELEMENTS_LOSSES,
+                "Suma de pérdidas por transmisión de otros elementos patrimoniales (conversiones \
+                 de divisa)"
+                    .to_owned(),
+                statement.total_fx_losses,
+            ),
+        ]
+    };
+
+    // In form order: the two RCM boxes, the deductible expense, the shares block, the otros-
+    // elementos sums that follow it on the page, then the base and the deduction.
     let boxes = [
         (
             modelo_100::INTEREST,
@@ -405,10 +457,19 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
         ),
         (
             modelo_100::LISTED_CAPITAL_GAINS,
-            "Ganancias y pérdidas por transmisión de acciones cotizadas (casillas 0326-0340)"
+            "Ganancias y pérdidas por transmisión de acciones cotizadas (casillas 0326-0340; \
+             excluye el resultado de divisa)"
                 .to_owned(),
-            statement.gyp_net,
+            // The block is *acciones cotizadas* only. A currency conversion is a transmisión too
+            // (LIRPF art. 33) but not of a listed share, so its result is taken out here and posted
+            // to the otros-elementos sums below; leaving it in would put a figure in 0326-0340 that
+            // the AEAT's own scoping of that block excludes.
+            statement.gyp_net - statement.total_fx_result,
         ),
+    ]
+    .into_iter()
+    .chain(other_elements)
+    .chain([
         (
             modelo_100::SAVINGS_BASE,
             format!(
@@ -423,8 +484,7 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
             "Deducción por doble imposición internacional".to_owned(),
             statement.total_foreign_tax_credit,
         ),
-    ]
-    .into_iter()
+    ])
     .map(|(casilla, concept, value)| {
         FormBox::new(
             "MODELO_100_",
@@ -437,40 +497,53 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
     })
     .collect();
 
-    // The 0326-0340 block is specifically *acciones cotizadas*: 0327 takes one row per operation,
-    // 0339 the sum of gains and 0340 the sum of losses. A currency conversion is a transmisión too
-    // (LIRPF art. 33) but not of a listed share, so it belongs in the block for otros elementos
-    // patrimoniales. The tool posts the group's net figure and says so rather than splitting a
-    // mapping it cannot verify against an enacted form.
-    let footer_lines = if statement.total_fx_result.is_zero() {
+    // The two sums above are the only figures of the sub-block the tool can fill: the rest of it is
+    // per-element (one set of boxes per conversion, with its own dates and values), and the tool
+    // does not know how a filer wants to group a year of conversions into elements. So the footer
+    // names the boxes each row needs rather than pretending a total can stand in for them.
+    let footer_lines = if !has_conversions {
         Vec::new()
     } else {
         vec![
             format!(
-                "WARNING: casilla {} is the acciones-cotizadas block. The figure above includes €{} of",
-                modelo_100::LISTED_CAPITAL_GAINS,
+                "The {} EUR of foreign-currency results above are transmissions of a patrimonial",
                 super::format_eur(statement.total_fx_result)
             ),
-            "foreign-currency conversion results, which are transmissions of a different kind of"
+            "element (LIRPF art. 33), not of a listed share, so they go in apartado F2 under"
                 .to_owned(),
             format!(
-                "element (LIRPF art. 33), so they go in apartado F2 under \"otros elementos \
-                 patrimoniales\" ({} onwards,",
-                modelo_100::OTHER_ELEMENTS
+                "\"otros elementos patrimoniales\" ({} onwards), with clave {} = {} in casilla {}.",
+                modelo_100::OTHER_ELEMENTS,
+                modelo_100::OTHER_ELEMENTS_PRIVATE_KEY,
+                "otros elementos no afectos a actividades económicas",
+                modelo_100::OTHER_ELEMENTS_KIND,
             ),
-            "clave 5), which the AEAT scopes by excluding the listed shares of the block above."
-                .to_owned(),
-            "Split them by hand; the boxes inside that block are not reproduced here.".to_owned(),
+            format!(
+                "The block is itemized: enter each conversion with its valor de transmisión ({}),",
+                modelo_100::OTHER_ELEMENTS_DISPOSAL_VALUE
+            ),
+            format!(
+                "valor de adquisición ({}) and result ({} for a loss, {} for a gain). The two",
+                modelo_100::OTHER_ELEMENTS_ACQUISITION_VALUE,
+                modelo_100::OTHER_ELEMENTS_LOSS_IMPUTABLE,
+                modelo_100::OTHER_ELEMENTS_GAIN_IMPUTABLE,
+            ),
+            format!(
+                "sums posted above ({} and {}) are what those per-row boxes must add up to.",
+                modelo_100::OTHER_ELEMENTS_GAINS,
+                modelo_100::OTHER_ELEMENTS_LOSSES,
+            ),
         ]
     };
 
     FormMapping {
         title: "MODELO 100 — declaración del IRPF (AEAT)",
         header_lines: [
-            "WARNING: these are the ejercicio-2025 box numbers, read from Anexo I of the",
-            "Orden HAC/277/2026 CONSULTATION DRAFT — the AEAT publishes a filing year's",
-            "form in the spring of the following one, so no enacted numbering exists yet.",
-            "Verify every casilla against your filing year's own form before entering it.",
+            "Casillas read from Anexo I of Orden HAC/277/2026 (BOE-A-2026-7041, BOE nº 76",
+            "of 27-03-2026), the enacted order for ejercicio 2025. Every box below carries",
+            "the same number in the ejercicio-2024 order (Orden HAC/242/2025). A form for a",
+            "filing year is published in the spring of the next one: for a later year, check",
+            "each casilla against that year's own Anexo I before entering it.",
         ]
         .map(str::to_owned)
         .to_vec(),
@@ -882,33 +955,113 @@ mod tests {
         assert!(!mapping.boxes.iter().any(|form| form.casilla == "0510"));
     }
 
-    /// The 0326-0340 block is the acciones-cotizadas one. A currency conversion is a transmisión of
-    /// a different kind of element, so a year that mixes them says so instead of letting the filer
-    /// post a share figure that silently contains one.
+    fn fx_entry(amount_eur: Decimal) -> crate::tax_statement::spain::statement::FxGainEntry {
+        crate::tax_statement::spain::statement::FxGainEntry {
+            date: Date::from_ymd_opt(2026, 3, 1).unwrap(),
+            currency: "USD".to_owned(),
+            acquisition_date: Date::from_ymd_opt(2026, 1, 1).unwrap(),
+            amount_eur,
+            activity_code: "FOREX".to_owned(),
+        }
+    }
+
+    /// The ganancias group as the Modelo 100 block reports it: the acciones-cotizadas figure plus
+    /// the otros-elementos sums, which are absent when the year had no conversion.
+    ///
+    /// The three are one figure split three ways, so this must equal `gyp_net` however the year is
+    /// shaped. A broken split shows up here as casillas that no longer add back up to the group the
+    /// rest of the report reports.
+    fn ganancias_across_the_boxes(mapping: &FormMapping) -> Decimal {
+        let box_of = |casilla: &str| {
+            mapping
+                .boxes
+                .iter()
+                .find(|form| form.casilla == casilla)
+                .map_or(Decimal::ZERO, |form| form.value)
+        };
+        box_of(modelo_100::LISTED_CAPITAL_GAINS) + box_of(modelo_100::OTHER_ELEMENTS_GAINS)
+            - box_of(modelo_100::OTHER_ELEMENTS_LOSSES)
+    }
+
+    /// The 0326-0340 block is the acciones-cotizadas one; a currency conversion transmits a
+    /// different kind of element. The result leaves that block and lands in the otros-elementos
+    /// sums of apartado F2, so the filer never posts a share figure that silently contains one.
     #[test]
-    fn a_comun_year_with_currency_results_warns_about_the_shares_block() {
+    fn a_comun_year_puts_currency_results_in_the_otros_elementos_sums() {
         let mut spain = statement(SpanishTaxRegime::Comun, 2026);
         spain.calculate_totals();
-        assert!(form_mapping(&spain).footer_lines.is_empty());
+        let mapping = form_mapping(&spain);
+        assert!(mapping.footer_lines.is_empty());
+        // A year without a conversion says nothing about the block.
+        for casilla in [
+            modelo_100::OTHER_ELEMENTS_GAINS,
+            modelo_100::OTHER_ELEMENTS_LOSSES,
+        ] {
+            assert!(!mapping.boxes.iter().any(|form| form.casilla == casilla));
+        }
+        // With no conversion the shares block carries the whole group: nothing is subtracted from
+        // it and no otros-elementos box stands in for the part that was taken out.
+        assert_eq!(ganancias_across_the_boxes(&mapping), spain.gyp_net);
 
-        spain
-            .fx_gains
-            .push(crate::tax_statement::spain::statement::FxGainEntry {
-                date: Date::from_ymd_opt(2026, 3, 1).unwrap(),
-                currency: "USD".to_owned(),
-                acquisition_date: Date::from_ymd_opt(2026, 1, 1).unwrap(),
-                amount_eur: dec!(400),
-                activity_code: "FOREX".to_owned(),
-            });
+        // One conversion up €400 and one down €150: the form keeps the two sides apart, so the net
+        // is never what gets posted.
+        spain.fx_gains.push(fx_entry(dec!(400)));
+        spain.fx_gains.push(fx_entry(dec!(-150)));
         spain.calculate_totals();
 
-        let footer = form_mapping(&spain).footer_lines.join(" ");
-        assert!(footer.contains("400.00"), "{footer}");
-        assert!(footer.contains("otros elementos"), "{footer}");
-        // The apartado and its selector are verified; its value casillas are not, so the warning
-        // must name the first and stay silent about the second.
+        let mapping = form_mapping(&spain);
+        let box_of = |casilla: &str| {
+            mapping
+                .boxes
+                .iter()
+                .find(|form| form.casilla == casilla)
+                .unwrap_or_else(|| panic!("casilla {casilla} missing"))
+                .value
+        };
+        assert_eq!(box_of(modelo_100::OTHER_ELEMENTS_GAINS), dec!(400));
+        assert_eq!(box_of(modelo_100::OTHER_ELEMENTS_LOSSES), dec!(150));
+        // The shares block keeps only what the shares did: gyp_net is €250 of currency here.
+        assert_eq!(spain.total_fx_result, dec!(250));
+        assert_eq!(
+            box_of(modelo_100::LISTED_CAPITAL_GAINS),
+            spain.gyp_net - dec!(250)
+        );
+
+        assert_eq!(ganancias_across_the_boxes(&mapping), spain.gyp_net);
+
+        let footer = mapping.footer_lines.join(" ");
         assert!(footer.contains("apartado F2"), "{footer}");
         assert!(footer.contains(modelo_100::OTHER_ELEMENTS), "{footer}");
-        assert!(footer.contains("clave 5"), "{footer}");
+        // Clave 4, not 5: 5 is the afectos one and would route the gain into casilla 0387.
+        assert!(
+            footer.contains(&format!(
+                "clave {} =",
+                modelo_100::OTHER_ELEMENTS_PRIVATE_KEY
+            )),
+            "{footer}"
+        );
+        assert!(!footer.contains("clave 5"), "{footer}");
+        // The per-element boxes the filer still has to fill in row by row.
+        for casilla in [
+            modelo_100::OTHER_ELEMENTS_KIND,
+            modelo_100::OTHER_ELEMENTS_DISPOSAL_VALUE,
+            modelo_100::OTHER_ELEMENTS_ACQUISITION_VALUE,
+            modelo_100::OTHER_ELEMENTS_LOSS_IMPUTABLE,
+            modelo_100::OTHER_ELEMENTS_GAIN_IMPUTABLE,
+        ] {
+            assert!(footer.contains(casilla), "{casilla} missing from {footer}");
+        }
+    }
+
+    /// The header must not go on calling an enacted order a draft.
+    #[test]
+    fn the_modelo_100_header_cites_the_enacted_order() {
+        let mut spain = statement(SpanishTaxRegime::Comun, 2026);
+        spain.calculate_totals();
+
+        let header = form_mapping(&spain).header_lines.join(" ");
+        assert!(header.contains("BOE-A-2026-7041"), "{header}");
+        assert!(header.contains("Orden HAC/277/2026"), "{header}");
+        assert!(!header.to_lowercase().contains("draft"), "{header}");
     }
 }

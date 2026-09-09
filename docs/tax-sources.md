@@ -56,7 +56,7 @@ look for.
 | Navarra €3,000 small-disposals limit | TRLFIRPF art. 39.5.d | on amendment | `src/taxes/spain/exemption.rs` |
 | Four-year carry-forward window | LIRPF art. 49.1 and the foral equivalents | on amendment | `src/taxes/spain/carryforward.rs` |
 | Modelo 109 casillas (Gipuzkoa) | see below — **no published form exists** | — | `src/tax_statement/spain/forms.rs` |
-| Modelo 100 casillas (Común) | Orden HAC of the campaign, Anexo I | spring of the year **after** the filing year | `src/tax_statement/spain/forms.rs` |
+| Modelo 100 casillas (Común) | Orden HAC of the campaign, Anexo I, in the BOE | spring of the year **after** the filing year | `src/tax_statement/spain/forms.rs` |
 | Modelo F-93 casillas (Navarra) | Orden Foral of the campaign, Anexo I, in the BON | ~April of the year after the filing year | `src/tax_statement/spain/forms.rs` |
 
 ### Fetching each Spanish source
@@ -76,9 +76,13 @@ shim, not the file: replace `default.aspx` with **`DownloadFile.aspx`** in the U
 right-hand column and only `-layout` keeps them aligned with their labels. Without it the numbers
 arrive detached from what they name, which is how a mapping gets read wrong.
 
-**Modelo 100 (AEAT).** The AEAT's box numbers currently in the code come from the **Orden
-HAC/277/2026 consultation draft**, because no enacted order exists for the filing year yet. The
-per-box help pages under `sede.agenciatributaria.gob.es` are the practical cross-check.
+**Modelo 100 (AEAT).** The campaign's Orden HAC is published in the BOE and its Anexo I reproduces
+the numbered form. The code's numbers come from **Orden HAC/277/2026** (BOE-A-2026-7041, BOE núm. 76
+of 27-03-2026, ejercicio 2025), cross-checked against **Orden HAC/242/2025** (BOE-A-2025-5049, BOE
+núm. 63 of 14-03-2025, ejercicio 2024): every box the tool fills carries the same number in both.
+Fetch either at `boe.es/boe/dias/<YYYY>/<MM>/<DD>/pdfs/BOE-A-<YYYY>-<NNNNN>.pdf`. The per-box help
+pages under `sede.agenciatributaria.gob.es` are the practical cross-check for a reading, and the
+*Manual práctico de Renta* quotes casilla numbers in prose.
 
 ## Verification status
 
@@ -88,7 +92,7 @@ Honest state of each form mapping, because the three differ and the difference m
 |---|---|---|
 | Anlage KAP / KAP-INV | **Verified** against the official forms for 2024 and 2025 | 2026-08-11 |
 | Modelo F-93 (Navarra) | **Verified** — all 23 casillas read off Anexo I of Orden Foral 24/2026 (BON nº 66, 07-04-2026), including the form's own arithmetic (`8809 = 8808 − 809 − 810 − 8815`, `8840 = 8810 − 8825 − 8835 − 8805`, `8841 = 8809 + 8840`) | 2026-09-09 |
-| Modelo 100 (Común) | **Draft source.** Numbers from a consultation draft, not an enacted order. Casillas 0588 and 0597 cross-checked against AEAT help pages | 2026-09-09 |
+| Modelo 100 (Común) | **Verified** against Anexo I of the enacted Orden HAC/277/2026 (BOE-A-2026-7041) and, box for box, the enacted Orden HAC/242/2025 (BOE-A-2025-5049) — including apartado F2's otros-elementos block, whose clave is **4** (casilla 1626), not 5 | 2026-09-09 |
 | Modelo 109 (Gipuzkoa) | **Unverifiable by construction.** See below | 2026-09-09 |
 
 ### Why Modelo 109 cannot be verified

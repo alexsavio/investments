@@ -941,34 +941,44 @@ fn the_capped_half_of_a_fee_reaches_the_activity_table() {
     assert!(!slack.contains("Comisiones excluidas por el límite"));
 }
 
-/// The Modelo 100 footer is the most actionable line in the section — it tells the filer to split a
-/// currency result out of a casilla by hand. It must not be styled as an aside.
+/// The styling of a form block follows its words, so the two kinds of caveat have to stay apart:
+/// a block that warns is red, a block that instructs is not.
 #[test]
-fn a_form_footer_that_warns_is_styled_as_a_warning() {
+fn a_form_block_is_styled_by_what_it_says() {
     use super::super::statement::FxGainEntry;
 
-    let mut statement = run_pipeline("fifo", 2026, SpanishTaxRegime::Comun);
-    statement.fx_gains.push(FxGainEntry {
+    // The Modelo 100 otros-elementos footer tells the filer how to itemize a verified block. It
+    // reports no doubt, so it must not be dressed as one.
+    let mut comun = run_pipeline("fifo", 2026, SpanishTaxRegime::Comun);
+    comun.fx_gains.push(FxGainEntry {
         date: Date::from_ymd_opt(2026, 3, 1).unwrap(),
         currency: "USD".to_owned(),
         acquisition_date: Date::from_ymd_opt(2026, 1, 1).unwrap(),
         amount_eur: dec!(400),
         activity_code: "FOREX".to_owned(),
     });
-    statement.calculate_totals();
-
-    let html = render(&statement);
-    let footer = html
-        .find("acciones-cotizadas block")
-        .expect("the footer warning should render");
-    let note_open = html[..footer]
-        .rfind("<div class=\"note ")
-        .expect("the footer should be a note");
-    assert!(
-        html[note_open..].starts_with("<div class=\"note warn\">"),
-        "{}",
-        &html[note_open..note_open + 40]
+    comun.calculate_totals();
+    assert_eq!(
+        note_class_around(&render(&comun), "otros elementos"),
+        "info"
     );
+
+    // Gipuzkoa files 2026 against the last published form, which is a real caveat and stays red.
+    let gipuzkoa = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert_eq!(
+        note_class_around(&render(&gipuzkoa), "no form is published"),
+        "warn"
+    );
+}
+
+/// The class of the note that contains `needle`.
+fn note_class_around<'a>(html: &'a str, needle: &str) -> &'a str {
+    let at = offset(html, needle);
+    let open = html[..at]
+        .rfind("<div class=\"note ")
+        .expect("the text should sit inside a note");
+    let rest = &html[open + "<div class=\"note ".len()..];
+    &rest[..rest.find('"').expect("the class should be closed")]
 }
 
 /// A cash award reaches the report and stays out of the base.
