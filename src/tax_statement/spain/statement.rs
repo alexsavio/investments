@@ -203,6 +203,20 @@ pub struct StockGrantEntry {
     pub notes: String,
 }
 
+/// A cash award credited by the broker, reported only.
+///
+/// Whether it is employment income or a ganancia patrimonial no derivada de transmisión, it belongs
+/// to the **general** base, which this tool does not compute — it handles the savings base alone.
+/// The row exists so the payment is not silently absent from the filer's view of the year, exactly
+/// as a vest is: dropping it would let a return be filed without it.
+#[derive(Clone, Debug)]
+pub struct CashGrantEntry {
+    pub date: Date,
+    pub description: String,
+    pub amount_eur: Decimal,
+    pub notes: String,
+}
+
 /// A corporate action, reported only.
 ///
 /// Splits are already applied to the FIFO queue by the shared broker-statement engine; everything
@@ -260,6 +274,9 @@ pub struct SpanishTaxStatement {
     /// Vested stock grants, reported only: employment income belongs to the general base, which
     /// this tool does not compute.
     pub stock_grants: Vec<StockGrantEntry>,
+
+    /// Cash awards, reported only, for the same reason.
+    pub cash_grants: Vec<CashGrantEntry>,
 
     /// Corporate actions in the filing year, reported only.
     pub corporate_actions: Vec<CorporateActionEntry>,
@@ -320,6 +337,8 @@ pub struct SpanishTaxStatement {
     pub custody_fee_cap: Option<Decimal>,
     pub total_capped_fees: Decimal,
     pub total_foreign_withholding: Decimal,
+    /// Cash awards of the year. Reported only: it never enters the savings base.
+    pub total_cash_grants: Decimal,
     /// Integrable result of the year's disposals — what the ganancias group takes from them.
     pub total_capital_gains: Decimal,
     /// The year's global importe of onerous securities transmissions, and the taxable increments
@@ -454,6 +473,7 @@ impl SpanishTaxStatement {
             fx_gains: Vec::new(),
             fx_borrowed_review: Vec::new(),
             stock_grants: Vec::new(),
+            cash_grants: Vec::new(),
             corporate_actions: Vec::new(),
             short_positions: Vec::new(),
             abatement_lots: Vec::new(),
@@ -472,6 +492,7 @@ impl SpanishTaxStatement {
             total_deductible_fees: Decimal::ZERO,
             total_informational_fees: Decimal::ZERO,
             total_foreign_withholding: Decimal::ZERO,
+            total_cash_grants: Decimal::ZERO,
             total_capital_gains: Decimal::ZERO,
             total_fx_gains: Decimal::ZERO,
             total_fx_losses: Decimal::ZERO,
@@ -506,6 +527,7 @@ impl SpanishTaxStatement {
             .map(|entry| -entry.gross_eur)
             .sum();
         self.total_foreign_withholding = self.dividends.iter().map(|entry| entry.withheld_eur).sum();
+        self.total_cash_grants = self.cash_grants.iter().map(|entry| entry.amount_eur).sum();
 
         self.total_deductible_fees = self
             .fees

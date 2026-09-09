@@ -934,3 +934,43 @@ fn a_form_footer_that_warns_is_styled_as_a_warning() {
         &html[note_open..note_open + 40]
     );
 }
+
+/// A cash award reaches the report and stays out of the base.
+///
+/// Only the Sber reader builds one today, so no fixture can reach this path through the IBKR
+/// pipeline — it is pushed onto the statement directly. The point of the row is that the payment is
+/// visible at all: it belongs to the general base, and a figure the statement carries but the
+/// return never mentions is the failure this guards against.
+#[test]
+fn a_cash_award_is_reported_and_never_enters_the_savings_base() {
+    use super::super::statement::CashGrantEntry;
+
+    let mut statement = run_pipeline("income", 2026, SpanishTaxRegime::Comun);
+    let base_before = statement.savings_base;
+    let rcm_before = statement.rcm_net;
+
+    statement.cash_grants.push(CashGrantEntry {
+        date: Date::from_ymd_opt(2026, 4, 10).unwrap(),
+        description: "Referral bonus".to_owned(),
+        amount_eur: dec!(120),
+        notes: "GENERAL base".to_owned(),
+    });
+    statement.calculate_totals();
+
+    assert_eq!(statement.total_cash_grants, dec!(120));
+    assert_eq!(statement.savings_base, base_before);
+    assert_eq!(statement.rcm_net, rcm_before);
+
+    let html = render(&statement);
+    assert!(html.contains("Ingresos en efectivo (base general)"));
+    assert!(html.contains("Referral bonus"));
+    assert!(html.contains(&format!(">{}<", eur(dec!(120)))));
+    assert!(html.contains("Ingresos en efectivo — base general"));
+
+    // It is reported, so it must not move the total that is the two groups.
+    assert!(html.contains(&format!(">{}<", eur(statement.rcm_net + statement.gyp_net))));
+
+    // A year without one says nothing about it.
+    let quiet = render(&run_pipeline("income", 2026, SpanishTaxRegime::Comun));
+    assert!(!quiet.contains("Ingresos en efectivo (base general)"));
+}
