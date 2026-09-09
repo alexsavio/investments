@@ -1393,6 +1393,9 @@ rate for that date; check that the date is a TARGET business day.
 
 ## Sources
 
+Which of these expire when, how to fetch each one again, and what stops working if nobody does:
+[`tax-sources.md`](./tax-sources.md). The table below is what each rule rests on.
+
 Retrieved 2026-08-11 unless noted.
 
 | Rule | Source |

@@ -478,6 +478,7 @@ lines — 21, 24 and 25 are printed "frei" — without renumbering 22, 23 or 41.
 
 **Still open.** A year whose form is not published yet. Forms do shift, so re-check the numbers
 against your own form if you file beyond 2025; the CSV block says so above the rows.
+[`tax-sources.md`](./tax-sources.md) records when each source is republished and how to fetch it.
 
 ### 2. Multi-account Flex statements — REJECTED, not interpreted
 
