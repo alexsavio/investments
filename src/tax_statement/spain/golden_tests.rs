@@ -19,6 +19,7 @@ use crate::broker_statement::{BrokerStatement, ReadingStrictness};
 use crate::config::{Config, PortfolioConfig};
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::converter::{CurrencyConverter, CurrencyConverterBackend};
+use crate::instruments::EtfClassification;
 use crate::tax_statement::golden::GoldenCorpus;
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::{SpanishTaxConfig, TaxConfig};
@@ -124,6 +125,26 @@ fn rcm_saldo_2000(config: &mut SpanishTaxConfig) {
 /// *carried* saldo is what crosses and the open-reading warning fires.
 fn rcm_saldo_8000(config: &mut SpanishTaxConfig) {
     config.loss_carryforward.rcm.insert(2025, dec!(8000));
+}
+
+/// Per-case classification hook, for the report corpus only. The asset class reads
+/// `taxes.etf_classification`, an ISIN map that is not a Spanish key: no figure in the savings base
+/// turns on it, but the report groups by it, and the €1,500 exemption's caveat names the payers it
+/// marks as funds.
+type Classify = fn(&mut TaxConfig);
+
+fn everything_is_a_share(_config: &mut TaxConfig) {}
+
+/// The fixture's *exempted* payer, classified as an equity fund; the other payer stays a share.
+///
+/// NF 3/2014 art. 9.24 does not reach distributions from instituciones de inversión colectiva, and
+/// a broker statement cannot tell one from a company dividend — so the report names the payers it
+/// has been told are funds. Only a payer the exemption actually reached is worth naming, which is
+/// this one: the fixture's other dividend is already out on the anti-abuse clause.
+fn the_exempted_payer_is_a_fund(config: &mut TaxConfig) {
+    config
+        .etf_classification
+        .insert("US0378331005".to_owned(), EtfClassification::Equity);
 }
 
 fn corpus() -> GoldenCorpus {
@@ -290,6 +311,11 @@ fn fixed_meta(year: i32) -> ReportMeta {
 /// - `income_navarra_2026` — the only case where the 3% fee ceiling actually bites, so the only one
 ///   that renders the capped-fee row and the "Importes informativos" block.
 /// - `small_disposal_navarra_2026` — the €3,000 exemption row, which exists under one regime only.
+/// - `dividend_exemption_gipuzkoa_2026_fund` — one payer classified as a fund and one left as a
+///   share, so the only case that renders the "Fondos e IIC" grouping, keeps two classes apart, and
+///   names a payer the €1,500 exemption does not reach.
+/// - `wash_sale_split_gipuzkoa_2026` — a lot held across a 2-for-1 split, so the open-positions
+///   section shows a restated share count.
 #[rstest]
 #[case::fifo_gipuzkoa(
     "fifo_gipuzkoa_2026",
@@ -297,7 +323,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     2026,
     SpanishTaxRegime::Gipuzkoa,
     no_opening_balances,
-    converter
+    converter,
+    everything_is_a_share
 )]
 #[case::income_comun(
     "income_comun_2026",
@@ -305,7 +332,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     2026,
     SpanishTaxRegime::Comun,
     no_opening_balances,
-    converter
+    converter,
+    everything_is_a_share
 )]
 #[case::cross_offset_navarra(
     "cross_offset_navarra_2026_saldo",
@@ -313,7 +341,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     2026,
     SpanishTaxRegime::Navarra,
     rcm_saldo_2000,
-    converter
+    converter,
+    everything_is_a_share
 )]
 #[case::wash_sale_multi_lot_gipuzkoa(
     "wash_sale_multi_lot_gipuzkoa_2026",
@@ -321,7 +350,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     2026,
     SpanishTaxRegime::Gipuzkoa,
     no_opening_balances,
-    converter
+    converter,
+    everything_is_a_share
 )]
 #[case::fx_gain_gipuzkoa(
     "fx_gain_gipuzkoa_2026",
@@ -329,7 +359,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     2026,
     SpanishTaxRegime::Gipuzkoa,
     no_opening_balances,
-    revaluing_converter
+    revaluing_converter,
+    everything_is_a_share
 )]
 #[case::income_navarra(
     "income_navarra_2026",
@@ -337,7 +368,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     2026,
     SpanishTaxRegime::Navarra,
     no_opening_balances,
-    converter
+    converter,
+    everything_is_a_share
 )]
 #[case::small_disposal_navarra(
     "small_disposal_navarra_2026",
@@ -345,7 +377,26 @@ fn fixed_meta(year: i32) -> ReportMeta {
     2026,
     SpanishTaxRegime::Navarra,
     no_opening_balances,
-    converter
+    converter,
+    everything_is_a_share
+)]
+#[case::dividend_exemption_gipuzkoa_fund(
+    "dividend_exemption_gipuzkoa_2026_fund",
+    "dividend_exemption",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    converter,
+    the_exempted_payer_is_a_fund
+)]
+#[case::wash_sale_split_gipuzkoa(
+    "wash_sale_split_gipuzkoa_2026",
+    "wash_sale_split",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    converter,
+    everything_is_a_share
 )]
 fn rendered_report_matches_its_golden(
     #[case] golden: &str,
@@ -354,9 +405,11 @@ fn rendered_report_matches_its_golden(
     #[case] regime: SpanishTaxRegime,
     #[case] configure: Configure,
     #[case] rates: fn() -> CurrencyConverter,
+    #[case] classify: Classify,
 ) {
     let mut config = spain_config(regime);
     configure(config.spain.as_mut().unwrap());
+    classify(&mut config);
 
     let statement = read_fixture(fixture);
     let (spanish, _has_income) =
@@ -381,7 +434,7 @@ fn every_golden_file_belongs_to_a_case() {
 }
 
 /// The file stems of the report cases above, in case order.
-const REPORT_CORPUS: [&str; 7] = [
+const REPORT_CORPUS: [&str; 9] = [
     "fifo_gipuzkoa_2026",
     "income_comun_2026",
     "cross_offset_navarra_2026_saldo",
@@ -389,6 +442,8 @@ const REPORT_CORPUS: [&str; 7] = [
     "fx_gain_gipuzkoa_2026",
     "income_navarra_2026",
     "small_disposal_navarra_2026",
+    "dividend_exemption_gipuzkoa_2026_fund",
+    "wash_sale_split_gipuzkoa_2026",
 ];
 
 /// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than
