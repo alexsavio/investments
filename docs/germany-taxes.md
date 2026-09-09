@@ -168,7 +168,7 @@ Because a foreign broker's statement carries no German year-boundary redemption 
 supplied by hand in config:
 
 - `taxes.basiszins.<year>` — the BMF Basiszins (fraction). The tool ships the statutory 2023 (2.55%),
-  2024 (2.29%), and 2025 (2.53%) values; set this only to override or add a year.
+  2024 (2.29%), 2025 (2.53%) and 2026 (3.20%) values; set this only to override or add a year.
 - `taxes.fund_nav.<ISIN>.<year>` — `jan1` / `dec31` redemption price (EUR per unit) and an optional
   `acquired_month` (1–12) for the Zwölftelung. When omitted, the acquisition month is derived from the
   trade history (a fund first bought mid-year is prorated); set it only to override that.
@@ -518,12 +518,15 @@ SHORT_POSITION,TSLA — open short quantity (manual review),-50.00
 §18 InvStG needs three inputs a foreign broker's statement does not carry. Each missing one skips
 that fund's Vorabpauschale — never a silent zero — and names what to configure.
 
-**Basiszins.** Published by the BMF each January for the year just begun. An unknown year skips every
-holding:
+**Basiszins.** Published by the BMF each January for the year just begun — the rate the Bundesbank
+computes on that year's first trading day — so a filing year's rate exists while the year is still
+running, not a year afterwards. The 2026 letter (13 January 2026, GZ IV C 1 - S 1980/00230/012/001)
+says it outright: *"Die Vorabpauschale für 2026 ist unter Anwendung des Basiszinses vom 2. Januar
+2026 zu ermitteln."* An unknown year skips every holding:
 
 ```text
-Vorabpauschale (§18 InvStG) not computed for year-end fund holdings: no Basiszins known for 2026.
-The BMF publishes it each January; set `taxes.basiszins.2026` in the config.
+Vorabpauschale (§18 InvStG) not computed for year-end fund holdings: no Basiszins known for 2027.
+The BMF publishes it each January; set `taxes.basiszins.2027` in the config.
 ```
 
 **Year-boundary NAVs.** Redemption prices at 1 January and 31 December come from config:
