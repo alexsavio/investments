@@ -703,3 +703,79 @@ fn a_2024_gipuzkoa_report_names_the_anexo_3_sheet() {
     assert!(html.contains(">60 (hoja)<"));
     assert!(!html.contains(">70 (hoja)<"));
 }
+
+/// The activity table keeps gains and losses in separate columns, so every row has to be built
+/// entry by entry. A row that added a pre-netted total would land wholly in one column and hide
+/// the other — which is what the two columns exist to show.
+#[test]
+fn the_activity_row_of_a_mixed_currency_year_splits_its_gains_from_its_losses() {
+    use super::super::statement::{FxGainEntry, InterestEntry};
+
+    let mut statement = run_pipeline("fifo", 2026, SpanishTaxRegime::Comun);
+    let fx = |amount: Decimal| FxGainEntry {
+        date: Date::from_ymd_opt(2026, 3, 1).unwrap(),
+        currency: "USD".to_owned(),
+        acquisition_date: Date::from_ymd_opt(2026, 1, 1).unwrap(),
+        amount_eur: amount,
+        activity_code: "FOREX".to_owned(),
+    };
+    statement.fx_gains.push(fx(dec!(500)));
+    statement.fx_gains.push(fx(dec!(-300)));
+    statement.interest.push(InterestEntry {
+        date: Date::from_ymd_opt(2026, 6, 30).unwrap(),
+        description: "Broker interest received".to_owned(),
+        gross_eur: dec!(90),
+        taxable: true,
+        notes: None,
+    });
+    statement.interest.push(InterestEntry {
+        date: Date::from_ymd_opt(2026, 9, 30).unwrap(),
+        description: "Broker interest received (reversal)".to_owned(),
+        gross_eur: dec!(-40),
+        taxable: true,
+        notes: None,
+    });
+    statement.calculate_totals();
+
+    // The nets the totals carry would each fit in one column; the entries do not.
+    assert_eq!(statement.total_fx_result, dec!(200));
+    assert_eq!(statement.total_fx_gains, dec!(500));
+    assert_eq!(statement.total_fx_losses, dec!(300));
+    assert_eq!(statement.total_interest_income, dec!(50));
+
+    let html = render(&statement);
+    assert!(html.contains(">500,00<"), "the currency gain is missing");
+    assert!(html.contains(">-300,00<"), "the currency loss is missing");
+    assert!(html.contains(">90,00<"), "the interest received is missing");
+    assert!(
+        html.contains(">-40,00<"),
+        "the interest reversal is missing"
+    );
+
+    // Splitting a row must not move the total.
+    assert!(html.contains(&format!(">{}<", eur(statement.rcm_net + statement.gyp_net))));
+}
+
+/// A Navarra year that misses the €3,000 relief has to say what it was measured on. Without the
+/// two figures the article turns on, a nil exemption is a silence the filer cannot check.
+#[test]
+fn a_navarra_year_over_the_limit_says_what_the_relief_was_measured_on() {
+    let statement = run_pipeline("fifo", 2026, SpanishTaxRegime::Navarra);
+    assert_eq!(statement.small_disposals_exemption, dec!(0));
+    assert!(!statement.small_disposals_unmeasurable);
+    assert!(statement.small_disposals_proceeds > dec!(3000));
+
+    let html = render(&statement);
+    assert!(html.contains("no relevó nada este ejercicio"));
+    assert!(html.contains(&eur(statement.small_disposals_proceeds)));
+    assert!(html.contains(&eur(statement.small_disposals_gains)));
+
+    // The other two regimes never measure it, so they never mention it.
+    for regime in [SpanishTaxRegime::Gipuzkoa, SpanishTaxRegime::Comun] {
+        let other = render(&run_pipeline("fifo", 2026, regime));
+        assert!(
+            !other.contains("no relevó nada este ejercicio"),
+            "{regime:?}"
+        );
+    }
+}

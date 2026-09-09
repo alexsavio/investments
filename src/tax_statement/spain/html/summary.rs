@@ -223,11 +223,32 @@ pub(super) fn tax_computation(
             Cell::num("—"),
         ]));
     }
+    // Only Navarra measures these, and only there can the relief exist to be missed. Naming both
+    // figures answers the question a nil exemption otherwise leaves open: the article turns on the
+    // year's global transmission amount and on the increments it produced, and a filer cannot
+    // check either against a row that is simply absent.
+    let measured_small_disposals = statement.small_disposals_exemption.is_zero()
+        && !statement.small_disposals_unmeasurable
+        && statement.small_disposals_proceeds > Decimal::ZERO;
     rows.push(Row::total(vec![
         Cell::text("Saldo de ganancias y pérdidas patrimoniales"),
         Cell::num(eur(statement.gyp_net)),
     ]));
     table(out, &AMOUNT_COLUMNS, &rows);
+
+    if measured_small_disposals {
+        note(
+            out,
+            "info",
+            &format!(
+                "La exención de transmisiones onerosas hasta 3.000 € (TRLFIRPF art. 39.5.d) no \
+                 relevó nada este ejercicio: las transmisiones sumaron {} EUR y los incrementos \
+                 gravables que produjeron {} EUR. El artículo se mide sobre esas dos cifras.",
+                b(&eur(statement.small_disposals_proceeds)),
+                b(&eur(statement.small_disposals_gains))
+            ),
+        );
+    }
 
     // A deferred loss is not a further subtraction: the transmissions row above is already the
     // integrable result, net of it. It sits beside the table for the same reason as the fee
@@ -515,8 +536,13 @@ pub(super) fn by_activity(
     exemption.add(-statement.total_dividend_exemption);
     extra.push(exemption);
 
+    // Per entry, not from the total: the Ganancias and Pérdidas columns exist to keep the two
+    // apart, and a pre-netted figure would land wholly in one of them. A reversal of interest
+    // credited earlier is a negative entry and belongs in the loss column.
     let mut interest = ActivityRow::new("Efectivo", "Intereses cobrados", Group::Rcm);
-    interest.add(statement.total_interest_income);
+    for entry in statement.interest.iter().filter(|entry| entry.taxable) {
+        interest.add(entry.gross_eur);
+    }
     extra.push(interest);
 
     let mut paid = ActivityRow::new(
@@ -541,7 +567,9 @@ pub(super) fn by_activity(
     extra.push(informational_fees);
 
     let mut fx = ActivityRow::new("Divisa", "Conversiones sobre saldo propio", Group::Gyp);
-    fx.add(statement.total_fx_result);
+    for entry in &statement.fx_gains {
+        fx.add(entry.amount_eur);
+    }
     extra.push(fx);
 
     let mut borrowed = ActivityRow::new(
@@ -549,7 +577,9 @@ pub(super) fn by_activity(
         "Conversiones sobre saldo prestado (revisión manual)",
         Group::Informational,
     );
-    borrowed.add(statement.total_fx_borrowed_review);
+    for entry in &statement.fx_borrowed_review {
+        borrowed.add(entry.amount_eur);
+    }
     extra.push(borrowed);
 
     if statement.small_disposals_exemption > Decimal::ZERO {
