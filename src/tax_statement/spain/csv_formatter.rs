@@ -1896,7 +1896,11 @@ mod tests {
         let comun =
             render(|w| CsvFormatter::write_modelo_boxes(w, &statement(SpanishTaxRegime::Comun)));
         assert!(comun.contains("# MODELO 100"));
-        assert!(comun.contains("# WARNING"));
+        // The Modelo 100 numbering is verified against an enacted order, so its block cites that
+        // order rather than warning. A later filing year is still told to re-check its own form.
+        assert!(comun.contains("Orden HAC/277/2026"), "{comun}");
+        assert!(comun.contains("BOE-A-2026-7041"), "{comun}");
+        assert!(!comun.contains("# WARNING"), "{comun}");
         assert!(!comun.contains("MODELO_109"));
     }
 

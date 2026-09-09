@@ -770,11 +770,14 @@ Two caveats the CSV states as warnings:
 - **No form exists for a year that has not been filed yet.** Ejercicio 2026 is filed in 2027, so its
   block carries the ejercicio-2025 numbers and says so.
 
-For **Territorio Común** the rows carry the ejercicio-2025 numbers read from Anexo I of the Orden
-HAC/277/2026 **consultation draft** — interest 0027, dividends 0029, gastos de administración y
-depósito 0037, ganancias por transmisión de acciones cotizadas 0326-0340, base **imponible** del
-ahorro 0460, deducción por doble imposición internacional 0588. The AEAT publishes a filing year's
-form in the spring of the following one, so no enacted numbering exists yet.
+For **Territorio Común** the rows carry the ejercicio-2025 numbers read from Anexo I of the
+**enacted** Orden HAC/277/2026 (BOE-A-2026-7041, BOE núm. 76 of 27-03-2026) — interest 0027,
+dividends 0029, gastos de administración y depósito 0037, ganancias por transmisión de acciones
+cotizadas 0326-0340, base **imponible** del ahorro 0460, deducción por doble imposición
+internacional 0588, plus the otros-elementos sums 0386 and 0385 below. Every one of them carries the
+same number in the enacted ejercicio-2024 order (Orden HAC/242/2025, BOE-A-2025-5049), so two
+published years agree. The AEAT publishes a filing year's form in the spring of the following one,
+so a later filing year still falls back to this numbering and says so.
 
 Two of those rows carry a caveat the number alone does not:
 
@@ -785,18 +788,32 @@ Two of those rows carry a caveat the number alone does not:
   one box further down the form than the figure belongs. Gipuzkoa's casilla 33 and Navarra's 815 do
   say *liquidable*, because their own forms use that word for the box at that point.
 - **0326-0340 is the acciones-cotizadas block** (0327 one row per operation, 0339 the sum of gains,
-  0340 the sum of losses). The tool posts the ganancias group's net figure, which also contains any
-  foreign-currency conversion result — a transmisión under LIRPF art. 33, but of a different kind of
-  element, belonging in apartado F2's block for "otros elementos patrimoniales", **casillas 1624
-  onwards, clave 5**. The AEAT scopes that block by exclusion: it does not reach "acciones admitidas
-  a negociación en mercados oficiales que deben declararse en apartados anteriores", which is
-  0326-0340. A Común year with a currency result therefore prints a warning naming the amount to
-  split out and the block it goes to; the tool does not split it, and does not name the boxes inside
-  that block — which one takes which figure depends on the clave and the row, and no verified
-  mapping for that exists here. Sending a filer to the right block to read its labels beats sending
-  them to a box that might be the wrong one. Gipuzkoa's
-  casilla 30 and Navarra's 706 are labelled "por transmisiones" without narrowing to shares, so the
-  same figure is at home there.
+  0340 the sum of losses), so a foreign-currency conversion result does not belong in it. A currency
+  conversion is a transmisión under LIRPF art. 33, but of a different kind of element: it belongs in
+  apartado F2's sub-block for "otros elementos patrimoniales". The AEAT scopes that sub-block by
+  exclusion — it does not reach "acciones admitidas a negociación en mercados oficiales que deben
+  declararse en apartados anteriores", which is 0326-0340.
+
+  The tool therefore takes the currency result **out** of the figure it posts to 0326-0340 and posts
+  it to the sub-block's own two sums instead: **0386** ("suma de ganancias … de otros elementos
+  patrimoniales no afectos a actividades económicas", the sum of the per-row casillas 1650) and
+  **0385** ("suma de pérdidas …", the sum of the per-row casillas 1639). Gains and losses go in
+  separately because the form keeps them apart: 0386 feeds casilla 0422 and 0385 feeds 0423.
+
+  What the tool cannot fill is the rest of the sub-block, which is itemized one element at a time —
+  owner 1624, clave 1626, dates 1631/1632, valor de transmisión 1633, valor de adquisición 1637,
+  and the result chain 1638→1639 for a loss or 1640→1645→1649→1650 for a gain. It does not know how
+  a filer wants to group a year of conversions into elements, so it names those boxes in a footer
+  and says the two posted sums are what the per-row entries must add up to.
+
+  The clave is **4**, "otros elementos patrimoniales no afectos a actividades económicas". Clave 5
+  is the *afectos* one — business assets, "por ejemplo, licencia de taxi" — and would route the gain
+  through the DA 7.ª reduction into casilla 0387 instead of the DT 9.ª path into 0386. An earlier
+  revision of this document said 5, which is the number the pre-restructuring form (ejercicios
+  2019-2021) used for this concept.
+
+  Gipuzkoa's casilla 30 and Navarra's 706 are labelled "por transmisiones" without narrowing to
+  shares, so the same figure is at home there and needs no split.
 
 For **Navarra** the rows carry the ejercicio-2025 numbers, read from the fully numbered Modelo F-93
 the Boletín Oficial de Navarra publishes as Anexo I of each campaign's Orden Foral (ejercicio 2025 =
@@ -1097,11 +1114,13 @@ that has not been filed yet, so ejercicio 2026 gets the 2025 layout:
 **What to do.** Check each casilla against your own proposal in Zergabidea — it is generated for you,
 and it is the authoritative numbering for your year.
 
-### 5. Modelo 100 casillas — DRAFT SOURCE
+### 5. Modelo 100 casillas — VERIFIED
 
-**Authority.** Anexo I of the Orden HAC/277/2026 **consultation draft**. The AEAT publishes a filing
-year's form in the spring of the following one, so no enacted numbering exists yet. A `# WARNING`
-above the box rows says so. Verify against the published form before filing.
+**Authority.** Anexo I of the **enacted** Orden HAC/277/2026 (BOE-A-2026-7041, BOE núm. 76 of
+27-03-2026, ejercicio 2025), cross-checked box for box against the enacted Orden HAC/242/2025
+(BOE-A-2025-5049, BOE núm. 63 of 14-03-2025, ejercicio 2024). Retrieved 2026-09-09. The block cites
+the order rather than warning, and still tells a filer of a later year to check that year's own
+Anexo I: the AEAT publishes a filing year's form in the spring of the following one.
 
 ### 6. The €1,500 exemption and fund distributions — OPEN, by data limit
 
@@ -1414,7 +1433,7 @@ Retrieved 2026-08-11 unless noted.
 | Fecha de transmisión = trade date | LIRPF art. 14.1.c / NF 3/2014 art. 57.1.b; DGT V0152-26 |
 | Valores homogéneos = same issue and same rights (so same ISIN) | RIRPF art. 8; DF 33/2014 art. 47; DGT V0796-26 |
 | Reintegration keyed to the recompra pool; releasing transfer must be definitive | DGT V0913-08; DGT V3282-18 |
-| Modelo 100 box numbers, ejercicio 2025 | Anexo I of the Orden HAC/277/2026 **consultation draft** — no enacted numbering exists yet |
+| Modelo 100 box numbers, ejercicio 2025 | Anexo I of the **enacted** Orden HAC/277/2026 (BOE-A-2026-7041); identical box for box in the enacted Orden HAC/242/2025 (BOE-A-2025-5049) for ejercicio 2024 — **OFFICIAL** |
 | State savings scales, LIRPF arts. 26, 33, 35, 37, 46, 49, 66, 76, 80 | BOE consolidated Ley 35/2006 — **OFFICIAL** |
 
 Two questions stay open and are marked in the code:
