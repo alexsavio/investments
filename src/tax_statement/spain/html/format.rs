@@ -12,7 +12,7 @@ use crate::types::Decimal;
 use super::super::report::{AssetClass, BookingKind, FxTreatment, LotSource, TradeSide};
 
 pub(super) use crate::tax_statement::html::format::{
-    days, dec2, eur, pct, pct_observed, punctuate, qty, rate,
+    amount, days, dec2, eur, pct, pct_observed, punctuate, qty, rate,
 };
 
 pub(super) fn date(value: Date) -> String {

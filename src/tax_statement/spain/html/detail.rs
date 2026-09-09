@@ -19,7 +19,7 @@ use super::builder::{
     Align, Cell, Row, RowKind, b, col, h3, h4, note, p, section_end, section_start, table, ul,
 };
 use super::format::{
-    self, activity_label, asset_class_label, booking_kind_label, country_name, dec2, eur,
+    self, activity_label, amount, asset_class_label, booking_kind_label, country_name, dec2, eur,
     lot_source_label, qty, rate, side_label, treatment_label,
 };
 
@@ -168,11 +168,13 @@ pub(super) fn withholding(
             .push(row);
     }
 
+    // Each original-currency amount carries its own code instead of one "Divisa" column labelling
+    // the row: a broker may withhold in a currency other than the one it paid the dividend in, and
+    // a single column would then name the wrong currency for one of the two.
     let columns = [
         col("Fecha", Align::Left),
         col("Valor", Align::Left),
         col("ISIN", Align::Left),
-        col("Divisa", Align::Left),
         col("Bruto", Align::Right),
         col("Bruto EUR", Align::Right),
         col("Retenido", Align::Right),
@@ -203,10 +205,9 @@ pub(super) fn withholding(
                 Cell::text(format::date(row.date)),
                 Cell::text(&row.name),
                 Cell::text(&row.isin),
-                Cell::text(&row.currency),
-                Cell::num(dec2(row.gross)),
+                Cell::num(amount(row.gross, &row.currency)),
                 Cell::num(eur(row.gross_eur)),
-                Cell::num(dec2(-row.withheld)),
+                Cell::num(amount(-row.withheld, &row.withheld_currency)),
                 Cell::num(eur(-row.withheld_eur)),
                 Cell::num(format::pct_observed(row.withholding_rate)),
                 Cell::num(eur(row.creditable_eur)),
@@ -217,9 +218,9 @@ pub(super) fn withholding(
             "Total",
             columns.len(),
             &[
-                (5, eur(gross_eur)),
-                (7, eur(-withheld_eur)),
-                (9, eur(creditable)),
+                (4, eur(gross_eur)),
+                (6, eur(-withheld_eur)),
+                (8, eur(creditable)),
             ],
         ));
         table(out, &columns, &rows);
