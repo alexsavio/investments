@@ -101,11 +101,17 @@ mod modelo_100 {
     pub const SAVINGS_BASE: &str = "0460";
     /// Named only so the label can point at it; nothing the tool computes belongs in it.
     pub const SAVINGS_BASE_AFTER_REDUCTIONS: &str = "0510";
-    /// Apartado F2's selector for "otros elementos patrimoniales (bienes o derechos) no afectos a
-    /// actividades económicas" — the block a currency conversion belongs in, since 0326-0340 is the
-    /// acciones-cotizadas one. Named so the warning can point at it. Its own value casillas are not
-    /// reproduced: the selector is verified, they are not, and a wrong box is worse than none.
-    pub const OTHER_ELEMENTS: &str = "1626";
+    /// Where apartado F2 puts a transmission of anything other than a listed share: the block
+    /// "ganancias y pérdidas patrimoniales derivadas de transmisiones de otros elementos
+    /// patrimoniales", casillas 1624 onwards. The AEAT's own help scopes it by exclusion — it does
+    /// not reach "acciones admitidas a negociación en mercados oficiales que deben declararse en
+    /// apartados anteriores", which is 0326-0340 — and the element is then chosen by clave 5,
+    /// "otros elementos patrimoniales no afectos a actividades económicas".
+    ///
+    /// Only the block's first casilla is named. Which box inside it takes which figure depends on
+    /// the clave and the row, and the tool has no verified mapping for that: sending a filer to the
+    /// right block to read its labels beats sending them to a box that might be the wrong one.
+    pub const OTHER_ELEMENTS: &str = "1624";
     pub const FOREIGN_TAX_CREDIT: &str = "0588";
     /// Retenciones del capital mobiliario — Spanish withholding only. See `modelo_109::RCM_WITHHOLDING`.
     pub const RCM_WITHHOLDING: &str = "0597";
@@ -448,13 +454,13 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
             "foreign-currency conversion results, which are transmissions of a different kind of"
                 .to_owned(),
             format!(
-                "element (LIRPF art. 33). They belong in apartado F2 under casilla {}, \"otros \
-                 elementos",
+                "element (LIRPF art. 33), so they go in apartado F2 under \"otros elementos \
+                 patrimoniales\" ({} onwards,",
                 modelo_100::OTHER_ELEMENTS
             ),
-            "patrimoniales no afectos a actividades economicas\". Split them by hand before entering"
+            "clave 5), which the AEAT scopes by excluding the listed shares of the block above."
                 .to_owned(),
-            "either one; the value casillas of that sub-block are not reproduced here.".to_owned(),
+            "Split them by hand; the boxes inside that block are not reproduced here.".to_owned(),
         ]
     };
 
@@ -903,5 +909,6 @@ mod tests {
         // must name the first and stay silent about the second.
         assert!(footer.contains("apartado F2"), "{footer}");
         assert!(footer.contains(modelo_100::OTHER_ELEMENTS), "{footer}");
+        assert!(footer.contains("clave 5"), "{footer}");
     }
 }
