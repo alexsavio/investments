@@ -216,9 +216,14 @@ pub struct WithholdingRow<C> {
     pub name: String,
     pub country_code: String,
     pub category: C,
+    /// Currency of `gross`. The withholding has its own — see `withheld_currency`.
     pub currency: String,
     pub gross: Decimal,
     pub gross_eur: Decimal,
+    /// Currency of `withheld`. A broker may levy the tax in a currency other than the one it paid
+    /// the dividend in, and each side is converted at its own ECB rate, so the two are carried
+    /// apart: one currency labelling both columns would misname whichever it is not.
+    pub withheld_currency: String,
     /// Withheld amount in original currency (positive).
     pub withheld: Decimal,
     /// Withheld amount in EUR (positive; the entry's foreign withholding tax).

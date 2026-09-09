@@ -200,6 +200,42 @@ fn sale_worksheets_reconcile_with_capital_gain_entries() {
     assert_eq!(report.securities[0].name, "APPLE INC");
 }
 
+/// The withholding section alone, so an assertion about its column headings is not answered by a
+/// heading of the same name in another table.
+fn withholding_section(html: &str) -> &str {
+    let start = offset(html, "<section id=\"quellensteuer\">");
+    let rest = &html[start..];
+    let end = rest.find("</section>").expect("the section must be closed");
+    &rest[..end]
+}
+
+/// A broker may withhold in a currency other than the one it paid the dividend in. Each side is
+/// converted at its own ECB rate, so each has to name its own currency: one column heading over
+/// both would misname whichever of the two it is not.
+#[test]
+fn a_withholding_in_another_currency_is_labelled_with_its_own() {
+    let mut statement = run_pipeline("dividend_withholding", 2024);
+    let row = &mut statement.report.withholding[0];
+    assert_eq!(row.currency, "USD");
+    assert_eq!(row.withheld_currency, "USD");
+    let gross = row.gross;
+    let withheld = row.withheld;
+    row.withheld_currency = "CHF".to_owned();
+
+    let html = render(&statement);
+    assert!(
+        html.contains(&format!("{} USD", punctuate(&format_eur(gross)))),
+        "the gross keeps the dividend's currency"
+    );
+    assert!(
+        html.contains(&format!("{} CHF", punctuate(&format_eur(-withheld)))),
+        "the withheld amount carries the withholding's own currency"
+    );
+    // The heading that used to claim one currency for the whole row is gone from this table.
+    // Other tables keep theirs: there every amount in the row really is in the one currency.
+    assert!(!withholding_section(&html).contains(">Währung</th>"));
+}
+
 #[test]
 fn withholding_rows_carry_country_and_credit() {
     let statement = run_pipeline("dividend_withholding", 2024);

@@ -18,7 +18,7 @@ use super::builder::{
     Align, Cell, Row, RowKind, b, col, h3, h4, note, p, section_end, section_start, table, ul,
 };
 use super::format::{
-    self, activity_label, booking_kind_label, category_label, country_name, dec2, eur,
+    self, activity_label, amount, booking_kind_label, category_label, country_name, dec2, eur,
     lot_source_label, qty, rate, side_label, teilfreistellung_label, treatment_label,
 };
 
@@ -167,8 +167,11 @@ pub(super) fn withholding(
             .push(row);
     }
 
+    // Jeder Betrag in Originalwährung führt seinen eigenen Code mit, statt dass eine
+    // "Währung"-Spalte die ganze Zeile beschriftet: ein Broker kann die Quellensteuer in einer
+    // anderen Währung einbehalten als der, in der er die Dividende gezahlt hat, und eine einzige
+    // Spalte würde dann für einen der beiden Beträge die falsche Währung nennen.
     let columns = [
-        col("Währung", Align::Left),
         col("Datum", Align::Left),
         col("Asset-Kategorie", Align::Left),
         col("ISIN", Align::Left),
@@ -204,14 +207,13 @@ pub(super) fn withholding(
                 _ => "0 % (InvStG)".to_owned(),
             };
             rows.push(Row::data(vec![
-                Cell::text(&row.currency),
                 Cell::text(format::date(row.date)),
                 Cell::text(category_label(row.category)),
                 Cell::text(&row.isin),
                 Cell::text(&row.name),
-                Cell::num(dec2(row.gross)),
+                Cell::num(amount(row.gross, &row.currency)),
                 Cell::num(eur(row.gross_eur)),
-                Cell::num(dec2(-row.withheld)),
+                Cell::num(amount(-row.withheld, &row.withheld_currency)),
                 Cell::num(eur(-row.withheld_eur)),
                 Cell::num(format::pct_observed(row.withholding_rate)),
                 Cell::num(cap),
@@ -223,9 +225,9 @@ pub(super) fn withholding(
             "Gesamt",
             columns.len(),
             &[
-                (6, eur(gross_eur)),
-                (8, eur(-withheld_eur)),
-                (11, eur(creditable)),
+                (5, eur(gross_eur)),
+                (7, eur(-withheld_eur)),
+                (10, eur(creditable)),
             ],
         ));
         table(out, &columns, &rows);

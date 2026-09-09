@@ -53,6 +53,17 @@ pub(crate) fn dec2(value: Decimal) -> String {
     eur(value)
 }
 
+/// A two-place amount followed by its currency code (`-150,00 USD`).
+///
+/// Used where a column holds amounts that need not share one currency, so the cell names its own
+/// rather than borrowing a neighbouring column's header.
+pub(crate) fn amount(value: Decimal, currency: &str) -> String {
+    if currency.is_empty() {
+        return dec2(value);
+    }
+    format!("{} {currency}", dec2(value))
+}
+
 /// Exchange rate with four places.
 pub(crate) fn rate(value: Decimal) -> String {
     let mut value = value.round_dp_with_strategy(4, RoundingStrategy::MidpointAwayFromZero);
@@ -120,5 +131,13 @@ mod tests {
         assert_eq!(pct(dec!(0.055)), "5,5 %");
         assert_eq!(pct_observed(dec!(0.14994)), "15 %");
         assert_eq!(pct_observed(dec!(0.2635)), "26,4 %");
+    }
+
+    #[test]
+    fn an_amount_carries_its_own_currency() {
+        assert_eq!(amount(dec!(-150), "USD"), "-150,00 USD");
+        assert_eq!(amount(dec!(1234.5), "CHF"), "1.234,50 CHF");
+        // A row whose currency is unknown still prints its number rather than a dangling space.
+        assert_eq!(amount(dec!(12), ""), "12,00");
     }
 }

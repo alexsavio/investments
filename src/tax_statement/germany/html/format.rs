@@ -10,7 +10,7 @@ use crate::time::{Date, DateTime};
 use super::super::report_details::{AssetCategory, BookingKind, FxTreatment, LotSource, TradeSide};
 
 pub(super) use crate::tax_statement::html::format::{
-    days, dec2, eur, pct, pct_observed, qty, rate,
+    amount, days, dec2, eur, pct, pct_observed, qty, rate,
 };
 
 pub(super) fn date(value: Date) -> String {

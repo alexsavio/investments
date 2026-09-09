@@ -1289,6 +1289,7 @@ fn process_dividends(
                 currency: dividend.amount.currency.to_string(),
                 gross: dividend.amount.amount,
                 gross_eur,
+                withheld_currency: dividend.tax_withheld.currency.to_string(),
                 withheld: dividend.tax_withheld.amount,
                 withheld_eur,
                 withholding_rate: if gross_eur.is_zero() {
