@@ -17,7 +17,7 @@ as filing years advance past the shipped data.
 | Filing year | What happens |
 |---|---|
 | Spain 2027 | **Hard error.** `SavingsScale::for_year` ships 2024–2026 only and refuses to extrapolate: a savings scale is set by statute each year, and guessing one files real money at an invented rate. Gipuzkoa also loses its actualization table, so disposals cannot be priced. |
-| Germany 2026 | **Hard error** on any fund held at year end: `german_basiszins` ships 2023–2025. Everything else still computes. |
+| Germany 2027 | **Hard error** on any fund held at year end: `german_basiszins` ships 2023–2026. Everything else still computes. |
 | Either, any year past the last published form | **Warning, not an error.** The form block prints the last published numbering and says so. A form for a filing year is published during the following year's campaign, so this state is normal for most of the year. |
 
 Both hard errors name the config key that overrides them (`taxes.spain.coefficients.<year>`,
@@ -29,7 +29,7 @@ Both hard errors name the config key that overrides them (`taxes.spain.coefficie
 |---|---|---|---|
 | Anlage KAP line numbers (19, 20, 22, 23, 41) | *Anlage KAP* of the filing year, Bundesfinanzverwaltung | ~September–October of the filing year | `src/tax_statement/germany/statement.rs` |
 | Anlage KAP-INV line numbers (4/5/8, 9/10/13, 14/17/26) | *Anlage KAP-INV* of the filing year | ~September of the filing year | `src/tax_statement/germany/mod.rs::kap_inv_zeilen` |
-| Basiszins for the Vorabpauschale | BMF-Schreiben | **each January, for the year just ended** | `src/taxes/mod.rs::german_basiszins` |
+| Basiszins for the Vorabpauschale | BMF-Schreiben | **each January, for the year just begun** | `src/taxes/mod.rs::german_basiszins` |
 | Sparer-Pauschbetrag (€1,000 since 2023) | §20 Abs. 9 EStG | on amendment | `src/taxes/mod.rs::german_sparer_pauschbetrag` |
 | §23 Freigrenze (€1,000 since 2024) | §23 Abs. 3 EStG | on amendment | `src/tax_statement/germany/statement.rs::Section23::freigrenze` |
 | Abgeltungsteuer, Soli, Kirchensteuer rates | §32d EStG, SolZG, Landeskirchensteuergesetze | on amendment | `src/taxes/germany/rates.rs` |

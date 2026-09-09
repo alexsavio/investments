@@ -392,6 +392,12 @@ impl TaxConfig {
 
     /// Basiszins (as a fraction) for the Vorabpauschale in `year`: the configured override, else the
     /// statutory BMF value. Errors for years the tool ships no default for.
+    ///
+    /// Each value is the rate the Bundesbank computed on the **first trading day of that same
+    /// year**, published by the BMF a few days later — so the rate a filing year needs already
+    /// exists while that year is being lived, not a year afterwards. The 2026 letter (13 January
+    /// 2026, GZ IV C 1 - S 1980/00230/012/001) states it outright: "Die Vorabpauschale für 2026 ist
+    /// unter Anwendung des Basiszinses vom 2. Januar 2026 zu ermitteln."
     pub fn german_basiszins(&self, year: i32) -> GenericResult<Decimal> {
         if let Some(&rate) = self.basiszins.get(&year) {
             return Ok(rate);
@@ -400,6 +406,10 @@ impl TaxConfig {
             2023 => dec!(0.0255),
             2024 => dec!(0.0229),
             2025 => dec!(0.0253),
+            // BMF-Schreiben of 13 January 2026, GZ IV C 1 - S 1980/00230/012/001, published in
+            // BStBl I: the Bundesbank computed 3,20 % on 2 January 2026 for Bundeswertpapiere with
+            // an annual coupon and 15 years' remaining term. Retrieved 2026-09-09.
+            2026 => dec!(0.032),
             _ => return Err!(
                 "No Basiszins known for {year}. The BMF publishes it each January; \
                  set `taxes.basiszins.{year}` in the config"
@@ -562,6 +572,7 @@ mod tests {
         assert_eq!(config.german_basiszins(2023).unwrap(), dec!(0.0255));
         assert_eq!(config.german_basiszins(2024).unwrap(), dec!(0.0229));
         assert_eq!(config.german_basiszins(2025).unwrap(), dec!(0.0253));
+        assert_eq!(config.german_basiszins(2026).unwrap(), dec!(0.032));
         // A year with no shipped default errors rather than guessing.
         assert!(config.german_basiszins(2027).is_err());
 
@@ -884,11 +895,13 @@ mod tests {
             assert!(SavingsScale::for_year(regime, 2027).is_err(), "{regime:?}");
         }
 
-        // Germany: the BMF Basiszins ships through 2025, and the error names the config key.
+        // Germany: the BMF Basiszins ships through 2026, and the error names the config key. The
+        // BMF publishes a year's rate in January of that same year, so the horizon moves one year
+        // out every January rather than trailing a year behind the filing year.
         let config = TaxConfig::default();
-        assert!(config.german_basiszins(2025).is_ok());
-        let error = config.german_basiszins(2026).unwrap_err().to_string();
-        assert!(error.contains("taxes.basiszins.2026"), "{error}");
+        assert!(config.german_basiszins(2026).is_ok());
+        let error = config.german_basiszins(2027).unwrap_err().to_string();
+        assert!(error.contains("taxes.basiszins.2027"), "{error}");
 
         // The two statutory thresholds the manifest quotes, and the years they moved.
         assert_eq!(config.german_sparer_pauschbetrag(2023), dec!(1000));
