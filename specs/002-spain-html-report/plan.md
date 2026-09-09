@@ -177,6 +177,12 @@ Left for later, deliberately:
   PR, but the code and the bug are shared: Germany's "Offene Positionen" prints the same, and fixing
   it rewrites six German goldens. It belongs in its own PR, where that diff is the change under
   review rather than noise beside a new report.
+- **The Spanish processor never reads `broker_statement.cash_grants`.** Germany's does, and reports
+  a cash award as sonstige Einkünfte. Spain drops the field silently, so a statement carrying one
+  produces a return that never mentions it — while a stock vest, equally outside the savings base,
+  *is* reported. Fixing it needs a statement field, a processor loop, a CSV row (the CSV contract
+  changes), a console line and a report row, so it is its own PR. Documented meanwhile in
+  `docs/spain-taxes.md` under "Important notes".
 - **`WithholdingRow.currency` is the dividend's, not the withholding's** (`processor.rs`). The two
   are the same in every statement the tool has seen, and Germany does the same; a broker that
   withheld in a different currency would label the `Retenido` cell wrongly. The EUR columns and the

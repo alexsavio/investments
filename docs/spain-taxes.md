@@ -954,11 +954,17 @@ adds on top of the ones above it. Only the total is order-independent.
    solely-owned and jointly-held holdings as distinct; the tool does not model joint ownership.
 4. **Modelo 720** (informational declaration of assets abroad) is a separate obligation. This tool
    never computes it — check whether you are required to file it.
-5. **No Vorabpauschale equivalent.** Accumulating funds simply defer taxation until disposal.
-6. **Fund traspaso deferral does not apply at a foreign broker.** The rollover regime for Spanish
+5. **Cash grants are not read at all.** A broker statement can carry a cash award (`CashGrant`),
+   which the German pipeline reports as sonstige Einkünfte. The Spanish one never looks at the
+   field: such a payment belongs to the **general** base, not the savings base, whether it is
+   employment income or a ganancia patrimonial no derivada de transmisión. A vest is reported even
+   though it is equally out of scope, so this is an inconsistency rather than a decision — a
+   statement containing one produces a return that says nothing about it. Declare it separately.
+6. **No Vorabpauschale equivalent.** Accumulating funds simply defer taxation until disposal.
+7. **Fund traspaso deferral does not apply at a foreign broker.** The rollover regime for Spanish
    collective-investment institutions requires the transfer to run through the Spanish system.
-7. **Self-declaration.** The CSV is a working paper. You still file through Zergabidea or the AEAT.
-8. **Tax advisor.** Wash-sale timing, joint ownership, and cross-border residency questions should be
+8. **Self-declaration.** The CSV is a working paper. You still file through Zergabidea or the AEAT.
+9. **Tax advisor.** Wash-sale timing, joint ownership, and cross-border residency questions should be
    reviewed with a qualified adviser.
 
 ### Navarra: what this tool does not compute
