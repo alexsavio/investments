@@ -12,7 +12,7 @@ use crate::broker_statement::{BrokerStatement, StockSource};
 use crate::core::GenericResult;
 use crate::currency::converter::CurrencyConverter;
 use crate::tax_statement::fx_fifo::{CurrencyFxResult, FxLedgerKind, FxLedgerRow};
-use crate::time::Date;
+use crate::time::{Date, DateOptTime};
 use crate::types::Decimal;
 
 use super::details::{
@@ -73,6 +73,12 @@ pub(crate) fn collect_buys<C, T>(
 /// A statement that extends past the tax year already has later sales consumed from these lots,
 /// which the renderer points out.
 ///
+/// Quantities and prices are restated into the share units of the statement's last date, the same
+/// way [`BrokerStatement::open_positions`] does. A lot bought before a split is held in the units
+/// of its own trade, so an unadjusted count would contradict the position the account actually
+/// shows. `cost_eur` is a total and needs no restating; the price is divided by the same factor so
+/// quantity × price still reconciles with it.
+///
 /// `classify` maps an ISIN to the jurisdiction's asset category; `grant_cost_eur` supplies the
 /// cost basis of a vested-grant lot from its original symbol, vest date and quantity.
 pub(crate) fn collect_open_lots<C, T>(
@@ -95,6 +101,12 @@ pub(crate) fn collect_open_lots<C, T>(
         let (isin, name) = security_identity(broker_statement, &buy.symbol);
         let category = classify(&isin);
 
+        let multiplier = broker_statement.stock_splits.get_multiplier(
+            &buy.symbol,
+            buy.conclusion_time,
+            DateOptTime::new_max_time(broker_statement.period.last_date()),
+        );
+
         let (source, currency, price) = match buy.type_ {
             StockSource::Trade { price, .. } => (
                 LotSource::Trade,
@@ -105,6 +117,8 @@ pub(crate) fn collect_open_lots<C, T>(
             StockSource::CorporateAction => (LotSource::CorporateAction, String::new(), None),
         };
 
+        // `unsold`, not the restated quantity: a vest's per-share value is quoted in the original
+        // shares, so the grant lookup has to be given the count in those same units.
         let cost_eur = match buy.type_ {
             StockSource::Grant => {
                 grant_cost_eur(&buy.original_symbol, buy.conclusion_time.date, unsold)?
@@ -127,9 +141,9 @@ pub(crate) fn collect_open_lots<C, T>(
             open_date: buy.conclusion_time.date,
             trade_id: buy.trade_id.clone(),
             source,
-            quantity: unsold,
+            quantity: unsold * multiplier,
             currency,
-            price,
+            price: price.map(|price| price / multiplier),
             cost_eur,
         });
     }
@@ -255,12 +269,47 @@ pub(crate) fn collect_fx_rows<C, T>(
 mod tests {
     use crate::broker_statement::{BrokerStatement, ReadingStrictness};
     use crate::config::{Config, PortfolioConfig};
-
+    use crate::core::{EmptyResult, GenericResult};
+    use crate::currency::converter::{CurrencyConverter, CurrencyConverterBackend};
     use crate::tax_statement::fx_fifo::{CurrencyFxResult, FxLedgerKind, FxLedgerRow};
-    use crate::time::Date;
+    use crate::time::{self, Date};
+    use crate::types::Decimal;
 
     use super::super::details::ReportDetails;
-    use super::{collect_fx_rows, collect_securities};
+    use super::{collect_fx_rows, collect_open_lots, collect_securities};
+
+    /// Every non-EUR currency converts at 0.9, independent of date: the open-lot rows this module
+    /// builds carry a EUR cost, and a fixed rate keeps it hand-computable.
+    struct FixedEurBackend;
+
+    impl CurrencyConverterBackend for FixedEurBackend {
+        fn today(&self) -> Date {
+            time::today()
+        }
+
+        fn batch(&self, _from: &str, _to: &str, _date: Date) -> EmptyResult {
+            Ok(())
+        }
+
+        fn currency_rate(
+            &self,
+            from: &str,
+            _to: &str,
+            _date: Date,
+        ) -> GenericResult<(Option<Decimal>, Option<Decimal>)> {
+            match from {
+                "EUR" => Ok((None, None)),
+                _ => Ok((Some(dec!(0.9)), None)),
+            }
+        }
+    }
+
+    fn read_fixture(path: &str) -> BrokerStatement {
+        let mut portfolio: PortfolioConfig =
+            serde_yaml::from_str("name: test\nbroker: interactive-brokers\n").unwrap();
+        portfolio.statements = Some(std::path::PathBuf::from(path));
+        BrokerStatement::load(&Config::mock(), &portfolio, ReadingStrictness::all()).unwrap()
+    }
 
     /// The pairing half of the `treatment_of` contract is checked, not merely documented: a
     /// closure that drops a realizing row would otherwise print an opening lot beside a blank
@@ -289,6 +338,49 @@ mod tests {
 
         let mut report: ReportDetails<(), ()> = ReportDetails::default();
         collect_fx_rows(&mut report, &results, 2024, &|_row| None);
+    }
+
+    /// An open lot is shown in the share units the account holds at the statement's end, not the
+    /// ones its own trade was booked in.
+    ///
+    /// `BrokerStatement::open_positions` restates the same quantity by the same factor, so an
+    /// unadjusted report would contradict the tool's own view of the position — and the filer's
+    /// year-end statement. The fixture is Spanish because it is the only one in the repo with a
+    /// split; the collector it exercises is shared, and Germany prints the same rows from it.
+    #[test]
+    fn an_open_lot_is_restated_into_post_split_units() {
+        let broker_statement = read_fixture("src/tax_statement/spain/testdata/wash_sale_split");
+        let converter = CurrencyConverter::new_with_backend(Box::new(FixedEurBackend));
+
+        let mut report: ReportDetails<(), ()> = ReportDetails::default();
+        collect_open_lots(
+            &mut report,
+            &broker_statement,
+            2026,
+            &converter,
+            &|_isin| (),
+            &|_symbol, _date, _quantity| Ok(dec!(0)),
+        )
+        .unwrap();
+
+        assert!(!report.open_lots.is_empty());
+        let held: Decimal = report.open_lots.iter().map(|lot| lot.quantity).sum();
+
+        // The tool's own view of the position is the yardstick: whatever the account holds after
+        // the split, the report has to show the same count.
+        let expected = broker_statement.open_positions["AAPL"];
+        assert_eq!(held, expected, "{:#?}", report.open_lots);
+
+        // Restating the count without restating the price would break quantity × price against the
+        // EUR cost the same row carries.
+        for lot in &report.open_lots {
+            let price = lot.price.expect("a traded lot carries its price");
+            assert_eq!(
+                (price * lot.quantity * dec!(0.9)).round_dp(2),
+                lot.cost_eur.round_dp(2),
+                "{lot:#?}"
+            );
+        }
     }
 
     /// A fund that neither traded nor paid out in the year reaches the security overview only
