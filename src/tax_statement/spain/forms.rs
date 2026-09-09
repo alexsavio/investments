@@ -101,6 +101,11 @@ mod modelo_100 {
     pub const SAVINGS_BASE: &str = "0460";
     /// Named only so the label can point at it; nothing the tool computes belongs in it.
     pub const SAVINGS_BASE_AFTER_REDUCTIONS: &str = "0510";
+    /// Apartado F2's selector for "otros elementos patrimoniales (bienes o derechos) no afectos a
+    /// actividades económicas" — the block a currency conversion belongs in, since 0326-0340 is the
+    /// acciones-cotizadas one. Named so the warning can point at it. Its own value casillas are not
+    /// reproduced: the selector is verified, they are not, and a wrong box is worse than none.
+    pub const OTHER_ELEMENTS: &str = "1626";
     pub const FOREIGN_TAX_CREDIT: &str = "0588";
     /// Retenciones del capital mobiliario — Spanish withholding only. See `modelo_109::RCM_WITHHOLDING`.
     pub const RCM_WITHHOLDING: &str = "0597";
@@ -442,9 +447,14 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
             ),
             "foreign-currency conversion results, which are transmissions of a different kind of"
                 .to_owned(),
-            "element and belong in the block for otros elementos patrimoniales. Split them by hand"
+            format!(
+                "element (LIRPF art. 33). They belong in apartado F2 under casilla {}, \"otros \
+                 elementos",
+                modelo_100::OTHER_ELEMENTS
+            ),
+            "patrimoniales no afectos a actividades economicas\". Split them by hand before entering"
                 .to_owned(),
-            "before entering either one.".to_owned(),
+            "either one; the value casillas of that sub-block are not reproduced here.".to_owned(),
         ]
     };
 
@@ -888,6 +898,10 @@ mod tests {
 
         let footer = form_mapping(&spain).footer_lines.join(" ");
         assert!(footer.contains("400.00"), "{footer}");
-        assert!(footer.contains("otros elementos patrimoniales"), "{footer}");
+        assert!(footer.contains("otros elementos"), "{footer}");
+        // The apartado and its selector are verified; its value casillas are not, so the warning
+        // must name the first and stay silent about the second.
+        assert!(footer.contains("apartado F2"), "{footer}");
+        assert!(footer.contains(modelo_100::OTHER_ELEMENTS), "{footer}");
     }
 }
