@@ -624,6 +624,16 @@ pub(super) fn by_activity(
     }
     extra.push(grants);
 
+    let mut cash_grants = ActivityRow::new(
+        "Adjudicaciones",
+        "Ingresos en efectivo — base general",
+        Group::Informational,
+    );
+    for entry in &statement.cash_grants {
+        cash_grants.add(entry.amount_eur);
+    }
+    extra.push(cash_grants);
+
     let all: Vec<&ActivityRow> = by_class
         .values()
         .chain(extra.iter())
@@ -1426,6 +1436,38 @@ pub(super) fn notes(out: &mut String, statement: &SpanishTaxStatement, meta: &Re
             "Un vesting es rendimiento del trabajo y pertenece a la <b>base general</b>, que esta \
              herramienta no calcula. Declárelo por separado. El valor de la fecha de consolidación \
              es el que fija el coste de adquisición de las acciones para cuando se vendan.",
+        );
+    }
+
+    if !statement.cash_grants.is_empty() {
+        h3(out, "Ingresos en efectivo (base general)");
+        let columns = [
+            col("Fecha", Align::Left),
+            col("Concepto", Align::Left),
+            col("Importe EUR", Align::Right),
+        ];
+        let mut rows: Vec<Row> = statement
+            .cash_grants
+            .iter()
+            .map(|entry| {
+                Row::data(vec![
+                    Cell::text(format::date(entry.date)),
+                    Cell::text(&entry.description),
+                    Cell::num(eur(entry.amount_eur)),
+                ])
+            })
+            .collect();
+        rows.push(Row::total(vec![
+            Cell::text("Total"),
+            Cell::empty(),
+            Cell::num(eur(statement.total_cash_grants)),
+        ]));
+        table(out, &columns, &rows);
+        p(
+            out,
+            "Un ingreso en efectivo del bróker pertenece a la <b>base general</b> — sea rendimiento \
+             del trabajo o ganancia patrimonial no derivada de transmisión —, que esta herramienta \
+             no calcula. Declárelo por separado.",
         );
     }
 

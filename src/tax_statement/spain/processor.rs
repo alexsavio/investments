@@ -31,7 +31,8 @@ use super::report::{
 };
 use super::wash_sale;
 use super::statement::{
-    CapitalGainEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry,
+    CapitalGainEntry, CashGrantEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry,
+    InterestEntry,
     SpanishLotDetail, SpanishTaxStatement, StockGrantEntry, WashSaleBoundaryReview,
     WashSaleReintegrationEntry, WashSaleVenueReview, WashSaleWindowGap,
 };
@@ -207,6 +208,7 @@ fn process_broker_statement(
     let has_fees = process_fees(statement, broker_statement, params, converter)?;
 
     let has_grants = process_stock_grants(statement, broker_statement, params, converter)?;
+    let has_cash_grants = process_cash_grants(statement, broker_statement, params, converter)?;
     let has_corporate_actions = process_corporate_actions(statement, broker_statement, params);
 
     // Report-only detail (no tax effect): the raw buys, the lots still open and the security
@@ -288,6 +290,7 @@ fn process_broker_statement(
         || has_fx
         || has_fees
         || has_grants
+        || has_cash_grants
         || has_corporate_actions)
 }
 
@@ -346,6 +349,70 @@ fn process_stock_grants(
             "The statement contains {} stock vest(s) in {}. Vested shares are employment income in \
              the general base, which this tool does not compute — declare them separately.",
             statement.stock_grants.len(),
+            params.year
+        );
+    }
+
+    Ok(has_grants)
+}
+
+/// Cash awards credited by the broker, reported only.
+///
+/// The savings base is all this tool computes, and such a payment is not part of it: it is either
+/// employment income or a ganancia patrimonial no derivada de transmisión, and both belong to the
+/// **general** base. It is recorded anyway, for the same reason a vest is — a figure the statement
+/// carries and the return never mentions is worse than one the return says it cannot compute.
+fn process_cash_grants(
+    statement: &mut SpanishTaxStatement,
+    broker_statement: &BrokerStatement,
+    params: &SpanishTaxParams,
+    converter: &CurrencyConverter,
+) -> GenericResult<bool> {
+    let mut has_grants = false;
+
+    for grant in &broker_statement.cash_grants {
+        if grant.date.year() != params.year {
+            continue;
+        }
+
+        has_grants = true;
+
+        let context = format!(
+            "Processing the cash grant '{}' on {}",
+            grant.description, grant.date
+        );
+        let amount_eur = convert_to_eur(converter, grant.date, grant.amount, &context)?;
+
+        statement.report.bookings.push(BookingRow {
+            kind: BookingKind::CashGrant,
+            date: grant.date,
+            symbol: String::new(),
+            isin: String::new(),
+            name: String::new(),
+            category: None,
+            description: grant.description.clone(),
+            currency: grant.amount.currency.to_string(),
+            amount: grant.amount.amount,
+            eur_per_unit: ecb_rate(converter, grant.date, grant.amount.currency)?,
+            amount_eur,
+        });
+
+        statement.cash_grants.push(CashGrantEntry {
+            date: grant.date,
+            description: grant.description.clone(),
+            amount_eur,
+            notes: "Informational: a cash award belongs to the GENERAL base, not the savings \
+                    base — it is either employment income or a ganancia patrimonial no derivada de \
+                    transmisión. Declare it separately; this tool does not compute it"
+                .to_string(),
+        });
+    }
+
+    if has_grants {
+        warn!(
+            "The statement contains {} cash award(s) in {}. They belong to the general base, which \
+             this tool does not compute — declare them separately.",
+            statement.cash_grants.len(),
             params.year
         );
     }

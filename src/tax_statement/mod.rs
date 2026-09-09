@@ -414,6 +414,17 @@ fn generate_spanish_tax_statement(
         );
     }
 
+    if !statement.cash_grants.is_empty() {
+        println!(
+            "\n{}",
+            Color::Yellow.paint(format!(
+                "€{} of cash award(s) are reported for information only: they belong to the \
+                 GENERAL base, which this tool does not compute. Declare them separately.",
+                eur::format_eur(statement.total_cash_grants)
+            ))
+        );
+    }
+
     if !statement.corporate_actions.is_empty() {
         println!(
             "Corporate actions reported for review: {}",
