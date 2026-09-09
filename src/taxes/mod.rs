@@ -863,4 +863,37 @@ mod tests {
             Some(TaxJurisdiction::Spain)
         );
     }
+    /// The horizons `docs/tax-sources.md` publishes, held against the code.
+    ///
+    /// That file tells a maintainer which filing year stops working first and which config key
+    /// buys time. Both facts live in tables here, so the doc drifts the moment either is extended
+    /// and nothing else would notice. Extending one is fine — update the "What breaks first"
+    /// section in the same commit, which is what this test is for.
+    #[test]
+    fn the_source_manifest_still_describes_the_shipped_horizons() {
+        use crate::taxes::spain::SpanishTaxRegime;
+        use crate::taxes::spain::scale::SavingsScale;
+
+        // Spain: scales ship through 2026 and refuse to extrapolate past it.
+        for regime in [
+            SpanishTaxRegime::Gipuzkoa,
+            SpanishTaxRegime::Comun,
+            SpanishTaxRegime::Navarra,
+        ] {
+            assert!(SavingsScale::for_year(regime, 2026).is_ok(), "{regime:?}");
+            assert!(SavingsScale::for_year(regime, 2027).is_err(), "{regime:?}");
+        }
+
+        // Germany: the BMF Basiszins ships through 2025, and the error names the config key.
+        let config = TaxConfig::default();
+        assert!(config.german_basiszins(2025).is_ok());
+        let error = config.german_basiszins(2026).unwrap_err().to_string();
+        assert!(error.contains("taxes.basiszins.2026"), "{error}");
+
+        // The two statutory thresholds the manifest quotes, and the years they moved.
+        assert_eq!(config.german_sparer_pauschbetrag(2023), dec!(1000));
+        assert_eq!(config.german_sparer_pauschbetrag(2022), dec!(801));
+        assert_eq!(crate::tax_statement::germany::Section23::freigrenze(2024), dec!(1000));
+        assert_eq!(crate::tax_statement::germany::Section23::freigrenze(2023), dec!(600));
+    }
 }
