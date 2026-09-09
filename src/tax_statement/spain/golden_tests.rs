@@ -287,6 +287,9 @@ fn fixed_meta(year: i32) -> ReportMeta {
 /// - `wash_sale_multi_lot_gipuzkoa_2026` — the valores-homogéneos section and the carry-out block.
 /// - `fx_gain_gipuzkoa_2026` — the per-currency ledger, the widest table in the report and the one
 ///   no other case reaches.
+/// - `income_navarra_2026` — the only case where the 3% fee ceiling actually bites, so the only one
+///   that renders the capped-fee row and the "Importes informativos" block.
+/// - `small_disposal_navarra_2026` — the €3,000 exemption row, which exists under one regime only.
 #[rstest]
 #[case::fifo_gipuzkoa(
     "fifo_gipuzkoa_2026",
@@ -328,6 +331,22 @@ fn fixed_meta(year: i32) -> ReportMeta {
     no_opening_balances,
     revaluing_converter
 )]
+#[case::income_navarra(
+    "income_navarra_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances,
+    converter
+)]
+#[case::small_disposal_navarra(
+    "small_disposal_navarra_2026",
+    "small_disposal",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances,
+    converter
+)]
 fn rendered_report_matches_its_golden(
     #[case] golden: &str,
     #[case] fixture: &str,
@@ -362,12 +381,14 @@ fn every_golden_file_belongs_to_a_case() {
 }
 
 /// The file stems of the report cases above, in case order.
-const REPORT_CORPUS: [&str; 5] = [
+const REPORT_CORPUS: [&str; 7] = [
     "fifo_gipuzkoa_2026",
     "income_comun_2026",
     "cross_offset_navarra_2026_saldo",
     "wash_sale_multi_lot_gipuzkoa_2026",
     "fx_gain_gipuzkoa_2026",
+    "income_navarra_2026",
+    "small_disposal_navarra_2026",
 ];
 
 /// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than

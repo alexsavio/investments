@@ -209,7 +209,7 @@ table { orphans: 3; widows: 3; }
 <li><a href="#transmisiones">Ganancias y pérdidas patrimoniales (FIFO)</a></li>
 <li><a href="#valores-homogeneos">Valores homogéneos</a></li>
 <li><a href="#operaciones">Operaciones con valores</a></li>
-<li><a href="#posiciones-abiertas">Posiciones abiertas a 31/12</a></li>
+<li><a href="#posiciones-abiertas">Posiciones abiertas al cierre del ejercicio</a></li>
 <li><a href="#compensacion">Compensación y saldos pendientes</a></li>
 <li><a href="#relacion-valores">Relación de valores</a></li>
 <li><a href="#avisos">Avisos y observaciones</a></li>
@@ -303,10 +303,10 @@ table { orphans: 3; widows: 3; }
 </section>
 <section id="valores">
 <h2>Ganancias y pérdidas por valor</h2>
-<p>Desglose por valor de todo lo que el ejercicio integró: <b>dividendos y sus retenciones</b> y <b>resultados de las transmisiones</b>. Sirve para contrastar el informe contra sus propios extractos posición a posición.</p>
+<p>Desglose por valor de todo lo que el ejercicio integró: <b>dividendos y sus retenciones</b> y <b>resultados de las transmisiones</b>. Sirve para contrastar el informe contra sus propios extractos posición a posición. Las dos mitades van a grupos distintos de la base del ahorro, así que la última columna cierra <b>sólo las transmisiones</b>: los dividendos están en su propia columna y se integran aparte.</p>
 <h3>Acciones</h3>
 <table>
-<thead><tr><th class="col">Valor</th><th class="col">ISIN</th><th class="col num">Dividendos brutos</th><th class="col num">Retenido</th><th class="col num">Ganancias EUR</th><th class="col num">Pérdidas EUR</th><th class="col num">Diferido EUR</th><th class="col num">Neto integrable</th></tr></thead>
+<thead><tr><th class="col">Valor</th><th class="col">ISIN</th><th class="col num">Dividendos brutos</th><th class="col num">Retenido</th><th class="col num">Ganancias EUR</th><th class="col num">Pérdidas EUR</th><th class="col num">Diferido EUR</th><th class="col num">Neto de transmisiones</th></tr></thead>
 <tbody>
 <tr class="data"><td class="cell">APPLE INC</td><td class="cell">US0378331005</td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">630,00</td><td class="cell num neg">-810,00</td><td class="cell num">360,00</td><td class="cell num neg">-180,00</td></tr>
 <tr class="total"><td class="cell">Total</td><td class="cell"></td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">630,00</td><td class="cell num neg">-810,00</td><td class="cell num">360,00</td><td class="cell num neg">-180,00</td></tr>
@@ -334,7 +334,7 @@ table { orphans: 3; widows: 3; }
 <tr class="data"><td class="cell">15/11/2026</td><td class="cell"></td><td class="cell">Venta</td><td class="cell num neg">-30</td><td class="cell num">100,00</td><td class="cell num">3.000,00</td><td class="cell num">0,00</td><td class="cell num">0,9000</td><td class="cell num">2.700,00</td><td class="cell num">2.070,00</td><td class="cell"></td><td class="cell num">2.070,00</td><td class="cell num">630,00</td><td class="cell num">0,00</td><td class="cell num">630,00</td><td class="cell"></td></tr>
 <tr class="lot"><td class="cell">20/04/2026</td><td class="cell"></td><td class="cell">Compra</td><td class="cell num">25</td><td class="cell num">80,00</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">2.250,00</td><td class="cell num">1.800,00</td><td class="cell num">1,000</td><td class="cell num">1.800,00</td><td class="cell num">450,00</td><td class="cell"></td><td class="cell"></td><td class="cell num">209</td></tr>
 <tr class="lot"><td class="cell">05/05/2026</td><td class="cell"></td><td class="cell">Compra</td><td class="cell num">5</td><td class="cell num">60,00</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">450,00</td><td class="cell num">270,00</td><td class="cell num">1,000</td><td class="cell num">270,00</td><td class="cell num">180,00</td><td class="cell"></td><td class="cell"></td><td class="cell num">194</td></tr>
-<tr class="subtotal"><td class="cell">Total del valor</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">10.800,00</td><td class="cell num">11.070,00</td><td class="cell"></td><td class="cell"></td><td class="cell num neg">-270,00</td><td class="cell num">360,00</td><td class="cell num">90,00</td><td class="cell"></td></tr>
+<tr class="subtotal"><td class="cell">Total del valor</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">10.800,00</td><td class="cell num">11.070,00</td><td class="cell"></td><td class="cell num">11.070,00</td><td class="cell num neg">-270,00</td><td class="cell num">360,00</td><td class="cell num">90,00</td><td class="cell"></td></tr>
 </tbody>
 </table>
 <div class="note info">Totales del ejercicio: resultado integrable de las transmisiones <b>90,00</b> EUR y pérdidas diferidas por valores homogéneos <b>360,00</b> EUR.</div>
@@ -393,18 +393,18 @@ table { orphans: 3; widows: 3; }
 <thead><tr><th class="col">Valor</th><th class="col">ISIN</th><th class="col">Fecha de adquisición</th><th class="col">ID</th><th class="col">Origen</th><th class="col num">Cantidad</th><th class="col num">Precio</th><th class="col num">Coste EUR</th></tr></thead>
 <tbody>
 <tr class="data"><td class="cell">APPLE INC</td><td class="cell">US0378331005</td><td class="cell">05/05/2026</td><td class="cell"></td><td class="cell">Compra</td><td class="cell num">10</td><td class="cell num">60,00 USD</td><td class="cell num">540,00</td></tr>
-<tr class="subtotal"><td class="cell">Total — APPLE INC</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">10</td><td class="cell"></td><td class="cell num">540,00</td></tr>
+<tr class="subtotal"><td class="cell">Total — APPLE INC (AAPL)</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">10</td><td class="cell"></td><td class="cell num">540,00</td></tr>
 <tr class="total"><td class="cell">Total</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell num">540,00</td></tr>
 </tbody>
 </table>
 </section>
 <section id="compensacion">
 <h2>Compensación y saldos pendientes</h2>
-<p>Un saldo negativo de la base del ahorro sólo puede compensarse en los <b>4 años</b> siguientes al ejercicio en que se generó, así que el año de origen forma parte del dato: «Aplicable hasta» es el último ejercicio en cuya declaración cabe usarlo. Lo que queda pendiente se arrastra a la configuración del ejercicio siguiente.</p>
+<p>Un saldo negativo de la base del ahorro sólo puede compensarse en los <b>4 años</b> siguientes al ejercicio en que se generó, así que el año de origen forma parte del dato: «Aplicable hasta» es el último ejercicio en cuya declaración cabe usarlo, y lo que no se aplicó para entonces pasa a «Caducado». Cada fila cumple saldo inicial − aplicado − caducado = pendiente. Lo que queda pendiente se arrastra a la configuración del ejercicio siguiente.</p>
 <table>
-<thead><tr><th class="col">Grupo</th><th class="col">Año de origen</th><th class="col num">Saldo inicial</th><th class="col num">Aplicado</th><th class="col num">Pendiente</th><th class="col">Aplicable hasta</th></tr></thead>
+<thead><tr><th class="col">Grupo</th><th class="col">Año de origen</th><th class="col num">Saldo inicial</th><th class="col num">Aplicado</th><th class="col num">Caducado</th><th class="col num">Pendiente</th><th class="col">Aplicable hasta</th></tr></thead>
 <tbody>
-<tr class="data"><td class="cell">Ganancias</td><td class="cell">2026</td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">180,00</td><td class="cell">2030</td></tr>
+<tr class="data"><td class="cell">Ganancias</td><td class="cell">2026</td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">0,00</td><td class="cell num">180,00</td><td class="cell">2030</td></tr>
 </tbody>
 </table>
 <h3>Configuración para el ejercicio 2027</h3>

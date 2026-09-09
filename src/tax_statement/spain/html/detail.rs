@@ -349,8 +349,9 @@ pub(super) fn sales(out: &mut String, statement: &SpanishTaxStatement, _meta: &R
     columns.push(col("Días", Align::Right));
 
     let width = columns.len();
-    // Column indexes of the four totalled money columns, which move with the optional pair.
+    // Column indexes of the totalled money columns, which move with the optional pair.
     let (proceeds_at, cost_at) = (8, 9);
+    let actualized_at = 11;
     let (result_at, deferred_at, integrable_at) = if actualizes {
         (12, 13, 14)
     } else {
@@ -377,7 +378,8 @@ pub(super) fn sales(out: &mut String, statement: &SpanishTaxStatement, _meta: &R
             security_heading(out, name, isin, symbol);
 
             let mut rows = Vec::new();
-            let (mut proceeds, mut cost, mut result, mut deferred, mut integrable) = (
+            let (mut proceeds, mut cost, mut actualized, mut result, mut deferred, mut integrable) = (
+                Decimal::ZERO,
                 Decimal::ZERO,
                 Decimal::ZERO,
                 Decimal::ZERO,
@@ -390,6 +392,7 @@ pub(super) fn sales(out: &mut String, statement: &SpanishTaxStatement, _meta: &R
                 let entry = &statement.capital_gains[index];
                 proceeds += sale.proceeds_eur;
                 cost += sale.cost_basis_eur;
+                actualized += entry.actualized_cost_eur;
                 result += entry.fiscal_gain_loss;
                 deferred += entry.deferred_loss;
                 integrable += entry.integrable_amount;
@@ -450,17 +453,24 @@ pub(super) fn sales(out: &mut String, statement: &SpanishTaxStatement, _meta: &R
                 }
             }
 
+            // The actualized cost is the column the result is measured from, so leaving it blank
+            // would make the bold row read as `ingreso − coste`, which is a different number: on
+            // the Gipuzkoa fixture 49.500 − 27.000 = 22.500 against a result of 19.692.
+            let mut totals = vec![
+                (proceeds_at, eur(proceeds)),
+                (cost_at, eur(cost)),
+                (result_at, eur(result)),
+                (deferred_at, eur(deferred)),
+                (integrable_at, eur(integrable)),
+            ];
+            if actualizes {
+                totals.push((actualized_at, eur(actualized)));
+            }
             rows.push(sum_row(
                 RowKind::Subtotal,
                 "Total del valor",
                 width,
-                &[
-                    (proceeds_at, eur(proceeds)),
-                    (cost_at, eur(cost)),
-                    (result_at, eur(result)),
-                    (deferred_at, eur(deferred)),
-                    (integrable_at, eur(integrable)),
-                ],
+                &totals,
             ));
             table(out, &columns, &rows);
         }
@@ -482,7 +492,7 @@ pub(super) fn sales(out: &mut String, statement: &SpanishTaxStatement, _meta: &R
         // carries the literal warning this would otherwise send every filer to look for.
         let pointer = match statement.regime {
             SpanishTaxRegime::Navarra => {
-                " El aviso literal del cálculo, con la norma aplicable, está en «Avisos y                  observaciones»."
+                " El aviso literal del cálculo, con la norma aplicable, está en «Avisos y observaciones»."
             }
             _ => "",
         };
@@ -807,7 +817,7 @@ pub(super) fn open_lots(
         h3(out, asset_class_label(*class));
         let mut rows = Vec::new();
         let mut class_cost = Decimal::ZERO;
-        for ((name, _symbol, isin), lots) in securities {
+        for ((name, symbol, isin), lots) in securities {
             let (mut quantity, mut cost) = (Decimal::ZERO, Decimal::ZERO);
             for lot in lots {
                 quantity += lot.quantity;
@@ -828,9 +838,11 @@ pub(super) fn open_lots(
                 ]));
             }
             class_cost += cost;
+            // Named by symbol as well: two tickers can share an ISIN-less name, and two blocks
+            // labelled "Total — {name}" would be indistinguishable.
             rows.push(sum_row(
                 RowKind::Subtotal,
-                &format!("Total — {name}"),
+                &format!("Total — {name} ({symbol})"),
                 columns.len(),
                 &[(5, qty(quantity)), (7, eur(cost))],
             ));

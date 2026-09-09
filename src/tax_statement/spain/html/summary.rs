@@ -40,6 +40,16 @@ fn pre(out: &mut String, text: &str) {
     );
 }
 
+/// How loudly a block of form caveats should be shown. The mapping writes them as one text for the
+/// CSV and the report, so the styling follows the words rather than the call site.
+fn note_class(text: &str) -> &'static str {
+    if text.contains("WARNING") {
+        "warn"
+    } else {
+        "info"
+    }
+}
+
 /// Section: Resumen para los formularios.
 pub(super) fn tax_forms(
     out: &mut String,
@@ -63,14 +73,9 @@ pub(super) fn tax_forms(
     // The source note travels verbatim with the mapping, so the report, the CSV and the console
     // cannot end up citing different specimens of the same form.
     let caveats = mapping.header_lines.join(" ");
-    let class = if caveats.contains("WARNING") {
-        "warn"
-    } else {
-        "info"
-    };
     note(
         out,
-        class,
+        note_class(&caveats),
         &format!("{} — {}", b(mapping.title), escape(&caveats)),
     );
 
@@ -100,7 +105,8 @@ pub(super) fn tax_forms(
     table(out, &columns, &rows);
 
     if !mapping.footer_lines.is_empty() {
-        note(out, "info", &escape(&mapping.footer_lines.join(" ")));
+        let footer = mapping.footer_lines.join(" ");
+        note(out, note_class(&footer), &escape(&footer));
     }
 
     if !statement.total_foreign_withholding.is_zero() {
@@ -175,7 +181,9 @@ pub(super) fn tax_computation(
     // The ceiling and what it disallowed are figures *about* the deducted fees, not further
     // amounts to subtract: the deduction row above is already net of them. They go beside the
     // table rather than in its column, which has to add up to the total under it.
-    if let Some(cap) = statement.custody_fee_cap {
+    if let Some(cap) = statement.custody_fee_cap
+        && statement.total_capped_fees > Decimal::ZERO
+    {
         note(
             out,
             "info",
@@ -382,14 +390,17 @@ pub(super) fn tax_computation(
     ];
     table(out, &AMOUNT_COLUMNS, &rows);
 
+    // The section's prose promises that what subtracts carries a minus, and the two rows above
+    // are positive magnitudes on the statement. Printing them unsigned here would put the same
+    // figure on the page twice with opposite signs, since «Resumen por actividad» negates them.
     let informational = [
         (
             "Intereses pagados sobre saldo prestado (no deducibles)",
-            statement.total_paid_interest,
+            -statement.total_paid_interest,
         ),
         (
             "Comisiones informativas (no deducibles)",
-            statement.total_informational_fees,
+            -statement.total_informational_fees,
         ),
         (
             "Resultados de divisa sobre saldo prestado (excluidos — revisión manual)",
@@ -566,6 +577,17 @@ pub(super) fn by_activity(
     informational_fees.add(-statement.total_informational_fees);
     extra.push(informational_fees);
 
+    // The regime's ceiling splits the year's qualifying fees in two, and only the deducted half is
+    // in the row above. Without this one the table's fee rows add up to less than «Movimientos de
+    // efectivo» shows, by exactly the amount the ceiling disallowed.
+    let mut capped = ActivityRow::new(
+        "Efectivo",
+        "Comisiones excluidas por el límite del 3% (art. 32.1.a)",
+        Group::Informational,
+    );
+    capped.add(-statement.total_capped_fees);
+    extra.push(capped);
+
     let mut fx = ActivityRow::new("Divisa", "Conversiones sobre saldo propio", Group::Gyp);
     for entry in &statement.fx_gains {
         fx.add(entry.amount_eur);
@@ -593,8 +615,8 @@ pub(super) fn by_activity(
     }
 
     let mut grants = ActivityRow::new(
-        "Acciones",
-        "Adjudicaciones (vesting) — base general",
+        "Adjudicaciones",
+        "Vesting de acciones — base general",
         Group::Informational,
     );
     for entry in &statement.stock_grants {
@@ -751,9 +773,12 @@ pub(super) fn by_security(
         out,
         &format!(
             "Desglose por valor de todo lo que el ejercicio integró: {} y {}. Sirve para contrastar \
-             el informe contra sus propios extractos posición a posición.",
+             el informe contra sus propios extractos posición a posición. Las dos mitades van a \
+             grupos distintos de la base del ahorro, así que la última columna cierra {}: los \
+             dividendos están en su propia columna y se integran aparte.",
             b("dividendos y sus retenciones"),
-            b("resultados de las transmisiones")
+            b("resultados de las transmisiones"),
+            b("sólo las transmisiones")
         ),
     );
 
@@ -765,7 +790,7 @@ pub(super) fn by_security(
         col("Ganancias EUR", Align::Right),
         col("Pérdidas EUR", Align::Right),
         col("Diferido EUR", Align::Right),
-        col("Neto integrable", Align::Right),
+        col("Neto de transmisiones", Align::Right),
     ];
 
     for (class, securities) in &groups {
@@ -1071,8 +1096,10 @@ pub(super) fn compensation(
         &format!(
             "Un saldo negativo de la base del ahorro sólo puede compensarse en los {} \
              siguientes al ejercicio en que se generó, así que el año de origen forma parte del \
-             dato: «Aplicable hasta» es el último ejercicio en cuya declaración cabe usarlo. Lo que \
-             queda pendiente se arrastra a la configuración del ejercicio siguiente.",
+             dato: «Aplicable hasta» es el último ejercicio en cuya declaración cabe usarlo, y lo \
+             que no se aplicó para entonces pasa a «Caducado». Cada fila cumple saldo inicial − \
+             aplicado − caducado = pendiente. Lo que queda pendiente se arrastra a la \
+             configuración del ejercicio siguiente.",
             b(&format!("{CARRYFORWARD_YEARS} años"))
         ),
     );
@@ -1083,9 +1110,16 @@ pub(super) fn compensation(
             col("Año de origen", Align::Left),
             col("Saldo inicial", Align::Right),
             col("Aplicado", Align::Right),
+            col("Caducado", Align::Right),
             col("Pendiente", Align::Right),
             col("Aplicable hasta", Align::Left),
         ];
+        // A vintage expires whole, and always the one that ran out of years: `expiring_after`
+        // reads exactly `filing_year - CARRYFORWARD_YEARS`. Putting the amount on that row keeps
+        // `inicial - aplicado - caducado = pendiente` true of every line; a separate row would
+        // have to borrow another column to show it, and the only one free is Pendiente, which
+        // means the opposite.
+        let expiring_vintage = statement.year - CARRYFORWARD_YEARS;
         let mut rows = Vec::new();
         for (group, prior, applied, next, expired) in groups {
             let years: BTreeSet<i32> = prior
@@ -1103,23 +1137,19 @@ pub(super) fn compensation(
                     .copied()
                     .unwrap_or_default();
                 let pending = next.balances().get(&origin).copied().unwrap_or_default();
+                let lost = if origin == expiring_vintage {
+                    expired
+                } else {
+                    Decimal::ZERO
+                };
                 rows.push(Row::data(vec![
                     Cell::text(group),
                     Cell::text(origin.to_string()),
                     Cell::num(eur(opening)),
                     Cell::num(eur(used)),
+                    Cell::num(eur(lost)),
                     Cell::num(eur(pending)),
                     Cell::text((origin + CARRYFORWARD_YEARS).to_string()),
-                ]));
-            }
-            if expired > Decimal::ZERO {
-                rows.push(Row::data(vec![
-                    Cell::text(group),
-                    Cell::text("caducado"),
-                    Cell::empty(),
-                    Cell::empty(),
-                    Cell::num(eur(expired)),
-                    Cell::text("—"),
                 ]));
             }
         }

@@ -96,8 +96,10 @@ const SECTIONS: &[Section<SpanishTaxStatement>] = &[
         render: detail::fx,
     },
     Section {
+        // The heading the section prints carries the year and, when the statement ends earlier,
+        // the statement's own last date; the index cannot, so it names the concept alone.
         id: "posiciones-abiertas",
-        title: "Posiciones abiertas a 31/12",
+        title: "Posiciones abiertas al cierre del ejercicio",
         render: detail::open_lots,
     },
     Section {

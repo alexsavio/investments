@@ -436,14 +436,15 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
     } else {
         vec![
             format!(
-                "WARNING: casilla {} is the acciones-cotizadas block. The figure above includes €{}                  of foreign-currency",
+                "WARNING: casilla {} is the acciones-cotizadas block. The figure above includes €{} of",
                 modelo_100::LISTED_CAPITAL_GAINS,
                 super::format_eur(statement.total_fx_result)
             ),
-            "conversion results, which are transmissions of a different kind of element and belong              in the block for"
+            "foreign-currency conversion results, which are transmissions of a different kind of"
                 .to_owned(),
-            "otros elementos patrimoniales. Split them by hand before entering either one."
+            "element and belong in the block for otros elementos patrimoniales. Split them by hand"
                 .to_owned(),
+            "before entering either one.".to_owned(),
         ]
     };
 

@@ -779,3 +779,158 @@ fn a_navarra_year_over_the_limit_says_what_the_relief_was_measured_on() {
         );
     }
 }
+
+/// The FIFO subtotal has to reconcile the way the rows above it do. Under Gipuzkoa the result is
+/// measured from the *actualized* cost, so a blank total in that column makes the bold row read as
+/// `ingreso − coste`, which is a different number.
+#[test]
+fn the_fifo_subtotal_totals_the_column_the_result_is_measured_from() {
+    let statement = run_pipeline("fifo", 2026, SpanishTaxRegime::Gipuzkoa);
+    let proceeds: Decimal = statement
+        .capital_gains
+        .iter()
+        .map(|entry| entry.proceeds_eur)
+        .sum();
+    let actualized: Decimal = statement
+        .capital_gains
+        .iter()
+        .map(|entry| entry.actualized_cost_eur)
+        .sum();
+    let result: Decimal = statement
+        .capital_gains
+        .iter()
+        .map(|entry| entry.fiscal_gain_loss)
+        .sum();
+    assert_eq!(proceeds - actualized, result);
+    // The unactualized cost would give a different figure, which is the whole point.
+    let cost: Decimal = statement
+        .capital_gains
+        .iter()
+        .map(|entry| entry.cost_eur)
+        .sum();
+    assert_ne!(proceeds - cost, result);
+
+    let html = render(&statement);
+    assert!(
+        html.contains(&format!(">{}<", eur(actualized))),
+        "the actualized-cost total {} is missing from the subtotal row",
+        eur(actualized)
+    );
+}
+
+/// An expired balance is not pending. It gets its own column on the vintage that ran out of years,
+/// so every row closes: saldo inicial − aplicado − caducado = pendiente.
+#[test]
+fn an_expired_vintage_is_not_shown_as_pending() {
+    let mut config = spain_config(SpanishTaxRegime::Gipuzkoa);
+    let spain = config.spain.as_mut().unwrap();
+    spain.loss_carryforward.gyp.insert(2021, dec!(4000));
+    spain.loss_carryforward.gyp.insert(2023, dec!(1000));
+
+    let statement = run_pipeline_with_config("fifo", 2025, &config);
+    assert_eq!(statement.gyp_expired, dec!(4000));
+
+    let html = render(&statement);
+    assert!(html.contains(">Caducado<"));
+    // The old shape put the lost amount in a row of its own labelled only "caducado".
+    assert!(!html.contains(">caducado<"));
+
+    // Both vintages close, and only the one with years left is pending.
+    for (origin, opening, lost, pending) in [
+        (2021, dec!(4000), dec!(4000), dec!(0)),
+        (2023, dec!(1000), dec!(0), dec!(1000)),
+    ] {
+        assert_eq!(opening - dec!(0) - lost, pending, "vintage {origin}");
+    }
+    assert_eq!(statement.gyp_ledger_next.balances().get(&2021), None);
+    assert_eq!(statement.gyp_ledger_next.balances()[&2023], dec!(1000));
+}
+
+/// A figure printed in two sections must carry the same sign in both. The informational amounts are
+/// positive magnitudes on the statement, and both sections subtract them.
+#[test]
+fn the_informational_amounts_carry_one_sign() {
+    // Gipuzkoa deducts no fee at all (NF 3/2014 art. 39 is a closed list), so the whole charge is
+    // informational and reaches both sections.
+    let statement = run_pipeline("income", 2026, SpanishTaxRegime::Gipuzkoa);
+    assert!(statement.total_informational_fees > dec!(0));
+
+    let html = render(&statement);
+    let informational = eur(-statement.total_informational_fees);
+    assert!(
+        html.matches(&format!(">{informational}<")).count() >= 2,
+        "the informational fees should read {informational} in both sections"
+    );
+    assert!(!html.contains(&format!(">{}<", eur(statement.total_informational_fees))));
+}
+
+/// The ceiling splits the year's qualifying fees in two, and the activity table promises every
+/// operation. Without a row for the disallowed half it adds up to less than the cash bookings by
+/// exactly that amount.
+#[test]
+fn the_capped_half_of_a_fee_reaches_the_activity_table() {
+    let statement = run_pipeline("income", 2026, SpanishTaxRegime::Navarra);
+    assert_eq!(statement.total_deductible_fees, dec!(27));
+    assert_eq!(statement.total_capped_fees, dec!(18));
+
+    let html = render(&statement);
+    assert!(html.contains("Comisiones excluidas por el límite del 3%"));
+    assert!(html.contains(&format!(">{}<", eur(-statement.total_capped_fees))));
+
+    // The three fee rows now account for every euro the bookings section totals.
+    use super::super::report::BookingKind;
+    let booked: Decimal = statement
+        .report
+        .bookings
+        .iter()
+        .filter(|row| row.kind == BookingKind::Fee)
+        .map(|row| row.amount_eur)
+        .sum();
+    assert_eq!(
+        booked,
+        -(statement.total_deductible_fees
+            + statement.total_capped_fees
+            + statement.total_informational_fees)
+    );
+
+    // A year the ceiling had nothing to bite on says nothing at all: no fees, so nothing capped.
+    let slack = run_pipeline("fifo", 2026, SpanishTaxRegime::Navarra);
+    assert_eq!(slack.total_capped_fees, dec!(0));
+    assert!(
+        slack.custody_fee_cap.is_some(),
+        "the regime still sets a ceiling"
+    );
+    let slack = render(&slack);
+    assert!(!slack.contains("El límite excluyó"));
+    assert!(!slack.contains("Comisiones excluidas por el límite"));
+}
+
+/// The Modelo 100 footer is the most actionable line in the section — it tells the filer to split a
+/// currency result out of a casilla by hand. It must not be styled as an aside.
+#[test]
+fn a_form_footer_that_warns_is_styled_as_a_warning() {
+    use super::super::statement::FxGainEntry;
+
+    let mut statement = run_pipeline("fifo", 2026, SpanishTaxRegime::Comun);
+    statement.fx_gains.push(FxGainEntry {
+        date: Date::from_ymd_opt(2026, 3, 1).unwrap(),
+        currency: "USD".to_owned(),
+        acquisition_date: Date::from_ymd_opt(2026, 1, 1).unwrap(),
+        amount_eur: dec!(400),
+        activity_code: "FOREX".to_owned(),
+    });
+    statement.calculate_totals();
+
+    let html = render(&statement);
+    let footer = html
+        .find("acciones-cotizadas block")
+        .expect("the footer warning should render");
+    let note_open = html[..footer]
+        .rfind("<div class=\"note ")
+        .expect("the footer should be a note");
+    assert!(
+        html[note_open..].starts_with("<div class=\"note warn\">"),
+        "{}",
+        &html[note_open..note_open + 40]
+    );
+}
