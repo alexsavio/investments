@@ -13,7 +13,8 @@ use crate::types::Decimal;
 
 use super::forms::{self, FormMapping};
 use super::statement::{
-    CapitalGainEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry, InterestEntry,
+    CapitalGainEntry, CashGrantEntry, CorporateActionEntry, DividendEntry, FeeEntry, FxGainEntry,
+    InterestEntry,
     SpanishLotDetail, SpanishTaxStatement, StockGrantEntry, WashSaleReintegrationEntry,
 };
 
@@ -60,6 +61,10 @@ impl CsvFormatter {
 
         for entry in &statement.stock_grants {
             Self::write_stock_grant_row(writer, entry)?;
+        }
+
+        for entry in &statement.cash_grants {
+            Self::write_cash_grant_row(writer, entry)?;
         }
 
         for entry in &statement.corporate_actions {
@@ -272,6 +277,22 @@ impl CsvFormatter {
             Self::escape_csv(&entry.description),
             Self::format_decimal(entry.quantity),
             entry.value_eur.map(Self::format_decimal).unwrap_or_default(),
+            Self::escape_csv(&entry.notes)
+        )?;
+        Ok(())
+    }
+
+    /// A cash award. The `savings_group` column stays empty: it never reaches either group.
+    fn write_cash_grant_row<W: Write>(
+        writer: &mut W,
+        entry: &CashGrantEntry,
+    ) -> GenericResult<()> {
+        writeln!(
+            writer,
+            "Cash Grant,{},,,,{},,,,,,{},,,,,,,{}",
+            Self::format_date(entry.date),
+            Self::escape_csv(&entry.description),
+            Self::format_decimal(entry.amount_eur),
             Self::escape_csv(&entry.notes)
         )?;
         Ok(())
@@ -921,6 +942,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use super::super::statement::CashGrantEntry;
     use crate::taxes::spain::SpanishTaxRegime;
     use crate::taxes::spain::carryforward::LossLedger;
     use crate::taxes::spain::compensation::CrossOffset;
@@ -1064,6 +1086,17 @@ mod tests {
                         description: "NVIDIA CORP".to_string(),
                         quantity: dec!(10),
                         value_eur: Some(dec!(1800)),
+                        notes: "GENERAL base".to_string(),
+                    },
+                )
+            }),
+            render(|w| {
+                CsvFormatter::write_cash_grant_row(
+                    w,
+                    &CashGrantEntry {
+                        date: date(),
+                        description: "Referral bonus".to_string(),
+                        amount_eur: dec!(120),
                         notes: "GENERAL base".to_string(),
                     },
                 )
@@ -1270,6 +1303,34 @@ mod tests {
 
     /// A deductible fee is marked as reaching the RCM group; a non-deductible one carries no group,
     /// so a consumer cannot mistake an informational row for a deduction.
+    /// A cash award is neither RCM nor a ganancia patrimonial: it belongs to the general base, so
+    /// its row carries no savings group at all. Only the Sber reader ever builds one today, so no
+    /// fixture can reach this path — the row is built directly, as the rest of this module does.
+    #[test]
+    fn a_cash_grant_carries_no_savings_group() {
+        let row = render(|w| {
+            CsvFormatter::write_cash_grant_row(
+                w,
+                &CashGrantEntry {
+                    date: date(),
+                    description: "Referral bonus".to_string(),
+                    amount_eur: dec!(120),
+                    notes: "GENERAL base".to_string(),
+                },
+            )
+        });
+        let fields: Vec<&str> = row.split(',').collect();
+        assert_eq!(fields.len(), COLUMNS);
+        assert_eq!(fields[0], "Cash Grant");
+        assert_eq!(fields[5], "Referral bonus");
+        // The amount lands in gross_amount_eur, and nothing lands in a group column.
+        assert_eq!(fields[11], "120.00");
+        assert_eq!(fields[17], "");
+        for taxed in [7, 12, 13, 14] {
+            assert_eq!(fields[taxed], "", "column {taxed} must stay empty");
+        }
+    }
+
     #[test]
     fn fee_group_reflects_deductibility() {
         let fee = |deductible| FeeEntry {

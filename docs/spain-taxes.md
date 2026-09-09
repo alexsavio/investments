@@ -959,12 +959,12 @@ adds on top of the ones above it. Only the total is order-independent.
    solely-owned and jointly-held holdings as distinct; the tool does not model joint ownership.
 4. **Modelo 720** (informational declaration of assets abroad) is a separate obligation. This tool
    never computes it — check whether you are required to file it.
-5. **Cash grants are not read at all.** A broker statement can carry a cash award (`CashGrant`),
-   which the German pipeline reports as sonstige Einkünfte. The Spanish one never looks at the
-   field: such a payment belongs to the **general** base, not the savings base, whether it is
-   employment income or a ganancia patrimonial no derivada de transmisión. A vest is reported even
-   though it is equally out of scope, so this is an inconsistency rather than a decision — a
-   statement containing one produces a return that says nothing about it. Declare it separately.
+5. **Cash awards are reported, never computed.** A `CashGrant` belongs to the **general** base
+   whether it is employment income or a ganancia patrimonial no derivada de transmisión, so it never
+   touches the savings base. It is reported anyway, like a vest, so the payment is not silently
+   absent from the year. Declare it separately. In practice only the Sber reader builds one today,
+   so an Interactive Brokers statement cannot produce the row at all — the path exists so that a
+   reader that starts to produce them does not have its income quietly dropped.
 6. **No Vorabpauschale equivalent.** Accumulating funds simply defer taxation until disposal.
 7. **Fund traspaso deferral does not apply at a foreign broker.** The rollover regime for Spanish
    collective-investment institutions requires the transfer to run through the Spanish system.
