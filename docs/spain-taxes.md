@@ -79,18 +79,21 @@ Your portfolio configuration is unchanged from any other jurisdiction.
 ## Usage
 
 ```bash
-investments tax-statement <portfolio> <year> <output.csv>
+investments tax-statement <portfolio> <year> <output.csv|output.html>
 ```
 
 For example:
 
 ```bash
 investments tax-statement ib 2026 spanish-tax-2026.csv
+investments tax-statement ib 2026 spanish-tax-2026.html
 ```
 
 The command reads every statement in the portfolio, replays the whole trade history through FIFO and
-the valores-homogéneos rule, computes the year's savings base, and writes the CSV plus a console
-summary. The output path is an optional positional argument: without it you get the summary alone.
+the valores-homogéneos rule, computes the year's savings base, and writes the output file plus a
+console summary. The output path is an optional positional argument: without it you get the summary
+alone. The extension picks the format: `.html` is the printable report described below, anything
+else the CSV.
 
 Currency conversion uses **ECB reference rates**, selected automatically from the jurisdiction.
 
@@ -769,9 +772,31 @@ Two caveats the CSV states as warnings:
 
 For **Territorio Común** the rows carry the ejercicio-2025 numbers read from Anexo I of the Orden
 HAC/277/2026 **consultation draft** — interest 0027, dividends 0029, gastos de administración y
-depósito 0037, ganancias por transmisión de acciones cotizadas 0326-0340, base liquidable del ahorro
-0460, deducción por doble imposición internacional 0588. The AEAT publishes a filing year's form in
-the spring of the following one, so no enacted numbering exists yet.
+depósito 0037, ganancias por transmisión de acciones cotizadas 0326-0340, base **imponible** del
+ahorro 0460, deducción por doble imposición internacional 0588. The AEAT publishes a filing year's
+form in the spring of the following one, so no enacted numbering exists yet.
+
+Two of those rows carry a caveat the number alone does not:
+
+- **0460 is the base imponible, not the liquidable.** LIRPF art. 50 puts the base liquidable del
+  ahorro in casilla **0510**: 0460 minus whatever is left of the reducciones por tributación
+  conjunta, pensiones compensatorias y anualidades por alimentos. The tool models none of those, so
+  what it computes is 0460, and the label says so — a row labelled "liquidable" would send a filer
+  one box further down the form than the figure belongs. Gipuzkoa's casilla 33 and Navarra's 815 do
+  say *liquidable*, because their own forms use that word for the box at that point.
+- **0326-0340 is the acciones-cotizadas block** (0327 one row per operation, 0339 the sum of gains,
+  0340 the sum of losses). The tool posts the ganancias group's net figure, which also contains any
+  foreign-currency conversion result — a transmisión under LIRPF art. 33, but of a different kind of
+  element, belonging in apartado F2's block for "otros elementos patrimoniales", **casillas 1624
+  onwards, clave 5**. The AEAT scopes that block by exclusion: it does not reach "acciones admitidas
+  a negociación en mercados oficiales que deben declararse en apartados anteriores", which is
+  0326-0340. A Común year with a currency result therefore prints a warning naming the amount to
+  split out and the block it goes to; the tool does not split it, and does not name the boxes inside
+  that block — which one takes which figure depends on the clave and the row, and no verified
+  mapping for that exists here. Sending a filer to the right block to read its labels beats sending
+  them to a box that might be the wrong one. Gipuzkoa's
+  casilla 30 and Navarra's 706 are labelled "por transmisiones" without narrowing to shares, so the
+  same figure is at home there.
 
 For **Navarra** the rows carry the ejercicio-2025 numbers, read from the fully numbered Modelo F-93
 the Boletín Oficial de Navarra publishes as Anexo I of each campaign's Orden Foral (ejercicio 2025 =
@@ -831,6 +856,88 @@ its per-FIFO-lot `Lot` rows (so the actualization multiplication reads line by l
 3-column `summary_key,label,value_eur` block holding the group totals, the compensation, the
 carry-forward and deferral blocks, and the Modelo mapping. Comment lines start with `#`.
 
+## HTML report (printable, A4 landscape)
+
+Passing an `.html` output path instead of `.csv` writes a self-contained, printable report in
+Spanish, modelled on the annual summaries brokers hand out:
+
+```bash
+investments tax-statement ib 2026 spanish-tax-2026.html
+```
+
+The report contains, in order (sections with nothing to say are omitted):
+
+1. Title page with the regime, the four key figures, the disclaimer, the broker, the portfolio and
+   the statement period
+2. **Resumen para los formularios** — every casilla of the filer's own return (Modelo 109, Modelo
+   100 or Modelo F-93), with the specimen each number was read from and the retenciones casilla the
+   foreign withholding must *not* go in
+3. **Cálculo del impuesto** — the two groups, the compensation, the savings scale bracket by
+   bracket, the average rate and the double-taxation credit
+4. **Resumen por actividad y categoría** and **Ganancias y pérdidas por valor** — what each activity
+   and each security contributed, with the group it lands in
+5. **Movimientos de efectivo** — dividends, withholding, interest and fees in original currency with
+   the ECB rate
+6. **Retenciones en origen** — withholding per country with the treaty-capped credit
+7. **Ganancias y pérdidas patrimoniales (FIFO)** — one worksheet per disposal with the lots it
+   consumed and, under Gipuzkoa, each lot's actualization coefficient and actualized cost
+8. **Valores homogéneos** — the losses deferred this year, the ones reintegrated, and the ones still
+   blocked at 31 December
+9. **Operaciones con valores** — every buy and sell of the year in original currency
+10. **Diferencias de cambio** — the per-currency FIFO ledger with each realization's treatment
+11. **Posiciones abiertas a 31/12** — unsold purchase lots with their EUR cost
+12. **Compensación y saldos pendientes** — each vintage's opening balance, what the year applied and
+    what expires when, followed by the `taxes.spain` block the next return starts from
+13. **Relación de valores** — symbol, ISIN, name, country, currency and category
+14. **Avisos y observaciones** — the calculation warnings, the per-position notes, the vests, the
+    corporate actions and the method's limits
+
+All EUR amounts are the same figures as in the CSV and on the console (same rounding), in Spanish
+notation (`1.234,56`); dates are `dd/mm/yyyy` everywhere except the configuration block, which uses
+ISO because that is what the configuration reads.
+
+### Converting to PDF
+
+The page carries print CSS for A4 landscape (`@page`, repeated table headers, no row splits), so any
+Chromium-based tool renders it:
+
+```bash
+# Chrome / Chromium headless
+chromium --headless --print-to-pdf=spanish-tax-2026.pdf --no-pdf-header-footer spanish-tax-2026.html
+
+# Playwright (Node): page.pdf({ path, format: 'A4', landscape: true, preferCSSPageSize: true })
+
+# Gotenberg (the file must be named index.html)
+curl --request POST http://localhost:3000/forms/chromium/convert/html \
+  --form files=@index.html --form landscape=true --form preferCssPageSize=true \
+  -o spanish-tax-2026.pdf
+```
+
+### Caveats
+
+- The report is informational and does not replace the broker's official statements. Its own
+  "Método y límites" list names the obligations it leaves alone — the general base, **Modelo 720**
+  and the Impuesto sobre el Patrimonio — so a reader who never opens this document still learns of
+  them.
+- The **calculation warnings are in English**, shown verbatim under "Avisos del cálculo (texto
+  literal)". They are one text for the console, the CSV and the report, so translating them here
+  would let two surfaces say different things about the same figure.
+- The **Acciones / Fondos e IIC** split reads `taxes.etf_classification` by ISIN, a key otherwise
+  used by the German statement and optional here: no figure in the savings base depends on it. It
+  groups the report and flags the payers the €1,500 Gipuzkoa exemption does not reach.
+- The double-taxation credit uses the flat 15% treaty rate described above; there is no per-country
+  treaty table.
+- Open lots reflect the FIFO engine's view at the statement's last date; a statement extending past
+  31 December already has later sales deducted (the report says so).
+- The foreign-currency ledger **starts at zero**: no opening balance is carried in, so a statement
+  that begins with currency already in the account shows a borrowed balance that is not one.
+- The deferred-loss carry-out is a snapshot at 31 December. A repurchase window that closes after
+  the statement ends is named in the report, not settled by it.
+- Security names come from `instrument_names` in the portfolio config when set, otherwise from the
+  Flex export's `description`, otherwise the symbol. The CSV keeps using the configured name or the
+  bare symbol.
+- Derivatives are skipped, as for the CSV.
+
 ## Sell simulation
 
 `investments simulate-sell` prices each hypothetical disposal at what it **adds to the tax year**,
@@ -852,11 +959,17 @@ adds on top of the ones above it. Only the total is order-independent.
    solely-owned and jointly-held holdings as distinct; the tool does not model joint ownership.
 4. **Modelo 720** (informational declaration of assets abroad) is a separate obligation. This tool
    never computes it — check whether you are required to file it.
-5. **No Vorabpauschale equivalent.** Accumulating funds simply defer taxation until disposal.
-6. **Fund traspaso deferral does not apply at a foreign broker.** The rollover regime for Spanish
+5. **Cash grants are not read at all.** A broker statement can carry a cash award (`CashGrant`),
+   which the German pipeline reports as sonstige Einkünfte. The Spanish one never looks at the
+   field: such a payment belongs to the **general** base, not the savings base, whether it is
+   employment income or a ganancia patrimonial no derivada de transmisión. A vest is reported even
+   though it is equally out of scope, so this is an inconsistency rather than a decision — a
+   statement containing one produces a return that says nothing about it. Declare it separately.
+6. **No Vorabpauschale equivalent.** Accumulating funds simply defer taxation until disposal.
+7. **Fund traspaso deferral does not apply at a foreign broker.** The rollover regime for Spanish
    collective-investment institutions requires the transfer to run through the Spanish system.
-7. **Self-declaration.** The CSV is a working paper. You still file through Zergabidea or the AEAT.
-8. **Tax advisor.** Wash-sale timing, joint ownership, and cross-border residency questions should be
+8. **Self-declaration.** The CSV is a working paper. You still file through Zergabidea or the AEAT.
+9. **Tax advisor.** Wash-sale timing, joint ownership, and cross-border residency questions should be
    reviewed with a qualified adviser.
 
 ### Navarra: what this tool does not compute

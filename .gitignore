@@ -1,8 +1,10 @@
 /target
 /tests/retest/target
 /config.yaml
-# Generated German tax statement CSVs contain real personal trading data.
+# Generated tax statements and reports contain real personal trading data.
 /german-tax-*.csv
 /german-tax-*.html
+/spanish-tax-*.csv
+/spanish-tax-*.html
 # Git worktrees created by coding agents; never part of the tree itself.
 .claude/worktrees/

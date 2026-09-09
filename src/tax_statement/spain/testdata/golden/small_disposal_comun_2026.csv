@@ -46,5 +46,5 @@ MODELO_100_0027,Intereses de cuentas y depósitos (rendimientos del capital mobi
 MODELO_100_0029,Dividendos y participaciones en beneficios (excluida la renta exenta),0.00
 MODELO_100_0037,Gastos de administración y depósito (art. 26.1.a),0.00
 MODELO_100_0326_0340,Ganancias y pérdidas por transmisión de acciones cotizadas (casillas 0326-0340),1170.00
-MODELO_100_0460,Base liquidable del ahorro (tras compensación),1170.00
+MODELO_100_0460,Base imponible del ahorro (tras compensación) — la base liquidable es la casilla 0510 y resta el remanente de reducciones que esta herramienta no calcula,1170.00
 MODELO_100_0588,Deducción por doble imposición internacional,0.00

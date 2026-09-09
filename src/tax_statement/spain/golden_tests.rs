@@ -1,12 +1,12 @@
-//! Golden-CSV regression tests.
+//! Golden regression tests for both emitted artefacts: the CSV statement and the printable report.
 //!
-//! Pins the complete emitted statement, byte for byte, for a set of committed fixtures under every
-//! regime, so any unintended change to a value, a label, a row order or a banner shows up as a diff
-//! in `cargo test` rather than in a filer's return.
+//! Pins each of them, byte for byte, for a set of committed fixtures under every regime, so any
+//! unintended change to a value, a label, a row order or a banner shows up as a diff in
+//! `cargo test` rather than in a filer's return.
 //!
 //! Every golden under `testdata/golden/` is produced by this file from a committed synthetic
-//! fixture under `testdata/`, through the same `compute_tax_year` → `CsvFormatter::write` path the
-//! binary uses. Nothing here reads a real broker statement, so the corpus is safe to commit.
+//! fixture under `testdata/`, through the same `compute_tax_year` → writer path the binary uses.
+//! Nothing here reads a real broker statement, so the corpus is safe to commit.
 //!
 //! Regenerate with `UPDATE_GOLDEN=1 cargo test --lib spain::golden_tests`; see
 //! [`crate::tax_statement::golden`].
@@ -19,19 +19,23 @@ use crate::broker_statement::{BrokerStatement, ReadingStrictness};
 use crate::config::{Config, PortfolioConfig};
 use crate::core::{EmptyResult, GenericResult};
 use crate::currency::converter::{CurrencyConverter, CurrencyConverterBackend};
+use crate::instruments::EtfClassification;
 use crate::tax_statement::golden::GoldenCorpus;
 use crate::taxes::spain::SpanishTaxRegime;
 use crate::taxes::{SpanishTaxConfig, TaxConfig};
-use crate::time::{self, Date};
+use crate::time::{self, Date, DateTime, Period};
 use crate::types::Decimal;
 
-use super::CsvFormatter;
+use super::{CsvFormatter, HtmlReport, ReportMeta};
 
 /// Fixed EUR conversion backend: every non-EUR currency converts to EUR at 0.9, independent of
 /// date. Duplicated from the sibling `tests` module, which keeps it private; ~20 test-only lines
 /// are cheaper than a shared test-utils module both modules would then have to agree on.
 struct FixedEurBackend {
     today: Date,
+    /// Optional revaluation: from this date on, the rate becomes the second element. Without it
+    /// every date shares one rate, so no foreign-currency result can ever be realized.
+    revaluation: Option<(Date, Decimal)>,
 }
 
 impl CurrencyConverterBackend for FixedEurBackend {
@@ -47,19 +51,40 @@ impl CurrencyConverterBackend for FixedEurBackend {
         &self,
         from: &str,
         to: &str,
-        _date: Date,
+        date: Date,
     ) -> GenericResult<(Option<Decimal>, Option<Decimal>)> {
         assert_eq!(to, "EUR", "the Spanish pipeline only ever converts to EUR");
         match from {
             "EUR" => Ok((None, None)),
-            "USD" => Ok((Some(dec!(0.9)), None)),
+            "USD" => Ok((Some(self.rate_on(date)), None)),
             other => Err!("fixture converter has no rate for {other}"),
         }
     }
 }
 
+impl FixedEurBackend {
+    fn rate_on(&self, date: Date) -> Decimal {
+        match self.revaluation {
+            Some((from, rate)) if date >= from => rate,
+            _ => dec!(0.9),
+        }
+    }
+}
+
 fn converter() -> CurrencyConverter {
-    CurrencyConverter::new_with_backend(Box::new(FixedEurBackend { today: time::today() }))
+    CurrencyConverter::new_with_backend(Box::new(FixedEurBackend {
+        today: time::today(),
+        revaluation: None,
+    }))
+}
+
+/// A converter whose USD rate steps from 0.9 to 1.0 on 1 June 2026, so a balance held across that
+/// date realizes a computable foreign-currency result.
+fn revaluing_converter() -> CurrencyConverter {
+    CurrencyConverter::new_with_backend(Box::new(FixedEurBackend {
+        today: time::today(),
+        revaluation: Some((Date::from_ymd_opt(2026, 6, 1).unwrap(), dec!(1))),
+    }))
 }
 
 fn read_fixture(name: &str) -> BrokerStatement {
@@ -102,6 +127,26 @@ fn rcm_saldo_8000(config: &mut SpanishTaxConfig) {
     config.loss_carryforward.rcm.insert(2025, dec!(8000));
 }
 
+/// Per-case classification hook, for the report corpus only. The asset class reads
+/// `taxes.etf_classification`, an ISIN map that is not a Spanish key: no figure in the savings base
+/// turns on it, but the report groups by it, and the €1,500 exemption's caveat names the payers it
+/// marks as funds.
+type Classify = fn(&mut TaxConfig);
+
+fn everything_is_a_share(_config: &mut TaxConfig) {}
+
+/// The fixture's *exempted* payer, classified as an equity fund; the other payer stays a share.
+///
+/// NF 3/2014 art. 9.24 does not reach distributions from instituciones de inversión colectiva, and
+/// a broker statement cannot tell one from a company dividend — so the report names the payers it
+/// has been told are funds. Only a payer the exemption actually reached is worth naming, which is
+/// this one: the fixture's other dividend is already out on the anti-abuse clause.
+fn the_exempted_payer_is_a_fund(config: &mut TaxConfig) {
+    config
+        .etf_classification
+        .insert("US0378331005".to_owned(), EtfClassification::Equity);
+}
+
 fn corpus() -> GoldenCorpus {
     GoldenCorpus::new(
         "src/tax_statement/spain/testdata/golden",
@@ -125,34 +170,89 @@ fn corpus() -> GoldenCorpus {
 ///   where the year's loss must survive it untouched.
 #[rstest]
 #[case::fifo_gipuzkoa(
-    "fifo_gipuzkoa_2026", "fifo", 2026, SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+    "fifo_gipuzkoa_2026",
+    "fifo",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances
+)]
 #[case::fifo_comun(
-    "fifo_comun_2026", "fifo", 2026, SpanishTaxRegime::Comun, no_opening_balances)]
+    "fifo_comun_2026",
+    "fifo",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances
+)]
 #[case::fifo_navarra_carried_saldo(
-    "fifo_navarra_2026_carried_saldo", "fifo", 2026, SpanishTaxRegime::Navarra, rcm_saldo_8000)]
+    "fifo_navarra_2026_carried_saldo",
+    "fifo",
+    2026,
+    SpanishTaxRegime::Navarra,
+    rcm_saldo_8000
+)]
 #[case::income_gipuzkoa(
-    "income_gipuzkoa_2026", "income", 2026, SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+    "income_gipuzkoa_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances
+)]
 #[case::income_comun(
-    "income_comun_2026", "income", 2026, SpanishTaxRegime::Comun, no_opening_balances)]
+    "income_comun_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances
+)]
 #[case::income_navarra(
-    "income_navarra_2026", "income", 2026, SpanishTaxRegime::Navarra, no_opening_balances)]
+    "income_navarra_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances
+)]
 #[case::wash_sale_multi_lot_gipuzkoa(
-    "wash_sale_multi_lot_gipuzkoa_2026", "wash_sale_multi_lot", 2026,
-    SpanishTaxRegime::Gipuzkoa, no_opening_balances)]
+    "wash_sale_multi_lot_gipuzkoa_2026",
+    "wash_sale_multi_lot",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances
+)]
 #[case::cross_offset_comun(
-    "cross_offset_comun_2026_saldo", "cross_offset", 2026, SpanishTaxRegime::Comun, rcm_saldo_2000)]
+    "cross_offset_comun_2026_saldo",
+    "cross_offset",
+    2026,
+    SpanishTaxRegime::Comun,
+    rcm_saldo_2000
+)]
 #[case::cross_offset_navarra(
-    "cross_offset_navarra_2026_saldo", "cross_offset", 2026,
-    SpanishTaxRegime::Navarra, rcm_saldo_2000)]
+    "cross_offset_navarra_2026_saldo",
+    "cross_offset",
+    2026,
+    SpanishTaxRegime::Navarra,
+    rcm_saldo_2000
+)]
 #[case::small_disposal_navarra(
-    "small_disposal_navarra_2026", "small_disposal", 2026,
-    SpanishTaxRegime::Navarra, no_opening_balances)]
+    "small_disposal_navarra_2026",
+    "small_disposal",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances
+)]
 #[case::small_disposal_comun(
-    "small_disposal_comun_2026", "small_disposal", 2026,
-    SpanishTaxRegime::Comun, no_opening_balances)]
+    "small_disposal_comun_2026",
+    "small_disposal",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances
+)]
 #[case::small_disposal_mixed_navarra(
-    "small_disposal_mixed_navarra_2026", "small_disposal_mixed", 2026,
-    SpanishTaxRegime::Navarra, no_opening_balances)]
+    "small_disposal_mixed_navarra_2026",
+    "small_disposal_mixed",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances
+)]
 fn emitted_statement_matches_its_golden(
     #[case] golden: &str,
     #[case] fixture: &str,
@@ -179,12 +279,172 @@ fn emitted_statement_matches_its_golden(
     corpus().assert(golden, "csv", &emitted);
 }
 
+/// A meta block with a constant `generated_at`, so the rendered report is reproducible. Everything
+/// else in it is fixed too: the renderer is a pure function of the statement and this block.
+fn fixed_meta(year: i32) -> ReportMeta {
+    ReportMeta {
+        year,
+        broker_name: "Interactive Brokers LLC".to_owned(),
+        portfolio_name: "ib".to_owned(),
+        account_id: Some("U1234567".to_owned()),
+        period: Period::new(
+            Date::from_ymd_opt(year, 1, 1).unwrap(),
+            Date::from_ymd_opt(year, 12, 31).unwrap(),
+        )
+        .unwrap(),
+        generated_at: DateTime::new(
+            Date::from_ymd_opt(2026, 1, 15).unwrap(),
+            crate::time::Time::from_hms_opt(12, 0, 0).unwrap(),
+        ),
+    }
+}
+
+/// The rendered report, byte for byte, over four of the fixtures above: one per regime, plus the
+/// deferral case whose section exists in no other.
+///
+/// - `fifo_gipuzkoa_2026` — the FIFO worksheets with their per-lot actualization coefficients.
+/// - `income_comun_2026` — the cash bookings, the withholding table and the credit.
+/// - `cross_offset_navarra_2026_saldo` — the compensation ledgers and the conditional F-93 boxes.
+/// - `wash_sale_multi_lot_gipuzkoa_2026` — the valores-homogéneos section and the carry-out block.
+/// - `fx_gain_gipuzkoa_2026` — the per-currency ledger, the widest table in the report and the one
+///   no other case reaches.
+/// - `income_navarra_2026` — the only case where the 3% fee ceiling actually bites, so the only one
+///   that renders the capped-fee row and the "Importes informativos" block.
+/// - `small_disposal_navarra_2026` — the €3,000 exemption row, which exists under one regime only.
+/// - `dividend_exemption_gipuzkoa_2026_fund` — one payer classified as a fund and one left as a
+///   share, so the only case that renders the "Fondos e IIC" grouping, keeps two classes apart, and
+///   names a payer the €1,500 exemption does not reach.
+/// - `wash_sale_split_gipuzkoa_2026` — a lot held across a 2-for-1 split, so the open-positions
+///   section shows a restated share count.
+#[rstest]
+#[case::fifo_gipuzkoa(
+    "fifo_gipuzkoa_2026",
+    "fifo",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    converter,
+    everything_is_a_share
+)]
+#[case::income_comun(
+    "income_comun_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances,
+    converter,
+    everything_is_a_share
+)]
+#[case::cross_offset_navarra(
+    "cross_offset_navarra_2026_saldo",
+    "cross_offset",
+    2026,
+    SpanishTaxRegime::Navarra,
+    rcm_saldo_2000,
+    converter,
+    everything_is_a_share
+)]
+#[case::wash_sale_multi_lot_gipuzkoa(
+    "wash_sale_multi_lot_gipuzkoa_2026",
+    "wash_sale_multi_lot",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    converter,
+    everything_is_a_share
+)]
+#[case::fx_gain_gipuzkoa(
+    "fx_gain_gipuzkoa_2026",
+    "fx_gain",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    revaluing_converter,
+    everything_is_a_share
+)]
+#[case::income_navarra(
+    "income_navarra_2026",
+    "income",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances,
+    converter,
+    everything_is_a_share
+)]
+#[case::small_disposal_navarra(
+    "small_disposal_navarra_2026",
+    "small_disposal",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances,
+    converter,
+    everything_is_a_share
+)]
+#[case::dividend_exemption_gipuzkoa_fund(
+    "dividend_exemption_gipuzkoa_2026_fund",
+    "dividend_exemption",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    converter,
+    the_exempted_payer_is_a_fund
+)]
+#[case::wash_sale_split_gipuzkoa(
+    "wash_sale_split_gipuzkoa_2026",
+    "wash_sale_split",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    converter,
+    everything_is_a_share
+)]
+fn rendered_report_matches_its_golden(
+    #[case] golden: &str,
+    #[case] fixture: &str,
+    #[case] year: i32,
+    #[case] regime: SpanishTaxRegime,
+    #[case] configure: Configure,
+    #[case] rates: fn() -> CurrencyConverter,
+    #[case] classify: Classify,
+) {
+    let mut config = spain_config(regime);
+    configure(config.spain.as_mut().unwrap());
+    classify(&mut config);
+
+    let statement = read_fixture(fixture);
+    let (spanish, _has_income) =
+        super::compute_tax_year(&statement, year, &rates(), &config).unwrap();
+
+    let mut emitted = Vec::new();
+    HtmlReport::write(&spanish, &fixed_meta(year), &mut emitted).unwrap();
+    let emitted = String::from_utf8(emitted).expect("the report must be valid UTF-8");
+
+    corpus().assert(golden, "html", &emitted);
+}
+
 #[test]
 fn every_golden_file_belongs_to_a_case() {
     let corpus = corpus();
-    let claimed: Vec<PathBuf> = CORPUS.iter().map(|name| corpus.path(name, "csv")).collect();
-    corpus.assert_no_orphans(&claimed, &["csv"]);
+    let claimed: Vec<PathBuf> = CORPUS
+        .iter()
+        .map(|name| corpus.path(name, "csv"))
+        .chain(REPORT_CORPUS.iter().map(|name| corpus.path(name, "html")))
+        .collect();
+    corpus.assert_no_orphans(&claimed, &["csv", "html"]);
 }
+
+/// The file stems of the report cases above, in case order.
+const REPORT_CORPUS: [&str; 9] = [
+    "fifo_gipuzkoa_2026",
+    "income_comun_2026",
+    "cross_offset_navarra_2026_saldo",
+    "wash_sale_multi_lot_gipuzkoa_2026",
+    "fx_gain_gipuzkoa_2026",
+    "income_navarra_2026",
+    "small_disposal_navarra_2026",
+    "dividend_exemption_gipuzkoa_2026_fund",
+    "wash_sale_split_gipuzkoa_2026",
+];
 
 /// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than
 /// derived from it: `rstest` does not expose its cases to another test.

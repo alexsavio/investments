@@ -194,16 +194,21 @@ fn generate_spanish_tax_statement(
     // Output the statement. The extension selects the format: `.html` is the printable A4 report,
     // anything else the CSV.
     if let Some(path) = output_path {
-        // Rejected before anything is opened, so the user reads the reason rather than a failure
-        // to write a temporary file they never asked for.
         let format = OutputFormat::from_path(path);
-        if matches!(format, OutputFormat::Html) {
-            return Err!(
-                "The printable HTML report is not available for the Spanish tax statement yet. \
-                 Write the statement to a .csv path instead");
-        }
-
-        write_atomically(path, |writer| spain::CsvFormatter::write(&statement, writer))?;
+        write_atomically(path, |writer| match format {
+            OutputFormat::Csv => spain::CsvFormatter::write(&statement, writer),
+            OutputFormat::Html => {
+                let meta = spain::ReportMeta {
+                    year,
+                    broker_name: broker_statement.broker.name.to_owned(),
+                    portfolio_name: portfolio_name.to_owned(),
+                    account_id: broker_statement.account_id.clone(),
+                    period: broker_statement.period,
+                    generated_at: time::now(),
+                };
+                spain::HtmlReport::write(&statement, &meta, writer)
+            }
+        })?;
 
         println!(
             "{}",

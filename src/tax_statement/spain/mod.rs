@@ -4,7 +4,10 @@
 //! both the Gipuzkoa foral regime (Norma Foral 3/2014) and Territorio Común (Ley 35/2006).
 
 mod csv_formatter;
+mod forms;
+mod html;
 mod processor;
+mod report;
 mod statement;
 mod wash_sale;
 
@@ -18,6 +21,7 @@ mod property_tests;
 mod tests;
 
 pub use self::csv_formatter::CsvFormatter;
+pub use self::html::{HtmlReport, ReportMeta};
 pub use self::processor::{compute_tax_year, produces_capital_gain};
 pub use self::statement::{CapitalGainEntry, SpanishLotDetail, SpanishTaxStatement};
 

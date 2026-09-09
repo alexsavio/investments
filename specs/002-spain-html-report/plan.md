@@ -134,6 +134,62 @@ Original step detail:
 
 ## PR B — Spanish report
 
+**Status: done, PR pending (`feat/spain-html-report` → `dev`), three commits.**
+
+- [x] **B1 `spain/forms.rs`** — the three modelo modules, the six compensation labels and the FX one
+  moved behind a `FormMapping` the CSV and the report both consume. `FormBox` keeps `concept` and
+  `sheet` apart rather than storing one exact CSV label, so the CSV rebuilds its
+  `(hoja, casilla 28)` suffix byte for byte while a table with its own Casilla column shows the
+  concept alone. `declarable_rcm_income` moved onto `SpanishTaxStatement`. All 12 CSV goldens
+  unchanged. `form_name(regime)` was added on top of the plan: the title block and the methodology
+  both name the filer's own form, and a second literal would drift.
+- [x] **B2 report types, statement field, processor pushes** — `spain/report.rs` with
+  `AssetClass`/`FxTreatment` and the aliases; `SpanishTaxStatement.report`; `PricedSale.report`
+  built in `price_sale` under the filing-year filter and moved onto the statement in
+  `process_trades`, so `report.sales[i]` ↔ `capital_gains[i]`; bookings and the withholding row from
+  `process_dividends`/`process_interest`/`process_fees`; `collect_fx_rows` over the whole ledger;
+  the three shared collectors in `process_broker_statement`. `grant_lot_cost_basis_eur` reshaped to
+  the German signature. The `small_disposals_exemption_applies` accessor the plan asked for was not
+  added: the section it was for keys off `small_disposals_exemption`/`_unmeasurable`, so it would
+  have been dead code.
+- [x] **B3 `spain/html/`** — the 14 sections as tabled below, `lang="es"`, dates `dd/mm/yyyy`,
+  numbers `1.234,56`, ISO confined to the config block. The YAML block is a `<pre>` with an inline
+  style: the stylesheet is Germany's too, and adding a `pre` rule there would have rewritten all six
+  German goldens for a page they do not have.
+- [x] **B4 output arm, docs, tests** — the `.html` arm in `src/tax_statement/mod.rs`; the new
+  `## HTML report` section in `docs/spain-taxes.md` plus Usage, README and `.gitignore`; 16 tests in
+  `spain/html/tests.rs`; 4 HTML goldens in `spain/golden_tests.rs` with the orphan check over both
+  extensions.
+- [x] **Verify** — 418 `spain` tests and 102 `germany` tests pass (`cargo test --lib`: 924 pass, 34
+  known `parse_real` failures from the private submodule); clippy clean in every touched file;
+  `rustfmt --edition 2024` per new file, never repo-wide. Run end to end on the real IBKR statement
+  under all three regimes and read back as PDF (21–23 pages each): the FIFO worksheets, the currency
+  ledger, the page breaks and the column widths all hold.
+
+Left for later, deliberately:
+
+- **`collect_open_lots` ignores stock splits** (`src/tax_statement/report/collect.rs:90`). It pushes
+  `buy.get_unsold()` raw, while `BrokerStatement::open_positions`
+  (`src/broker_statement/mod.rs:706-710`) multiplies the same quantity by
+  `stock_splits.get_multiplier(...)`. An instrument that split after purchase and is still held
+  therefore shows its pre-split share count in "Posiciones abiertas". `cost_eur` and `price` stay
+  consistent with each other, so only the count contradicts the account. Found by review of this
+  PR, but the code and the bug are shared: Germany's "Offene Positionen" prints the same, and fixing
+  it rewrites six German goldens. It belongs in its own PR, where that diff is the change under
+  review rather than noise beside a new report.
+- **The Spanish processor never reads `broker_statement.cash_grants`.** Germany's does, and reports
+  a cash award as sonstige Einkünfte. Spain drops the field silently, so a statement carrying one
+  produces a return that never mentions it — while a stock vest, equally outside the savings base,
+  *is* reported. Fixing it needs a statement field, a processor loop, a CSV row (the CSV contract
+  changes), a console line and a report row, so it is its own PR. Documented meanwhile in
+  `docs/spain-taxes.md` under "Important notes".
+- **`WithholdingRow.currency` is the dividend's, not the withholding's** (`processor.rs`). The two
+  are the same in every statement the tool has seen, and Germany does the same; a broker that
+  withheld in a different currency would label the `Retenido` cell wrongly. The EUR columns and the
+  rate are unaffected.
+
+Original step detail:
+
 ### B1. `src/tax_statement/spain/forms.rs` (CSV goldens are the safety net)
 
 ```rust
