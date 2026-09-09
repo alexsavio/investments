@@ -589,12 +589,18 @@ impl SpanishTaxStatement {
             .sum();
         self.total_fx_result = self.fx_gains.iter().map(|entry| entry.amount_eur).sum();
         // The Modelo 100 block splits one figure across three casillas on this identity: the net
-        // leaves the acciones-cotizadas box and the two sides are posted to 0386 and 0385. It holds
-        // by construction — `max(0, a) − max(0, −a) == a` for every entry — so the guard is here to
-        // fail loudly if a later change to any of the three sums breaks the split silently.
+        // leaves the acciones-cotizadas box and the two sides are posted to 0386 and 0385. The
+        // guard is here to fail loudly if a later change to any of the three sums breaks the split.
+        //
+        // Compared as money, not exactly. `max(0, a) − max(0, −a) == a` holds for every entry, but
+        // summing the two sides separately and summing the signed amounts are different orders of
+        // addition, and an unrounded conversion result carries enough significant digits to reach
+        // `Decimal`'s 28-digit ceiling — where addition stops being associative and the two orders
+        // land one ULP apart. Every casilla is filed rounded, so agreeing to the cent is the
+        // property that has to hold.
         debug_assert_eq!(
-            self.total_fx_gains - self.total_fx_losses,
-            self.total_fx_result,
+            super::round_eur(self.total_fx_gains - self.total_fx_losses),
+            super::round_eur(self.total_fx_result),
             "the foreign-currency sums must decompose the net"
         );
 
