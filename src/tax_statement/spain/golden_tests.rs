@@ -22,10 +22,12 @@ use crate::currency::converter::{CurrencyConverter, CurrencyConverterBackend};
 use crate::instruments::EtfClassification;
 use crate::tax_statement::golden::GoldenCorpus;
 use crate::taxes::spain::SpanishTaxRegime;
-use crate::taxes::{SpanishTaxConfig, TaxConfig};
+use crate::taxes::{DeferredLossConfig, SpanishTaxConfig, TaxConfig};
 use crate::time::{self, Date, DateTime, Period};
 use crate::types::Decimal;
 
+use super::report::{BookingKind, BookingRow, LotSource, OpenLotRow};
+use super::statement::{CashGrantEntry, SpanishTaxStatement};
 use super::{CsvFormatter, HtmlReport, ReportMeta};
 
 /// Fixed EUR conversion backend: every non-EUR currency converts to EUR at 0.9, independent of
@@ -145,6 +147,101 @@ fn the_exempted_payer_is_a_fund(config: &mut TaxConfig) {
     config
         .etf_classification
         .insert("US0378331005".to_owned(), EtfClassification::Equity);
+}
+
+/// The prior-year deferral the `unpriced_deferral` fixture needs to say anything: Gipuzkoa
+/// publishes no 2023 actualization table, so the 2023 sale could not be priced and its deferral has
+/// to be carried in from that year's own return.
+fn carried_in_deferral(config: &mut SpanishTaxConfig) {
+    config.deferred_losses = vec![DeferredLossConfig {
+        symbol: "AAPL".to_owned(),
+        isin: Some("US0378331005".to_owned()),
+        loss: dec!(9000),
+        blocked_quantity: dec!(100),
+        acquisition_date: Date::from_ymd_opt(2023, 7, 10).unwrap(),
+        sale_date: Date::from_ymd_opt(2023, 6, 10).unwrap(),
+    }];
+}
+
+/// Per-case statement hook, applied to the computed statement just before it is rendered.
+///
+/// A few report paths exist for figures the Spanish pipeline carries but no committed fixture
+/// produces, so the only way to pin how they render is to put the figure on the statement by hand.
+/// Each hook below says which path it lights up and why no fixture reaches it. No hook computes a
+/// tax figure of its own: it adds the rows a real run would have added, and re-runs
+/// `calculate_totals` when it adds something a total depends on, so the report stays a pure
+/// function of the statement.
+type Mutate = fn(&mut SpanishTaxStatement);
+
+fn as_computed(_statement: &mut SpanishTaxStatement) {}
+
+/// A lot opened by a corporate action, which the open-positions table labels "Operación societaria".
+///
+/// Only a spinoff or a stock dividend opens such a lot. The one corporate action the fixtures carry
+/// is a plain split, and a split restates the lots that already exist rather than opening one of
+/// its own — so `LotSource::CorporateAction` reaches no golden through a fixture.
+fn a_lot_opened_by_a_corporate_action(statement: &mut SpanishTaxStatement) {
+    let vest = statement
+        .report
+        .open_lots
+        .first()
+        .expect("the grants fixture must leave the vested lot open at year end")
+        .clone();
+    statement.report.open_lots.push(OpenLotRow {
+        source: LotSource::CorporateAction,
+        open_date: Date::from_ymd_opt(2026, 6, 30).unwrap(),
+        trade_id: None,
+        quantity: dec!(2),
+        // A corporate-action lot has no trade behind it, so it carries no currency and no price.
+        currency: String::new(),
+        price: None,
+        cost_eur: Decimal::ZERO,
+        ..vest
+    });
+}
+
+/// A cash award and an open short position: two figures the return reports without taxing.
+///
+/// Neither is reachable from a committed fixture. Only the Sber reader builds a cash grant, so an
+/// Interactive Brokers statement cannot produce one at all. A negative `OpenPosition` in a Flex
+/// export *is* read as a short, but every fixture that already exists is shared with a golden that
+/// would then move, so the position is put on the statement here instead.
+fn reported_but_never_taxed(statement: &mut SpanishTaxStatement) {
+    let date = Date::from_ymd_opt(2026, 4, 10).unwrap();
+    let description = "PORTFOLIO TRANSFER BONUS";
+    let amount_eur = dec!(120);
+
+    // Both rows, as the processor writes them: the booking is what the movimientos table shows and
+    // the entry is what the general-base table shows, and a statement carrying one without the
+    // other is a state no run produces.
+    statement.report.bookings.push(BookingRow {
+        kind: BookingKind::CashGrant,
+        date,
+        symbol: String::new(),
+        isin: String::new(),
+        name: String::new(),
+        category: None,
+        description: description.to_owned(),
+        currency: "EUR".to_owned(),
+        amount: amount_eur,
+        eur_per_unit: dec!(1),
+        amount_eur,
+    });
+    statement.cash_grants.push(CashGrantEntry {
+        date,
+        description: description.to_owned(),
+        amount_eur,
+        notes: "Informational: a cash award belongs to the GENERAL base, not the savings base — \
+                it is either employment income or a ganancia patrimonial no derivada de \
+                transmisión. Declare it separately; this tool does not compute it"
+            .to_owned(),
+    });
+
+    statement
+        .short_positions
+        .push(("TSLA".to_owned(), dec!(-25)));
+
+    statement.calculate_totals();
 }
 
 fn corpus() -> GoldenCorpus {
@@ -316,6 +413,26 @@ fn fixed_meta(year: i32) -> ReportMeta {
 ///   names a payer the €1,500 exemption does not reach.
 /// - `wash_sale_split_gipuzkoa_2026` — a lot held across a 2-for-1 split, so the open-positions
 ///   section shows a restated share count.
+///
+/// The cases below it pin the paths the nine above never reach. Each renders a warning, a marker or
+/// a table that only fires on a shape the main corpus has no example of, so a change to one of them
+/// would otherwise land in a filer's report with the whole suite green:
+///
+/// - `pre_1995_lot_navarra_2026` — a lot bought before 31-12-1994, so the worksheet marks it
+///   "anterior a 1995" and the abatement register has something to say.
+/// - `grants_comun_2026` — the vest table, plus the two lot origins a purchase is not: a granted
+///   lot from the fixture and a corporate-action lot added to the statement.
+/// - `year_end_loss_gipuzkoa_2026` — a December loss whose two-month window outlives the statement,
+///   so the report warns the deduction may be overstated.
+/// - `wash_sale_venue_comun_2026` — a repurchase outside two months on a venue whose equivalence
+///   decision has lapsed, the one review that names a market.
+/// - `unpriced_deferral_gipuzkoa_2026` — a filing year that carries a deferral in from a year with
+///   no actualization table, so the report says which years went untested.
+/// - `fee_types_comun_2026` — the fee rows whose treatment is unsettled, listed as their own review.
+/// - `income_comun_2026_reported_only` — a cash award and an open short position: reported in full,
+///   taxed nowhere, and neither reachable from a committed fixture.
+/// - `fx_gain_comun_2026` — the only case whose Modelo 100 block reaches the otros-elementos sums
+///   (casillas 0386 and 0385) and the footer that tells the filer how to itemize them.
 #[rstest]
 #[case::fifo_gipuzkoa(
     "fifo_gipuzkoa_2026",
@@ -324,7 +441,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     SpanishTaxRegime::Gipuzkoa,
     no_opening_balances,
     converter,
-    everything_is_a_share
+    everything_is_a_share,
+    as_computed
 )]
 #[case::income_comun(
     "income_comun_2026",
@@ -333,7 +451,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     SpanishTaxRegime::Comun,
     no_opening_balances,
     converter,
-    everything_is_a_share
+    everything_is_a_share,
+    as_computed
 )]
 #[case::cross_offset_navarra(
     "cross_offset_navarra_2026_saldo",
@@ -342,7 +461,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     SpanishTaxRegime::Navarra,
     rcm_saldo_2000,
     converter,
-    everything_is_a_share
+    everything_is_a_share,
+    as_computed
 )]
 #[case::wash_sale_multi_lot_gipuzkoa(
     "wash_sale_multi_lot_gipuzkoa_2026",
@@ -351,7 +471,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     SpanishTaxRegime::Gipuzkoa,
     no_opening_balances,
     converter,
-    everything_is_a_share
+    everything_is_a_share,
+    as_computed
 )]
 #[case::fx_gain_gipuzkoa(
     "fx_gain_gipuzkoa_2026",
@@ -360,7 +481,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     SpanishTaxRegime::Gipuzkoa,
     no_opening_balances,
     revaluing_converter,
-    everything_is_a_share
+    everything_is_a_share,
+    as_computed
 )]
 #[case::income_navarra(
     "income_navarra_2026",
@@ -369,7 +491,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     SpanishTaxRegime::Navarra,
     no_opening_balances,
     converter,
-    everything_is_a_share
+    everything_is_a_share,
+    as_computed
 )]
 #[case::small_disposal_navarra(
     "small_disposal_navarra_2026",
@@ -378,7 +501,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     SpanishTaxRegime::Navarra,
     no_opening_balances,
     converter,
-    everything_is_a_share
+    everything_is_a_share,
+    as_computed
 )]
 #[case::dividend_exemption_gipuzkoa_fund(
     "dividend_exemption_gipuzkoa_2026_fund",
@@ -387,7 +511,8 @@ fn fixed_meta(year: i32) -> ReportMeta {
     SpanishTaxRegime::Gipuzkoa,
     no_opening_balances,
     converter,
-    the_exempted_payer_is_a_fund
+    the_exempted_payer_is_a_fund,
+    as_computed
 )]
 #[case::wash_sale_split_gipuzkoa(
     "wash_sale_split_gipuzkoa_2026",
@@ -396,7 +521,88 @@ fn fixed_meta(year: i32) -> ReportMeta {
     SpanishTaxRegime::Gipuzkoa,
     no_opening_balances,
     converter,
-    everything_is_a_share
+    everything_is_a_share,
+    as_computed
+)]
+#[case::pre_1995_lot_navarra(
+    "pre_1995_lot_navarra_2026",
+    "pre_1995_lot",
+    2026,
+    SpanishTaxRegime::Navarra,
+    no_opening_balances,
+    converter,
+    everything_is_a_share,
+    as_computed
+)]
+#[case::grants_comun(
+    "grants_comun_2026",
+    "grants",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances,
+    converter,
+    everything_is_a_share,
+    a_lot_opened_by_a_corporate_action
+)]
+#[case::year_end_loss_gipuzkoa(
+    "year_end_loss_gipuzkoa_2026",
+    "year_end_loss",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    no_opening_balances,
+    converter,
+    everything_is_a_share,
+    as_computed
+)]
+#[case::wash_sale_venue_comun(
+    "wash_sale_venue_comun_2026",
+    "wash_sale_venue",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances,
+    converter,
+    everything_is_a_share,
+    as_computed
+)]
+#[case::unpriced_deferral_gipuzkoa(
+    "unpriced_deferral_gipuzkoa_2026",
+    "unpriced_deferral",
+    2026,
+    SpanishTaxRegime::Gipuzkoa,
+    carried_in_deferral,
+    converter,
+    everything_is_a_share,
+    as_computed
+)]
+#[case::fee_types_comun(
+    "fee_types_comun_2026",
+    "fee_types",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances,
+    converter,
+    everything_is_a_share,
+    as_computed
+)]
+#[case::fx_gain_comun(
+    "fx_gain_comun_2026",
+    "fx_gain",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances,
+    revaluing_converter,
+    everything_is_a_share,
+    as_computed
+)]
+#[case::income_comun_reported_only(
+    "income_comun_2026_reported_only",
+    "income",
+    2026,
+    SpanishTaxRegime::Comun,
+    no_opening_balances,
+    converter,
+    everything_is_a_share,
+    reported_but_never_taxed
 )]
 fn rendered_report_matches_its_golden(
     #[case] golden: &str,
@@ -406,14 +612,16 @@ fn rendered_report_matches_its_golden(
     #[case] configure: Configure,
     #[case] rates: fn() -> CurrencyConverter,
     #[case] classify: Classify,
+    #[case] mutate: Mutate,
 ) {
     let mut config = spain_config(regime);
     configure(config.spain.as_mut().unwrap());
     classify(&mut config);
 
     let statement = read_fixture(fixture);
-    let (spanish, _has_income) =
+    let (mut spanish, _has_income) =
         super::compute_tax_year(&statement, year, &rates(), &config).unwrap();
+    mutate(&mut spanish);
 
     let mut emitted = Vec::new();
     HtmlReport::write(&spanish, &fixed_meta(year), &mut emitted).unwrap();
@@ -434,7 +642,7 @@ fn every_golden_file_belongs_to_a_case() {
 }
 
 /// The file stems of the report cases above, in case order.
-const REPORT_CORPUS: [&str; 9] = [
+const REPORT_CORPUS: [&str; 17] = [
     "fifo_gipuzkoa_2026",
     "income_comun_2026",
     "cross_offset_navarra_2026_saldo",
@@ -444,6 +652,14 @@ const REPORT_CORPUS: [&str; 9] = [
     "small_disposal_navarra_2026",
     "dividend_exemption_gipuzkoa_2026_fund",
     "wash_sale_split_gipuzkoa_2026",
+    "pre_1995_lot_navarra_2026",
+    "grants_comun_2026",
+    "year_end_loss_gipuzkoa_2026",
+    "wash_sale_venue_comun_2026",
+    "unpriced_deferral_gipuzkoa_2026",
+    "fee_types_comun_2026",
+    "fx_gain_comun_2026",
+    "income_comun_2026_reported_only",
 ];
 
 /// The file stems of every case above, in case order. Kept beside the `#[case]` list rather than
