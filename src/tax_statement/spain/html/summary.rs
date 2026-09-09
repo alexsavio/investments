@@ -1428,6 +1428,25 @@ pub(super) fn notes(out: &mut String, statement: &SpanishTaxStatement, meta: &Re
             "El cálculo no tiene en cuenta las circunstancias personales del contribuyente ni las \
              rentas ajenas a este bróker."
                 .to_owned(),
+            "Sólo se liquida la <b>base del ahorro</b>. Los rendimientos del trabajo y el resto de \
+             la base general quedan fuera, igual que la residencia parcial y los regímenes \
+             especiales."
+                .to_owned(),
+            format!(
+                "{} Un residente fiscal en España con valores depositados fuera puede estar \
+                 obligado a presentar el <b>Modelo 720</b> si alguna categoría supera los 50.000 € \
+                 a 31 de diciembre. Es una declaración aparte, con su propio plazo y su propia \
+                 administración según el régimen, y esta herramienta <b>no la calcula</b>: las \
+                 posiciones abiertas de este informe van a coste de adquisición, no a valor de \
+                 mercado a 31/12.",
+                b("Otras obligaciones informativas.")
+            ),
+            format!(
+                "{} y el impuesto temporal de solidaridad quedan fuera por la misma razón: se \
+                 miden sobre el valor de mercado a 31 de diciembre, que un extracto de operaciones \
+                 no da.",
+                b("El Impuesto sobre el Patrimonio")
+            ),
             "Las decisiones interpretativas abiertas están recogidas en el registro de \
              <code>docs/spain-taxes.md</code>, cada una con la dirección en que puede fallar."
                 .to_owned(),

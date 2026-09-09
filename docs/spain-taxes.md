@@ -772,9 +772,26 @@ Two caveats the CSV states as warnings:
 
 For **Territorio Común** the rows carry the ejercicio-2025 numbers read from Anexo I of the Orden
 HAC/277/2026 **consultation draft** — interest 0027, dividends 0029, gastos de administración y
-depósito 0037, ganancias por transmisión de acciones cotizadas 0326-0340, base liquidable del ahorro
-0460, deducción por doble imposición internacional 0588. The AEAT publishes a filing year's form in
-the spring of the following one, so no enacted numbering exists yet.
+depósito 0037, ganancias por transmisión de acciones cotizadas 0326-0340, base **imponible** del
+ahorro 0460, deducción por doble imposición internacional 0588. The AEAT publishes a filing year's
+form in the spring of the following one, so no enacted numbering exists yet.
+
+Two of those rows carry a caveat the number alone does not:
+
+- **0460 is the base imponible, not the liquidable.** LIRPF art. 50 puts the base liquidable del
+  ahorro in casilla **0510**: 0460 minus whatever is left of the reducciones por tributación
+  conjunta, pensiones compensatorias y anualidades por alimentos. The tool models none of those, so
+  what it computes is 0460, and the label says so — a row labelled "liquidable" would send a filer
+  one box further down the form than the figure belongs. Gipuzkoa's casilla 33 and Navarra's 815 do
+  say *liquidable*, because their own forms use that word for the box at that point.
+- **0326-0340 is the acciones-cotizadas block** (0327 one row per operation, 0339 the sum of gains,
+  0340 the sum of losses). The tool posts the ganancias group's net figure, which also contains any
+  foreign-currency conversion result — a transmisión under LIRPF art. 33, but of a different kind of
+  element, belonging in the block for otros elementos patrimoniales. A Común year with a currency
+  result therefore prints a warning naming the amount to split out; the tool does not split it,
+  because the alternative block's numbering is not verified against an enacted form. Gipuzkoa's
+  casilla 30 and Navarra's 706 are labelled "por transmisiones" without narrowing to shares, so the
+  same figure is at home there.
 
 For **Navarra** the rows carry the ejercicio-2025 numbers, read from the fully numbered Modelo F-93
 the Boletín Oficial de Navarra publishes as Anexo I of each campaign's Orden Foral (ejercicio 2025 =
@@ -893,7 +910,10 @@ curl --request POST http://localhost:3000/forms/chromium/convert/html \
 
 ### Caveats
 
-- The report is informational and does not replace the broker's official statements.
+- The report is informational and does not replace the broker's official statements. Its own
+  "Método y límites" list names the obligations it leaves alone — the general base, **Modelo 720**
+  and the Impuesto sobre el Patrimonio — so a reader who never opens this document still learns of
+  them.
 - The **calculation warnings are in English**, shown verbatim under "Avisos del cálculo (texto
   literal)". They are one text for the console, the CSV and the report, so translating them here
   would let two surfaces say different things about the same figure.

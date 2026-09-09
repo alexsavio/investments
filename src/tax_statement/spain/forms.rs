@@ -92,7 +92,15 @@ mod modelo_100 {
     pub const RCM_EXPENSES: &str = "0037";
     /// Ganancias y pérdidas por transmisión de acciones cotizadas: an itemized block, not one box.
     pub const LISTED_CAPITAL_GAINS: &str = "0326_0340";
+    /// Base **imponible** del ahorro, i.e. the two groups after integración y compensación.
+    ///
+    /// The base *liquidable* is a different casilla — 0510 — and subtracts whatever is left of the
+    /// reducciones por tributación conjunta, pensiones compensatorias y anualidades por alimentos
+    /// (LIRPF art. 50). This tool models none of them, so what it computes is 0460; a filer who
+    /// went looking for the box the word "liquidable" names would put it one step too late.
     pub const SAVINGS_BASE: &str = "0460";
+    /// Named only so the label can point at it; nothing the tool computes belongs in it.
+    pub const SAVINGS_BASE_AFTER_REDUCTIONS: &str = "0510";
     pub const FOREIGN_TAX_CREDIT: &str = "0588";
     /// Retenciones del capital mobiliario — Spanish withholding only. See `modelo_109::RCM_WITHHOLDING`.
     pub const RCM_WITHHOLDING: &str = "0597";
@@ -392,7 +400,11 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
         ),
         (
             modelo_100::SAVINGS_BASE,
-            "Base liquidable del ahorro (tras compensación)".to_owned(),
+            format!(
+                "Base imponible del ahorro (tras compensación) — la base liquidable es la casilla \
+                 {} y resta el remanente de reducciones que esta herramienta no calcula",
+                modelo_100::SAVINGS_BASE_AFTER_REDUCTIONS
+            ),
             statement.savings_base,
         ),
         (
@@ -414,6 +426,27 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
     })
     .collect();
 
+    // The 0326-0340 block is specifically *acciones cotizadas*: 0327 takes one row per operation,
+    // 0339 the sum of gains and 0340 the sum of losses. A currency conversion is a transmisión too
+    // (LIRPF art. 33) but not of a listed share, so it belongs in the block for otros elementos
+    // patrimoniales. The tool posts the group's net figure and says so rather than splitting a
+    // mapping it cannot verify against an enacted form.
+    let footer_lines = if statement.total_fx_result.is_zero() {
+        Vec::new()
+    } else {
+        vec![
+            format!(
+                "WARNING: casilla {} is the acciones-cotizadas block. The figure above includes €{}                  of foreign-currency",
+                modelo_100::LISTED_CAPITAL_GAINS,
+                super::format_eur(statement.total_fx_result)
+            ),
+            "conversion results, which are transmissions of a different kind of element and belong              in the block for"
+                .to_owned(),
+            "otros elementos patrimoniales. Split them by hand before entering either one."
+                .to_owned(),
+        ]
+    };
+
     FormMapping {
         title: "MODELO 100 — declaración del IRPF (AEAT)",
         header_lines: [
@@ -425,7 +458,7 @@ fn modelo_100_mapping(statement: &SpanishTaxStatement) -> FormMapping {
         .map(str::to_owned)
         .to_vec(),
         boxes,
-        footer_lines: Vec::new(),
+        footer_lines,
         withholding_casilla: modelo_100::RCM_WITHHOLDING.to_owned(),
     }
 }
@@ -736,6 +769,7 @@ mod tests {
     use crate::taxes::spain::carryforward::LossLedger;
     use crate::taxes::spain::compensation::CrossOffset;
     use crate::taxes::spain::scale::SavingsScale;
+    use crate::types::Date;
 
     use super::*;
 
@@ -803,8 +837,14 @@ mod tests {
     }
 
     /// A form with one numbering space labels its rows with the concept alone.
+    ///
+    /// The label also has to name 0460 for what the AEAT calls it. LIRPF art. 50 makes the base
+    /// *liquidable* del ahorro casilla 0510 — 0460 minus whatever is left of the reducciones por
+    /// tributación conjunta, pensiones compensatorias y anualidades por alimentos. The tool models
+    /// none of those, so its figure is the *imponible*; calling it liquidable would send a filer
+    /// to a box one step further down the form.
     #[test]
-    fn a_single_space_form_needs_no_sheet_in_its_label() {
+    fn the_comun_savings_base_is_the_imponible_and_carries_no_sheet() {
         let mut spain = statement(SpanishTaxRegime::Comun, 2026);
         spain.calculate_totals();
 
@@ -814,10 +854,39 @@ mod tests {
             .iter()
             .find(|form| form.casilla == "0460")
             .unwrap();
-        assert_eq!(
-            savings_base.label(),
-            "Base liquidable del ahorro (tras compensación)"
-        );
         assert_eq!(savings_base.form, "Modelo 100");
+        assert_eq!(savings_base.sheet, "");
+        assert!(
+            savings_base
+                .label()
+                .starts_with("Base imponible del ahorro")
+        );
+        assert!(savings_base.label().contains("0510"));
+        assert!(!mapping.boxes.iter().any(|form| form.casilla == "0510"));
+    }
+
+    /// The 0326-0340 block is the acciones-cotizadas one. A currency conversion is a transmisión of
+    /// a different kind of element, so a year that mixes them says so instead of letting the filer
+    /// post a share figure that silently contains one.
+    #[test]
+    fn a_comun_year_with_currency_results_warns_about_the_shares_block() {
+        let mut spain = statement(SpanishTaxRegime::Comun, 2026);
+        spain.calculate_totals();
+        assert!(form_mapping(&spain).footer_lines.is_empty());
+
+        spain
+            .fx_gains
+            .push(crate::tax_statement::spain::statement::FxGainEntry {
+                date: Date::from_ymd_opt(2026, 3, 1).unwrap(),
+                currency: "USD".to_owned(),
+                acquisition_date: Date::from_ymd_opt(2026, 1, 1).unwrap(),
+                amount_eur: dec!(400),
+                activity_code: "FOREX".to_owned(),
+            });
+        spain.calculate_totals();
+
+        let footer = form_mapping(&spain).footer_lines.join(" ");
+        assert!(footer.contains("400.00"), "{footer}");
+        assert!(footer.contains("otros elementos patrimoniales"), "{footer}");
     }
 }
